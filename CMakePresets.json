@@ -1,27 +1,57 @@
 {
     "version": 3,
-    "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+    "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
     "configurePresets": [
         {
-            "name": "default",
-            "displayName": "Default (Debug)",
-            "description": "Configure with the vendored cmake-conan provider; deps installed automatically.",
-            "binaryDir": "${sourceDir}/build/${presetName}",
+            "name": "ninja",
+            "displayName": "Ninja (Release)",
+            "description": "Single-config Ninja, Release. Project-local Conan home at ./.conan2; exports compile_commands.json.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_BUILD_TYPE": "Release",
+                "TC_LOCAL_CONAN_HOME": "ON",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
+            "name": "ninja-debug",
+            "displayName": "Ninja (Debug)",
+            "description": "Single-config Ninja, Debug. First configure builds Debug deps (e.g. openssl) from source.",
+            "inherits": "ninja",
+            "binaryDir": "${sourceDir}/build/ninja-debug",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
             "name": "msvc",
-            "displayName": "Visual Studio 2022 (x64)",
-            "inherits": "default",
+            "displayName": "Visual Studio 2022 (x64, Release)",
+            "description": "Multi-config Visual Studio generator (fallback / IDE solution).",
             "generator": "Visual Studio 17 2022",
-            "architecture": "x64"
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build/msvc",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Release",
+                "TC_LOCAL_CONAN_HOME": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
         }
     ],
     "buildPresets": [
-        { "name": "default", "configurePreset": "default" },
-        { "name": "msvc-debug", "configurePreset": "msvc", "configuration": "Debug" }
+        { "name": "ninja", "configurePreset": "ninja" },
+        { "name": "ninja-debug", "configurePreset": "ninja-debug" },
+        { "name": "msvc", "configurePreset": "msvc", "configuration": "Release" }
+    ],
+    "testPresets": [
+        {
+            "name": "ninja",
+            "configurePreset": "ninja",
+            "output": { "outputOnFailure": true }
+        },
+        {
+            "name": "ninja-unit",
+            "configurePreset": "ninja",
+            "output": { "outputOnFailure": true },
+            "filter": { "include": { "label": "unit" } }
+        }
     ]
 }

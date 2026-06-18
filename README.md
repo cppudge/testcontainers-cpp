@@ -108,35 +108,44 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
 
 ## Build
 
-Requires CMake ≥ 3.20, a C++20 compiler, and Conan ≥ 2. `cmake-conan` (vendored) runs
-`conan install` automatically during configure and auto-detects a profile from the CMake
-toolchain — no manual `conan profile detect` needed.
+Requires CMake ≥ 3.21, a C++20 compiler, Conan ≥ 2, and Ninja. `cmake-conan` (vendored) runs
+`conan install` automatically during configure and auto-detects a profile — no manual
+`conan profile detect` needed.
 
-### Isolated Conan home (recommended)
+By default the build uses a **project-local Conan home** at `./.conan2` (the project root),
+isolated from your global Conan home and seeded with only the public ConanCenter remote. Set
+`-DTC_LOCAL_CONAN_HOME=OFF` to use the global home instead (then ensure ConanCenter is reachable
+there: `conan remote add conancenter https://center2.conan.io`).
 
-Pass `-DTC_LOCAL_CONAN_HOME=ON` to use a **project-local** Conan home at `./.conan2` instead of
-the global one. A fresh Conan 2 home is initialized with a single remote — public ConanCenter —
-so the project pulls only from `https://center2.conan.io` and never touches your global remotes
-or package cache (handy when the global home has corporate Artifactory remotes you don't want in
-the resolution order).
+Presets live in `CMakePresets.json`:
+
+| Preset | Generator | Config | Build dir |
+|---|---|---|---|
+| `ninja` | Ninja | Release | `build/ninja` |
+| `ninja-debug` | Ninja | Debug | `build/ninja-debug` |
+| `msvc` | Visual Studio 2022 | Release | `build/msvc` |
 
 ```sh
-# Linux / macOS (Ninja or Makefiles, single-config)
-cmake -S . -B build -DTC_LOCAL_CONAN_HOME=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/bin/tc_smoke                       # prints the linked dependency versions
+cmake --preset ninja
+cmake --build --preset ninja
+ctest --preset ninja                 # ctest --preset ninja-unit  → unit tests only
+./build/ninja/bin/tc_smoke           # tc_smoke / tc_ping (.exe on Windows)
 ```
 
-```powershell
-# Windows (Visual Studio 2022, multi-config) — limit to Release for a fast first build
-cmake -S . -B build/msvc -G "Visual Studio 17 2022" -A x64 `
-      -DTC_LOCAL_CONAN_HOME=ON -DCMAKE_CONFIGURATION_TYPES=Release
-cmake --build build/msvc --config Release
-./build/msvc/bin/Release/tc_smoke.exe
-```
+On Windows, Ninja needs the MSVC toolchain on `PATH`: run the commands from an
+**"x64 Native Tools Command Prompt for VS 2022"**, or use VS Code (below), which applies the
+developer environment for you. The `ninja-debug` preset's first configure builds the Debug
+dependencies (e.g. OpenSSL) from source.
 
-Without `-DTC_LOCAL_CONAN_HOME=ON` the build uses your global Conan home; ensure ConanCenter is
-reachable there (`conan remote add conancenter https://center2.conan.io`).
+### Open in VS Code
+
+1. Install the recommended extensions (VS Code offers them from `.vscode/extensions.json`):
+   **CMake Tools** and **clangd**.
+2. Open the folder. CMake Tools reads `CMakePresets.json` — pick the **`ninja`** configure preset
+   from the status bar and configure. That runs Conan, generates the compile database, and applies
+   the VS developer environment automatically.
+3. clangd reads `build/ninja/compile_commands.json` (via the `.clangd` file) for accurate
+   IntelliSense and diagnostics. Build / run tests from the CMake Tools status bar.
 
 > Note: `libarchive` is built with `with_iconv=False` — its `libiconv` dependency has no prebuilt
 > Windows/msvc-194 binary and fails to build from source (rc.exe flag mismatch); we don't need

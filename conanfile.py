@@ -72,6 +72,11 @@ class TestcontainersCppRecipe(ConanFile):
     def generate(self):
         CMakeDeps(self).generate()
         tc = CMakeToolchain(self)
+        # We drive CMake via CMakePresets.json + the cmake-conan provider, so do
+        # NOT let Conan write/append a CMakeUserPresets.json: with several build
+        # dirs (ninja, ninja-debug, msvc) it would accumulate one "conan-default"
+        # include per dir and CMake would reject the duplicate preset.
+        tc.user_presets_path = False
         # We are already inside a conan-driven build; don't re-trigger the
         # cmake-conan provider from CMakeLists.txt.
         tc.cache_variables["SKIP_CONAN_PROVIDER_CMAKE"] = True

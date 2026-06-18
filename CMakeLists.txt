@@ -6,10 +6,12 @@ if(DEFINED SKIP_CONAN_PROVIDER_CMAKE)
     message(STATUS "Skipping cmake-conan provider (SKIP_CONAN_PROVIDER_CMAKE is set)")
 else()
     message(STATUS "Using cmake-conan provider for automatic conan install")
-    # Opt-in hermetic mode: use a project-local Conan home. Off by default so we
-    # reuse the user's global Conan home (which already has remotes + recipe cache).
-    # A fresh local home would have no remotes configured and the install would fail.
-    option(TC_LOCAL_CONAN_HOME "Use a project-local .conan2 home (hermetic)" OFF)
+    # Use a project-local Conan home at the PROJECT ROOT (./.conan2), isolating
+    # this project's remotes + package cache from the global Conan home. On by
+    # default; set OFF to use the global home. A fresh local home auto-initializes
+    # with only the public `conancenter` remote. (An explicit CONAN_HOME env var,
+    # if set, always wins.)
+    option(TC_LOCAL_CONAN_HOME "Use a project-local .conan2 home at the project root" ON)
     if(TC_LOCAL_CONAN_HOME AND NOT DEFINED ENV{CONAN_HOME})
         file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/.conan2")
         set(ENV{CONAN_HOME} "${CMAKE_SOURCE_DIR}/.conan2")

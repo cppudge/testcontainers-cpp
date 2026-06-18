@@ -1,0 +1,10 @@
+{
+    // Drive CMake from CMakePresets.json (pick "ninja" as the configure preset).
+    "cmake.useCMakePresets": "always",
+    // For the Ninja generator + MSVC, auto-apply the Visual Studio developer
+    // environment so cl.exe is found without launching a Developer prompt.
+    "cmake.useVsDeveloperEnvironment": "auto",
+    // Use clangd for IntelliSense (reads build/ninja/compile_commands.json via
+    // the .clangd file); disable the cpptools engine to avoid duplicate squiggles.
+    "C_Cpp.intelliSenseEngine": "disabled"
+}

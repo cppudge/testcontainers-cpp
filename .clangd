@@ -1,0 +1,5 @@
+# clangd reads the compile database from the default Ninja preset's build dir,
+# so include paths, the C++ standard, and dependency headers resolve correctly.
+# Configure once (`cmake --preset ninja`) to generate it.
+CompileFlags:
+  CompilationDatabase: build/ninja
