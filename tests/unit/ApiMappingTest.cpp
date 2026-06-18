@@ -23,6 +23,10 @@
 //   ApiMapping.BuildCreateBodyVolumeMount - a volume mount maps to a HostConfig.Mounts entry with Type=volume and Source set to the volume name.
 //   ApiMapping.BuildCreateBodyTmpfsMount - a tmpfs mount maps to Type=tmpfs with no Source and TmpfsOptions SizeBytes/Mode.
 //   ApiMapping.BuildCreateBodyNoMountsByDefault - a spec without mounts/privileged emits no HostConfig.Mounts or Privileged.
+//   ApiMapping.BuildCreateBodyNetworkMode - a set network maps to HostConfig.NetworkMode.
+//   ApiMapping.BuildCreateBodyNoNetworkModeByDefault - a spec without a network emits no HostConfig.NetworkMode.
+//   ApiMapping.BuildExecCreateBody - the exec-create body carries Cmd and AttachStdout/AttachStderr set true.
+//   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
@@ -33,6 +37,8 @@
 using namespace testcontainers;
 using namespace std::chrono_literals;
 using testcontainers::docker::build_create_body;
+using testcontainers::docker::build_exec_create_body;
+using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::split_image;
 using testcontainers::docker::throw_if_pull_error;
@@ -177,6 +183,37 @@ TEST(ApiMapping, BuildCreateBodyNoMountsByDefault) {
     spec.image = "alpine:3.20";
     const auto body = build_create_body(spec);
     EXPECT_FALSE(body.contains("HostConfig"));
+}
+
+TEST(ApiMapping, BuildCreateBodyNetworkMode) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.network = "my-net";
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    EXPECT_EQ(body["HostConfig"]["NetworkMode"], "my-net");
+}
+
+TEST(ApiMapping, BuildCreateBodyNoNetworkModeByDefault) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    const auto body = build_create_body(spec);
+    EXPECT_FALSE(body.contains("HostConfig"));
+}
+
+TEST(ApiMapping, BuildExecCreateBody) {
+    const auto body = build_exec_create_body({"echo", "hello-exec"});
+    EXPECT_EQ(body["Cmd"], nlohmann::json({"echo", "hello-exec"}));
+    EXPECT_TRUE(body["AttachStdout"].get<bool>());
+    EXPECT_TRUE(body["AttachStderr"].get<bool>());
+}
+
+TEST(ApiMapping, ParseExecExitCode) {
+    EXPECT_EQ(parse_exec_exit_code(R"({"ExitCode": 5, "Running": false})"), 5);
+    EXPECT_EQ(parse_exec_exit_code(R"({"ExitCode": 0})"), 0);
+    // Absent / null ExitCode (exec still running) defaults to 0.
+    EXPECT_EQ(parse_exec_exit_code(R"({"Running": true, "ExitCode": null})"), 0);
 }
 
 TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {

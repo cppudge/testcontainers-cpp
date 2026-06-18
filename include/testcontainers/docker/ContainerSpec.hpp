@@ -24,6 +24,7 @@ struct CreateContainerSpec {
     std::vector<std::string> exposed_ports;                  ///< "6379/tcp"
     std::vector<std::pair<std::string, std::string>> labels; ///< container labels
     std::optional<std::string> name;                         ///< container name (?name=)
+    std::optional<std::string> network;                      ///< HostConfig.NetworkMode
     std::optional<std::string> working_dir;                  ///< WorkingDir
     std::optional<std::string> user;                         ///< User
     bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts

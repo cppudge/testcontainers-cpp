@@ -106,7 +106,10 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
 - [x] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
 - [x] **Richer container config**: entrypoint, working dir, user, privileged, and a `Mount`
       value type (bind / volume / tmpfs) mapped into the create body + `HostConfig`
-- [ ] Cleanup: RAII + Ryuk reaper; networks, copy, exec, registry auth
+- [x] **`exec`** (run a command in a running container, capturing stdout/stderr + exit code)
+      and **user-defined networks** (`Network` RAII handle; `GenericImage::with_network` /
+      `with_container_name` so peers resolve each other by name)
+- [ ] Cleanup: RAII + Ryuk reaper; copy, registry auth
 
 ## Build
 

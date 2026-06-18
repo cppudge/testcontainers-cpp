@@ -66,6 +66,9 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.privileged) {
         host_config["Privileged"] = true;
     }
+    if (spec.network) {
+        host_config["NetworkMode"] = *spec.network;
+    }
     if (!spec.mounts.empty()) {
         nlohmann::json mounts = nlohmann::json::array();
         for (const Mount& m : spec.mounts) {
@@ -151,6 +154,23 @@ ContainerInspect parse_inspect(const std::string& body) {
     }
 
     return info;
+}
+
+nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd) {
+    nlohmann::json body;
+    body["Cmd"] = cmd;
+    body["AttachStdout"] = true;
+    body["AttachStderr"] = true;
+    return body;
+}
+
+std::int64_t parse_exec_exit_code(const std::string& body) {
+    const nlohmann::json json = nlohmann::json::parse(body);
+    if (const auto code = json.find("ExitCode");
+        code != json.end() && code->is_number_integer()) {
+        return code->get<std::int64_t>();
+    }
+    return 0;
 }
 
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image) {

@@ -136,6 +136,28 @@ public:
         return std::move(*this);
     }
 
+    /// Join the container to a user-defined network (`HostConfig.NetworkMode`).
+    /// Containers on the same network resolve each other by container name.
+    GenericImage& with_network(std::string network) & {
+        network_ = std::move(network);
+        return *this;
+    }
+    GenericImage&& with_network(std::string network) && {
+        network_ = std::move(network);
+        return std::move(*this);
+    }
+
+    /// Set an explicit container name (passed as `?name=` on create). Useful so
+    /// peers on the same network can resolve this container by name.
+    GenericImage& with_container_name(std::string name) & {
+        container_name_ = std::move(name);
+        return *this;
+    }
+    GenericImage&& with_container_name(std::string name) && {
+        container_name_ = std::move(name);
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -154,6 +176,8 @@ public:
     const std::vector<WaitFor>& waits() const noexcept { return waits_; }
     std::chrono::milliseconds startup_timeout() const noexcept { return startup_timeout_; }
     const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
+    const std::optional<std::string>& network() const noexcept { return network_; }
+    const std::optional<std::string>& container_name() const noexcept { return container_name_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -175,6 +199,8 @@ private:
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
     std::optional<Healthcheck> healthcheck_;
+    std::optional<std::string> network_;
+    std::optional<std::string> container_name_;
 };
 
 } // namespace testcontainers

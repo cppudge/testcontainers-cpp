@@ -60,6 +60,7 @@ add_library(testcontainers
     src/WaitStrategies.cpp
     src/GenericImage.cpp
     src/Container.cpp
+    src/Network.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 
@@ -135,6 +136,8 @@ if(BUILD_TESTING)
         tests/integration/ContainerConfigTest.cpp
         tests/integration/RedisMvpTest.cpp
         tests/integration/WaitStrategiesTest.cpp
+        tests/integration/ExecTest.cpp
+        tests/integration/NetworkTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers

@@ -1,6 +1,7 @@
 #include "testcontainers/Container.hpp"
 
 #include <string>
+#include <vector>
 
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -28,6 +29,10 @@ std::uint16_t Container::get_host_port(ContainerPort port) const {
 }
 
 ContainerLogs Container::logs() const { return client_.logs(id_); }
+
+ExecResult Container::exec(const std::vector<std::string>& cmd) const {
+    return client_.exec(id_, cmd);
+}
 
 void Container::stop() { client_.stop_container(id_); }
 

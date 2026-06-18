@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
@@ -59,6 +61,10 @@ public:
 
     /// A snapshot of the container's stdout / stderr logs.
     ContainerLogs logs() const;
+
+    /// Run a command inside the running container, capturing its stdout / stderr
+    /// and exit code.
+    ExecResult exec(const std::vector<std::string>& cmd) const;
 
     /// Stop the container (it is still removed on destruction).
     void stop();

@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -77,6 +78,20 @@ public:
     /// demultiplex the (non-TTY) stream into separate stdout / stderr text.
     /// Only the non-follow case is supported here; `opts.follow` is ignored.
     ContainerLogs logs(const std::string& id, const LogOptions& opts = {});
+
+    /// Run `cmd` inside the running container and capture its output and exit
+    /// code. Creates the exec (`POST /containers/{id}/exec`), starts it without a
+    /// TTY (`POST /exec/{exec_id}/start`) — demultiplexing the returned stream —
+    /// and reads the exit code (`GET /exec/{exec_id}/json`).
+    ExecResult exec(const std::string& id, const std::vector<std::string>& cmd);
+
+    // --- Network operations ---
+
+    /// `POST /networks/create` — create a user-defined network, returning its id.
+    std::string create_network(const std::string& name);
+
+    /// `DELETE /networks/{id}` — remove a network (204 expected).
+    void remove_network(const std::string& id);
 
 private:
     DockerHost host_;

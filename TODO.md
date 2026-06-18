@@ -39,6 +39,10 @@ review are recorded here so they aren't lost between milestones.
   non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release` errors for OpenSSL/zlib because Conan
   installs Release-only; the Release build and tests still succeed. The default `ninja` preset is
   unaffected. (Install both configs, or filter the message, if it becomes annoying.)
+- **exec is buffered & unidirectional** — `Container::exec` reads the whole multiplexed output into
+  memory and has no stdin/TTY (fine for run-command-capture-output); a streaming/interactive exec
+  needs the hijacked-connection path. `Network` has no process-wide dedup (each `Network::create`
+  makes a new network) and no inspect / connect-to-existing.
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

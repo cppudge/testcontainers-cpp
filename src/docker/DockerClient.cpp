@@ -218,4 +218,65 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
     return out;
 }
 
+ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd) {
+    const std::vector<std::pair<std::string, std::string>> json_headers = {
+        {"Content-Type", "application/json"}};
+
+    // 1) Create the exec instance.
+    const std::string create_body = docker::build_exec_create_body(cmd).dump();
+    const Response create_res =
+        request("POST", "/containers/" + id + "/exec", create_body, json_headers);
+    if (create_res.status_code != 201) {
+        throw DockerError("exec create on container " + id + " failed: HTTP " +
+                          std::to_string(create_res.status_code) + " " + create_res.body);
+    }
+    const std::string exec_id =
+        nlohmann::json::parse(create_res.body).at("Id").get<std::string>();
+
+    // 2) Start the exec; with Tty=false the body is the multiplexed stream.
+    const std::string start_body = R"({"Detach":false,"Tty":false})";
+    const Response start_res =
+        request("POST", "/exec/" + exec_id + "/start", start_body, json_headers);
+    if (start_res.status_code != 200) {
+        throw DockerError("exec start " + exec_id + " failed: HTTP " +
+                          std::to_string(start_res.status_code) + " " + start_res.body);
+    }
+    const docker::DemuxedLogs demuxed = docker::demux_all(start_res.body);
+
+    // 3) Inspect the exec for the exit code.
+    const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
+    if (inspect_res.status_code != 200) {
+        throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
+                          std::to_string(inspect_res.status_code) + " " + inspect_res.body);
+    }
+
+    ExecResult out;
+    out.stdout_data = std::move(demuxed.stdout_data);
+    out.stderr_data = std::move(demuxed.stderr_data);
+    out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
+    return out;
+}
+
+std::string DockerClient::create_network(const std::string& name) {
+    nlohmann::json body;
+    body["Name"] = name;
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+
+    const Response res = request("POST", "/networks/create", body.dump(), headers);
+    if (res.status_code != 201) {
+        throw DockerError("create_network('" + name + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+}
+
+void DockerClient::remove_network(const std::string& id) {
+    const Response res = request("DELETE", "/networks/" + id);
+    if (res.status_code != 204) {
+        throw DockerError("remove_network(" + id + ") failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+}
+
 } // namespace testcontainers

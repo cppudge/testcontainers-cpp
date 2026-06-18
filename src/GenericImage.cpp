@@ -31,6 +31,8 @@ Container GenericImage::start() const {
     // Let Docker assign host ports for everything we expose.
     spec.publish_all_ports = !exposed_ports_.empty();
     spec.healthcheck = healthcheck_;
+    spec.network = network_;
+    spec.name = container_name_;
 
     const std::string id = client.create_container(spec);
     client.start_container(id);

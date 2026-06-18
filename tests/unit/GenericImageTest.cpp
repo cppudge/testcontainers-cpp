@@ -13,6 +13,8 @@
 //   GenericImage.GettersReflectBuilders - each with_* builder records into the matching getter.
 //   GenericImage.ConfigBuildersReflectGetters - entrypoint/working-dir/user/privileged/mount builders record into the matching getters.
 //   GenericImage.ConfigDefaults - a freshly constructed image has no entrypoint/working-dir/user/mounts and is not privileged.
+//   GenericImage.NetworkDefaults - a freshly constructed image has no network or container name set.
+//   GenericImage.NetworkBuildersReflectGetters - with_network and with_container_name record into the matching getters.
 //   GenericImage.ConfigChainsOnRvalue - the new config builders chain on a temporary rvalue.
 //   GenericImage.ChainsOnLvalue - with_* chains on a named lvalue and accumulates all settings.
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
@@ -74,6 +76,22 @@ TEST(GenericImage, ConfigDefaults) {
     EXPECT_FALSE(img.user().has_value());
     EXPECT_FALSE(img.privileged());
     EXPECT_TRUE(img.mounts().empty());
+}
+
+TEST(GenericImage, NetworkDefaults) {
+    const GenericImage img("alpine", "3.20");
+    EXPECT_FALSE(img.network().has_value());
+    EXPECT_FALSE(img.container_name().has_value());
+}
+
+TEST(GenericImage, NetworkBuildersReflectGetters) {
+    GenericImage img("redis", "7.2");
+    img.with_network("my-net").with_container_name("redis-srv");
+
+    ASSERT_TRUE(img.network().has_value());
+    EXPECT_EQ(*img.network(), "my-net");
+    ASSERT_TRUE(img.container_name().has_value());
+    EXPECT_EQ(*img.container_name(), "redis-srv");
 }
 
 TEST(GenericImage, ConfigBuildersReflectGetters) {
