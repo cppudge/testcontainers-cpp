@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "testcontainers/CopyToContainer.hpp"
 
@@ -27,5 +28,18 @@ std::string strip_leading_slash(const std::string& path);
 /// Throws DockerError if a host file cannot be read or the archive cannot be
 /// produced.
 std::string build_tar(const CopyToContainer& source);
+
+/// One entry extracted from a tar archive.
+struct TarEntry {
+    std::string name;             ///< entry pathname as stored in the archive
+    std::string body;             ///< file contents (empty for non-regular entries)
+    bool is_regular_file = false; ///< true for AE_IFREG entries (files), else dirs/links
+    int mode = 0;                 ///< permission bits (e.g. 0644)
+};
+
+/// Extract every entry from an in-memory tar archive (the body returned by
+/// `GET /containers/{id}/archive`). Throws DockerError if the archive cannot be
+/// opened or parsed.
+std::vector<TarEntry> extract_tar(const std::string& tar_bytes);
 
 } // namespace testcontainers::docker

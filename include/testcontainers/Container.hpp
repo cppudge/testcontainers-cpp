@@ -71,6 +71,17 @@ public:
     /// already exist. Throws DockerError on failure.
     void copy_to(const CopyToContainer& source) const;
 
+    /// Read a single regular file out of the container and return its bytes.
+    /// Fetches `GET .../archive` for `container_path` and extracts the one regular
+    /// file in the archive. Throws DockerError if the path is not a single regular
+    /// file (e.g. a directory). The bytes may be binary.
+    std::string read_file(const std::string& container_path) const;
+
+    /// Copy a single regular file out of the container to `host_dest` (a host file
+    /// path; its parent directory is created if missing). Throws DockerError on
+    /// failure. For directory trees use copy_from_container + extract_tar directly.
+    void copy_file_from(const std::string& container_path, const std::string& host_dest) const;
+
     /// Stop the container (it is still removed on destruction).
     void stop();
 

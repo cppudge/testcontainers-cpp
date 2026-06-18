@@ -60,7 +60,11 @@ review are recorded here so they aren't lost between milestones.
 - **copy-to-container: USTAR + one PUT per source** — `build_tar` uses USTAR, which caps entry path
   length (100 chars, 255 with prefix); very long container paths would need the pax format. Each
   `with_copy_to` source is a separate tar + `PUT .../archive` (not batched into one). The target's
-  parent directory must already exist in the container. No copy-FROM-container (`GET .../archive`) yet.
+  parent directory must already exist in the container.
+- **copy-from-container: single-file helpers only** — `Container::read_file` / `copy_file_from` (and
+  the low-level `copy_from_container` + `docker::extract_tar`) cover a single regular file. Directory-tree
+  extraction from `copy_from_container` is not exposed via a high-level helper yet; use `extract_tar`
+  directly on the raw tar bytes for trees.
 - **Windows containers: dotnet-parity only** — the engine mode is detected (`is_windows_engine()`) and
   Ryuk is skipped on the Windows engine, so there is **no crash-safe reaping** on Windows (RAII /
   AutoRemove only), matching testcontainers-dotnet. `copy-to-container` still Unix-normalizes the entry

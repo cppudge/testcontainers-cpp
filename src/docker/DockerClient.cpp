@@ -10,6 +10,7 @@
 
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/optional.hpp>
 
 #include <cctype>
 #include <mutex>
@@ -96,12 +97,16 @@ Response DockerClient::request(std::string_view method, std::string_view target,
     }
 
     boost::beast::flat_buffer buffer;
-    http::response<http::string_body> res;
-    http::read(stream, buffer, res, ec);
+    // Disable Beast's default 1 MiB body limit: Docker archive (copy-from) and
+    // log bodies can comfortably exceed it, and we always read the whole body.
+    http::response_parser<http::string_body> parser;
+    parser.body_limit(boost::none);
+    http::read(stream, buffer, parser, ec);
     if (ec && ec != http::error::end_of_stream) {
         throw DockerError("Failed to read response from Docker (" + std::string(method) + " " +
                           std::string(target) + "): " + ec.message());
     }
+    auto& res = parser.get();
 
     Response out;
     out.status_code = static_cast<int>(res.result_int());
@@ -320,6 +325,22 @@ void DockerClient::copy_to_container(const std::string& id, const CopyToContaine
         throw DockerError("copy_to_container(" + id + ", '" + source.target() + "') failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
+}
+
+std::string DockerClient::copy_from_container(const std::string& id,
+                                              const std::string& container_path) {
+    const std::string target = "/containers/" + id + "/archive?path=" + url_encode(container_path);
+
+    const Response res = request("GET", target);
+    if (res.status_code == 200) {
+        return res.body;
+    }
+    if (res.status_code == 404) {
+        throw DockerError("copy_from_container(" + id + ", '" + container_path +
+                          "') failed: no such container or path: HTTP 404 " + res.body);
+    }
+    throw DockerError("copy_from_container(" + id + ", '" + container_path + "') failed: HTTP " +
+                      std::to_string(res.status_code) + " " + res.body);
 }
 
 std::string DockerClient::create_network(

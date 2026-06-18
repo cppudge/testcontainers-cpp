@@ -1,8 +1,12 @@
 #include "testcontainers/Container.hpp"
 
+#include <filesystem>
+#include <fstream>
+#include <ios>
 #include <string>
 #include <vector>
 
+#include "docker/Tar.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 
@@ -36,6 +40,55 @@ ExecResult Container::exec(const std::vector<std::string>& cmd) const {
 
 void Container::copy_to(const CopyToContainer& source) const {
     client_.copy_to_container(id_, source);
+}
+
+std::string Container::read_file(const std::string& container_path) const {
+    const std::string tar = client_.copy_from_container(id_, container_path);
+    const std::vector<docker::TarEntry> entries = docker::extract_tar(tar);
+
+    // The archive of a single file holds exactly one regular-file entry; a
+    // directory holds many (and/or none). Require exactly one to read a file.
+    const docker::TarEntry* file = nullptr;
+    std::size_t regular_count = 0;
+    for (const docker::TarEntry& e : entries) {
+        if (e.is_regular_file) {
+            ++regular_count;
+            file = &e;
+        }
+    }
+    if (regular_count != 1) {
+        throw DockerError("read_file('" + container_path + "') on container " + id_ +
+                          " expected exactly one regular file in the archive but found " +
+                          std::to_string(regular_count) + " (is it a directory?)");
+    }
+    return file->body;
+}
+
+void Container::copy_file_from(const std::string& container_path,
+                               const std::string& host_dest) const {
+    const std::string bytes = read_file(container_path);
+
+    const std::filesystem::path dest(host_dest);
+    const std::filesystem::path parent = dest.parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+                              "'): cannot create parent directory: " + ec.message());
+        }
+    }
+
+    std::ofstream out(dest, std::ios::binary);
+    if (!out) {
+        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+                          "'): cannot open host file for writing");
+    }
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+                          "'): failed writing host file");
+    }
 }
 
 void Container::stop() { client_.stop_container(id_); }

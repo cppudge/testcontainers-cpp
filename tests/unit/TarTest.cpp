@@ -11,6 +11,7 @@
 #include <ios>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "docker/Tar.hpp"
 #include "testcontainers/CopyToContainer.hpp"
@@ -23,11 +24,15 @@
 //   Tar.ModeIsReflected - with_mode(0600) is reflected in the built entry's permission bits.
 //   Tar.BinaryPayloadRoundTrips - a payload with embedded NUL bytes round-trips byte-for-byte through the tar.
 //   Tar.MissingHostFileThrows - building a tar from a non-existent host file throws DockerError.
+//   Tar.ExtractRoundTrip - build_tar then extract_tar yields one regular-file entry with the slash-stripped name, body, and mode preserved.
+//   Tar.ExtractBinaryRoundTrip - a body with embedded NUL bytes survives build_tar then extract_tar byte-for-byte.
 
 using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
 using testcontainers::docker::build_tar;
+using testcontainers::docker::extract_tar;
 using testcontainers::docker::strip_leading_slash;
+using testcontainers::docker::TarEntry;
 
 namespace {
 
@@ -146,4 +151,30 @@ TEST(Tar, MissingHostFileThrows) {
     const std::string missing =
         (std::filesystem::temp_directory_path() / "tc_tartest_definitely_missing_file").string();
     EXPECT_THROW(build_tar(CopyToContainer::host_file(missing, "/tmp/x")), DockerError);
+}
+
+TEST(Tar, ExtractRoundTrip) {
+    const std::string tar =
+        build_tar(CopyToContainer::content("hello world", "/tmp/a.txt").with_mode(0644));
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 1u);
+    const TarEntry& e = entries.front();
+    EXPECT_EQ(e.name, "tmp/a.txt"); // leading slash stripped by build_tar
+    EXPECT_EQ(e.body, "hello world");
+    EXPECT_TRUE(e.is_regular_file);
+    EXPECT_EQ(e.mode & 0777, 0644);
+}
+
+TEST(Tar, ExtractBinaryRoundTrip) {
+    const std::string payload("a\0b\0c", 5); // embedded NULs
+    const std::string tar = build_tar(CopyToContainer::content(payload, "/bin/blob"));
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 1u);
+    const TarEntry& e = entries.front();
+    EXPECT_EQ(e.name, "bin/blob");
+    EXPECT_TRUE(e.is_regular_file);
+    EXPECT_EQ(e.body, payload); // byte-exact, including the NULs
+    EXPECT_EQ(e.body.size(), 5u);
 }

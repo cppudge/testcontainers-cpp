@@ -111,6 +111,12 @@ public:
     /// DockerError on failure (non-200, or the host file cannot be read).
     void copy_to_container(const std::string& id, const CopyToContainer& source);
 
+    /// `GET /containers/{id}/archive?path=<container_path>` — fetch the tar archive
+    /// of the file or directory at `container_path`. Returns the raw tar bytes
+    /// (extract with docker::extract_tar). Throws DockerError on 404 (no such
+    /// container or path) or any non-200.
+    std::string copy_from_container(const std::string& id, const std::string& container_path);
+
     // --- Network operations ---
 
     /// `POST /networks/create` — create a user-defined network, returning its id.
