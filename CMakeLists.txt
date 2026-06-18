@@ -65,6 +65,7 @@ add_library(testcontainers
     src/Container.cpp
     src/Network.cpp
     src/Reaper.cpp
+    src/DockerComposeContainer.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 
@@ -124,6 +125,7 @@ if(BUILD_TESTING)
         tests/unit/GenericImageTest.cpp
         tests/unit/ReaperTest.cpp
         tests/unit/TarTest.cpp
+        tests/unit/DockerComposeContainerTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
@@ -152,6 +154,7 @@ if(BUILD_TESTING)
         tests/integration/ReaperTest.cpp
         tests/integration/AuthTest.cpp
         tests/integration/WindowsContainerTest.cpp
+        tests/integration/ComposeTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers

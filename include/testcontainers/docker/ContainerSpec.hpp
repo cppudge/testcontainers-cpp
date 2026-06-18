@@ -41,6 +41,15 @@ struct PortBinding {
     std::uint16_t host_port = 0;  ///< host-side port
 };
 
+/// A subset of one entry from `GET /containers/json` (the list endpoint).
+struct ContainerSummary {
+    std::string id;
+    std::vector<std::string> names;                 ///< "/my-svc" style names
+    std::string image;
+    std::string state;                              ///< "running" / "exited" / ...
+    std::map<std::string, std::string> labels;      ///< container labels
+};
+
 /// The subset of `GET /containers/{id}/json` we currently care about.
 struct ContainerInspect {
     std::string id;

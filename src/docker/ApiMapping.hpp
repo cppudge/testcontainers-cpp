@@ -33,6 +33,9 @@ std::string build_create_query(const CreateContainerSpec& spec,
 /// Parse the response of `GET /containers/{id}/json` into ContainerInspect.
 ContainerInspect parse_inspect(const std::string& body);
 
+/// Parse the JSON array from `GET /containers/json` into ContainerSummary list.
+std::vector<ContainerSummary> parse_container_list(const std::string& body);
+
 /// Build the JSON body for `POST /containers/{id}/exec` (the exec-create call).
 /// Always attaches stdout and stderr so the output can be captured.
 nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd);

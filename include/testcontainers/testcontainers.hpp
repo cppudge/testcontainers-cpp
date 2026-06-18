@@ -5,6 +5,7 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/DockerComposeContainer.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/ImageFromDockerfile.hpp"

@@ -183,6 +183,37 @@ ContainerInspect parse_inspect(const std::string& body) {
     return info;
 }
 
+std::vector<ContainerSummary> parse_container_list(const std::string& body) {
+    const nlohmann::json json = nlohmann::json::parse(body);
+
+    std::vector<ContainerSummary> out;
+    if (!json.is_array()) {
+        return out;
+    }
+    for (const auto& entry : json) {
+        ContainerSummary summary;
+        summary.id = entry.value("Id", std::string{});
+        summary.image = entry.value("Image", std::string{});
+        summary.state = entry.value("State", std::string{});
+        if (const auto names = entry.find("Names"); names != entry.end() && names->is_array()) {
+            for (const auto& name : *names) {
+                if (name.is_string()) {
+                    summary.names.push_back(name.get<std::string>());
+                }
+            }
+        }
+        if (const auto labels = entry.find("Labels"); labels != entry.end() && labels->is_object()) {
+            for (const auto& [key, value] : labels->items()) {
+                if (value.is_string()) {
+                    summary.labels.emplace(key, value.get<std::string>());
+                }
+            }
+        }
+        out.push_back(std::move(summary));
+    }
+    return out;
+}
+
 nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd) {
     nlohmann::json body;
     body["Cmd"] = cmd;

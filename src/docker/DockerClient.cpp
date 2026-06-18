@@ -248,6 +248,29 @@ ContainerInspect DockerClient::inspect_container(const std::string& id) {
     return docker::parse_inspect(res.body);
 }
 
+std::vector<ContainerSummary> DockerClient::list_containers(
+    const std::vector<std::pair<std::string, std::string>>& label_filters, bool all) {
+    std::string target = "/containers/json?all=";
+    target += all ? "1" : "0";
+    if (!label_filters.empty()) {
+        // Docker's filters map each category (here "label") to an array of values;
+        // a label filter's value is the "key=value" equality expression. Each pair
+        // is {category, expression}, e.g. {"label", "com.docker.compose.project=tc1"}.
+        nlohmann::json filters = nlohmann::json::object();
+        for (const auto& [category, expression] : label_filters) {
+            filters[category].push_back(expression);
+        }
+        target += "&filters=" + url_encode(filters.dump());
+    }
+
+    const Response res = request("GET", target);
+    if (res.status_code != 200) {
+        throw DockerError("list_containers failed: HTTP " + std::to_string(res.status_code) + " " +
+                          res.body);
+    }
+    return docker::parse_container_list(res.body);
+}
+
 void DockerClient::stop_container(const std::string& id, std::optional<int> timeout_secs) {
     std::string target = "/containers/" + id + "/stop";
     if (timeout_secs) {

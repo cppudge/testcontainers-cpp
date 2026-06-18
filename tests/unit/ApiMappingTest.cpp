@@ -36,6 +36,7 @@
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
+//   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
@@ -51,6 +52,7 @@ using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
 using testcontainers::docker::BuildOptions;
+using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_server_os;
@@ -347,6 +349,25 @@ TEST(ApiMapping, ParseInspectNoHealthStatus) {
 
     const auto info = parse_inspect(body);
     EXPECT_FALSE(info.health_status.has_value());
+}
+
+TEST(ApiMapping, ParseContainerList) {
+    const std::string body = R"([
+        {"Id": "abc", "Names": ["/x"], "Image": "redis", "State": "running",
+         "Labels": {"com.docker.compose.service": "redis",
+                    "com.docker.compose.project": "tc123"}}
+    ])";
+
+    const auto summaries = parse_container_list(body);
+    ASSERT_EQ(summaries.size(), 1u);
+    const auto& s = summaries.front();
+    EXPECT_EQ(s.id, "abc");
+    ASSERT_EQ(s.names.size(), 1u);
+    EXPECT_EQ(s.names[0], "/x");
+    EXPECT_EQ(s.image, "redis");
+    EXPECT_EQ(s.state, "running");
+    EXPECT_EQ(s.labels.at("com.docker.compose.service"), "redis");
+    EXPECT_EQ(s.labels.at("com.docker.compose.project"), "tc123");
 }
 
 TEST(ApiMapping, SplitImage) {

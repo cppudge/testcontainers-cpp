@@ -84,6 +84,17 @@ review are recorded here so they aren't lost between milestones.
   command-wait). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100).
   A real Windows Ryuk (named-pipe mount + Windows reaper image) is unexplored — see `docs/04`.
 
+- **Docker Compose: ambassador-based, published-ports-only MVP** — `DockerComposeContainer`
+  runs the `docker/compose` image in a one-shot container with the host docker socket
+  bind-mounted (like Ryuk) and discovers service containers by the
+  `com.docker.compose.project` label. Known limits: (a) only PUBLISHED service ports are
+  reachable — there is no socat ambassador for unpublished ports; (b) the ambassador
+  receives only the compose file, so build contexts / host-relative volumes / `.env` are
+  unsupported; (c) the compose stack is NOT Ryuk-reaped (compose-created containers carry no
+  session-id label) — cleanup is the explicit `down -v` + a project-label sweep + RAII only;
+  (d) a single compose file only (no multi-file `-f` stacking, no per-service log streaming).
+  (`src/DockerComposeContainer.cpp`)
+
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
   working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.

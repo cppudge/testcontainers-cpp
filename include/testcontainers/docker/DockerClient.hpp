@@ -93,6 +93,11 @@ public:
     /// `GET /containers/{id}/json` — throws DockerError if the container is gone.
     ContainerInspect inspect_container(const std::string& id);
 
+    /// `GET /containers/json` filtered by label equality. `all` includes stopped
+    /// containers. `label_filters` become Docker's filters={"label":["k=v",...]}.
+    std::vector<ContainerSummary> list_containers(
+        const std::vector<std::pair<std::string, std::string>>& label_filters, bool all = true);
+
     /// `POST /containers/{id}/stop` (optional grace period in seconds).
     void stop_container(const std::string& id, std::optional<int> timeout_secs = std::nullopt);
 
