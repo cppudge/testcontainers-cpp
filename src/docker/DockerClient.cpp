@@ -3,6 +3,7 @@
 #include "docker/ApiMapping.hpp"
 #include "docker/Auth.hpp"
 #include "docker/LogDemux.hpp"
+#include "docker/Tar.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/version.hpp"
@@ -266,6 +267,22 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     out.stderr_data = std::move(demuxed.stderr_data);
     out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
     return out;
+}
+
+void DockerClient::copy_to_container(const std::string& id, const CopyToContainer& source) {
+    const std::string tar = docker::build_tar(source);
+    // Always extract at the root with relative entry names (build_tar strips the
+    // leading '/'), so the target's parent directory must already exist.
+    const std::string target =
+        "/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false";
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/x-tar"}};
+
+    const Response res = request("PUT", target, tar, headers);
+    if (res.status_code != 200) {
+        throw DockerError("copy_to_container(" + id + ", '" + source.target() + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
 }
 
 std::string DockerClient::create_network(

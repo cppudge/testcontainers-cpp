@@ -34,6 +34,10 @@ ExecResult Container::exec(const std::vector<std::string>& cmd) const {
     return client_.exec(id_, cmd);
 }
 
+void Container::copy_to(const CopyToContainer& source) const {
+    client_.copy_to_container(id_, source);
+}
+
 void Container::stop() { client_.stop_container(id_); }
 
 bool Container::is_running() const { return client_.inspect_container(id_).running; }

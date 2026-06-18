@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -91,6 +92,13 @@ public:
     /// TTY (`POST /exec/{exec_id}/start`) — demultiplexing the returned stream —
     /// and reads the exit code (`GET /exec/{exec_id}/json`).
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd);
+
+    /// `PUT /containers/{id}/archive?path=/` — copy a host file or in-memory
+    /// bytes into the container by extracting a single-entry tar at the root.
+    /// The entry name is the target with its leading '/' stripped, so the
+    /// target's parent directory must already exist in the container. Throws
+    /// DockerError on failure (non-200, or the host file cannot be read).
+    void copy_to_container(const std::string& id, const CopyToContainer& source);
 
     // --- Network operations ---
 

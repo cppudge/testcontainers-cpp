@@ -44,6 +44,21 @@ Container GenericImage::start() const {
     spec.name = container_name_;
 
     const std::string id = client.create_container(spec, registry_auth_);
+
+    // Copy files/data in after create, before start (the create→copy→start
+    // order). A copy failure must not leak the partially-created container.
+    try {
+        for (const CopyToContainer& source : copy_to_sources_) {
+            client.copy_to_container(id, source);
+        }
+    } catch (...) {
+        try {
+            client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
+        } catch (...) {
+        }
+        throw;
+    }
+
     client.start_container(id);
 
     try {

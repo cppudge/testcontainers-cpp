@@ -52,6 +52,10 @@ review are recorded here so they aren't lost between milestones.
   nullopt (no subprocess to `docker-credential-*`). The Docker auth config is also re-read from disk
   on every pull (no caching). End-to-end private-registry pull isn't integration-tested (needs a
   reachable authenticated registry; flaky on Docker Desktop).
+- **copy-to-container: USTAR + one PUT per source** — `build_tar` uses USTAR, which caps entry path
+  length (100 chars, 255 with prefix); very long container paths would need the pax format. Each
+  `with_copy_to` source is a separate tar + `PUT .../archive` (not batched into one). The target's
+  parent directory must already exist in the container. No copy-FROM-container (`GET .../archive`) yet.
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

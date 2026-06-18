@@ -57,6 +57,7 @@ add_library(testcontainers
     src/docker/ApiMapping.cpp
     src/docker/Auth.cpp
     src/docker/LogDemux.cpp
+    src/docker/Tar.cpp
     src/docker/DockerClient.cpp
     src/WaitStrategies.cpp
     src/GenericImage.cpp
@@ -121,14 +122,17 @@ if(BUILD_TESTING)
         tests/unit/MountTest.cpp
         tests/unit/GenericImageTest.cpp
         tests/unit/ReaperTest.cpp
+        tests/unit/TarTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
         nlohmann_json::nlohmann_json
+        # TarTest builds tars via the internal builder and reads them back with libarchive.
+        LibArchive::LibArchive
         GTest::gtest
         GTest::gtest_main
     )
-    # ApiMappingTest / AuthTest include internal headers under src/.
+    # ApiMappingTest / AuthTest / TarTest include internal headers under src/.
     target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME unit COMMAND tc_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS "unit")
@@ -141,6 +145,7 @@ if(BUILD_TESTING)
         tests/integration/RedisMvpTest.cpp
         tests/integration/WaitStrategiesTest.cpp
         tests/integration/ExecTest.cpp
+        tests/integration/CopyTest.cpp
         tests/integration/NetworkTest.cpp
         tests/integration/ReaperTest.cpp
         tests/integration/AuthTest.cpp

@@ -124,7 +124,13 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
       `confluentinc/cp-kafka`→`index.docker.io`), with a small standalone base64
       codec. Credential helpers (`credsStore`/`credHelpers`) are not yet
       supported (no shelling out). Covered by 17 unit tests.
-- [ ] Cleanup: copy files into containers
+- [x] **Copy files/data into containers**: a `CopyToContainer` value type
+      (`host_file` / `content` + `with_mode`) PUT as a single-entry tar to
+      `PUT /containers/{id}/archive?path=/` (libarchive USTAR, built in-memory).
+      Supported both at creation (`GenericImage::with_copy_to`, applied
+      create→copy→start so a copy failure removes the container) and into a
+      running container (`Container::copy_to`). Covered by 6 unit tests (tar
+      built and read back with libarchive) + 3 integration tests.
 
 ## Build
 

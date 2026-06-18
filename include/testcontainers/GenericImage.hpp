@@ -8,6 +8,7 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/RegistryAuth.hpp"
@@ -101,6 +102,18 @@ public:
         return std::move(*this);
     }
 
+    /// Copy a host file or in-memory bytes into the container after it is
+    /// created and before it is started (the target's parent directory must
+    /// already exist in the image). Add several to copy multiple entries.
+    GenericImage& with_copy_to(CopyToContainer source) & {
+        copy_to_sources_.push_back(std::move(source));
+        return *this;
+    }
+    GenericImage&& with_copy_to(CopyToContainer source) && {
+        copy_to_sources_.push_back(std::move(source));
+        return std::move(*this);
+    }
+
     GenericImage& with_label(std::string key, std::string value) & {
         labels_.emplace_back(std::move(key), std::move(value));
         return *this;
@@ -182,6 +195,9 @@ public:
     const std::optional<std::string>& user() const noexcept { return user_; }
     bool privileged() const noexcept { return privileged_; }
     const std::vector<Mount>& mounts() const noexcept { return mounts_; }
+    const std::vector<CopyToContainer>& copy_to_sources() const noexcept {
+        return copy_to_sources_;
+    }
     const std::vector<std::pair<std::string, std::string>>& labels() const noexcept {
         return labels_;
     }
@@ -208,6 +224,7 @@ private:
     std::optional<std::string> user_;
     bool privileged_ = false;
     std::vector<Mount> mounts_;
+    std::vector<CopyToContainer> copy_to_sources_;
     std::vector<std::pair<std::string, std::string>> labels_;
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};

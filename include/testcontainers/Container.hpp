@@ -66,6 +66,11 @@ public:
     /// and exit code.
     ExecResult exec(const std::vector<std::string>& cmd) const;
 
+    /// Copy a host file or in-memory bytes into this already-running container
+    /// (`PUT /containers/{id}/archive`). The target's parent directory must
+    /// already exist. Throws DockerError on failure.
+    void copy_to(const CopyToContainer& source) const;
+
     /// Stop the container (it is still removed on destruction).
     void stop();
 
