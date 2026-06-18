@@ -4,8 +4,10 @@ Native C++ port of [Testcontainers](https://testcontainers.com/) — spin up rea
 containers from your integration tests and tear them down automatically. **No Rust, no `docker`
 CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 
-> **Status:** early alpha / design phase. The build skeleton and dependency stack are in place;
-> the Docker client and public API are being implemented. See the roadmap below.
+> **Status:** alpha. The Docker client and the high-level API — `GenericImage` / `Container` /
+> `Network`, five wait strategies, `exec`, copy-to-container, the Ryuk crash-safety reaper, and
+> registry auth — are implemented and covered by ~120 unit + ~24 integration tests against a real
+> daemon. TLS-to-remote-Docker is the main remaining gap. See the roadmap below.
 
 This is a from-scratch rewrite. A previous attempt (`testcontainers-cxx/`, in this repo for
 reference) wrapped the Rust `testcontainers` library over a cxx FFI bridge; this project drops
@@ -39,6 +41,97 @@ Transport matrix (all HTTP/1.1, over a single Boost.Asio stream abstraction):
 | Remote / CI | `tcp://` / `https://` | `tcp::socket` / `ssl::stream` |
 
 Full architecture analysis of the reference Rust implementation: [`docs/01`](docs/01-how-testcontainers-rs-works.md).
+
+## Usage
+
+Include the umbrella header `testcontainers/testcontainers.hpp` (or the individual headers) and link
+the `testcontainers::testcontainers` CMake target. Everything lives in `namespace testcontainers`.
+
+### Quick start — a service in a test
+
+```cpp
+#include <gtest/gtest.h>
+#include "testcontainers/testcontainers.hpp"
+
+using namespace testcontainers;
+
+TEST(Cache, RedisIsReachable) {
+    // Start Redis, block until it logs readiness, then talk to it.
+    Container redis = GenericImage("redis", "7.2")
+                          .with_exposed_port(tcp(6379))
+                          .with_wait(wait_for::stdout_message("Ready to accept connections"))
+                          .start();
+
+    const std::string   host = redis.host();                  // "localhost" for a local daemon
+    const std::uint16_t port = redis.get_host_port(tcp(6379)); // the published host port
+
+    // ... point your Redis client at host:port and run assertions ...
+
+}   // `redis` is force-removed here (RAII). If the process is *killed* instead,
+    // the Ryuk reaper removes it a few seconds later.
+```
+
+### Configuring the image
+
+`GenericImage` is a copyable, reusable builder; each `with_*` mutates in place and chains:
+
+```cpp
+auto postgres = GenericImage("postgres", "16-alpine")
+                    .with_env("POSTGRES_PASSWORD", "secret")
+                    .with_env("POSTGRES_DB", "test")
+                    .with_exposed_port(tcp(5432))
+                    .with_wait(wait_for::stdout_message("ready to accept connections", 2))
+                    .with_startup_timeout(std::chrono::seconds(30));
+
+Container a = postgres.start();   // reusable — start as many as you need
+Container b = postgres.start();
+```
+
+Builders: `with_cmd`, `with_entrypoint`, `with_env`, `with_label`, `with_exposed_port`,
+`with_working_dir`, `with_user`, `with_privileged`, `with_mount` (`Mount::bind/volume/tmpfs`),
+`with_healthcheck` (`Healthcheck::cmd_shell/cmd`), `with_copy_to`, `with_network`,
+`with_container_name`, `with_registry_auth`, `with_wait`, `with_startup_timeout`.
+
+Wait strategies — `with_wait(wait_for::…)`: `stdout_message` / `stderr_message` / `log`,
+`seconds` / `millis`, `exit` / `exit_code`, `healthy` (Docker healthcheck), `http(path, port, status)`.
+Several may be chained; they run in order under the startup timeout.
+
+### Talking to the running container
+
+`Container` is a move-only RAII handle: `host()`, `get_host_port(port)`, `logs()`, `exec(cmd)`,
+`copy_to(src)`, `stop()`, `is_running()`, `remove()`.
+
+```cpp
+ExecResult r = redis.exec({"redis-cli", "PING"});  // r.stdout_data / r.stderr_data / r.exit_code
+ContainerLogs l = redis.logs();                     // l.stdout_data / l.stderr_data
+redis.copy_to(CopyToContainer::content("seed-data", "/tmp/seed.txt"));
+```
+
+### Several containers on one network
+
+Put containers on a user-defined network so they resolve each other by container name:
+
+```cpp
+Network net = Network::create();
+
+Container redis = GenericImage("redis", "7.2")
+                      .with_network(net.name())
+                      .with_container_name("redis")          // peers reach it as "redis"
+                      .with_wait(wait_for::stdout_message("Ready to accept connections"))
+                      .start();
+
+Container app = GenericImage("my/app", "latest")
+                    .with_network(net.name())
+                    .with_env("REDIS_URL", "redis://redis:6379")
+                    .start();
+```
+
+### Cleanup
+
+Containers and networks are removed when their handle goes out of scope. As a crash-safety net, a
+[Ryuk](https://github.com/testcontainers/moby-ryuk) sidecar reaps everything tagged with the run's
+session label if the process dies (e.g. `SIGKILL`, where destructors never run). Opt out with
+`TESTCONTAINERS_RYUK_DISABLED=true`. Runnable examples live in [`tests/integration/`](tests/integration).
 
 ## Tech stack
 
@@ -74,15 +167,16 @@ Lessons from auditing the FFI fork ([`docs/03`](docs/03-cxx-interface-evaluation
 ## Project layout
 
 ```
-include/testcontainers/      public API headers (core/, core/wait/, system/ip/)
-src/                         implementation
-  docker/                    Docker Engine HTTP API client (transport + endpoints)
-examples/                    runnable examples (smoke test)
-tests/unit/                  unit tests (GoogleTest)
+include/testcontainers/      public API (GenericImage, Container, Network, value types)
+  docker/                    DockerClient + low-level types (DockerHost, ContainerSpec, Logs)
+src/  src/docker/            implementation: transport, endpoints, tar, auth, log demux, Ryuk
+examples/                    tc_smoke (links all deps), tc_ping (GET /_ping)
+tests/unit/  tests/integration/   GoogleTest — unit (no Docker) + integration (real daemon)
 cmake/cmake-conan/           vendored cmake-conan provider
-docs/                        design docs (01 architecture, 02 deps, 03 interface audit)
-_research/testcontainers-rs/ cloned Rust reference sources
-testcontainers-cxx/          previous FFI-bridge fork (reference only)
+docs/                        design docs (01 architecture, 02 deps, 03 interface audit) + conventions
+TODO.md                      backlog / known limitations
+_research/testcontainers-rs/ cloned Rust reference sources (gitignored)
+testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignored)
 ```
 
 ## Roadmap
