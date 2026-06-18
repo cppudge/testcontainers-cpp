@@ -1,0 +1,144 @@
+# ===== Conan integration (cmake-conan provider) =====
+# When configured directly (not through `conan build`), the vendored cmake-conan
+# provider runs `conan install` automatically. conanfile.py sets
+# SKIP_CONAN_PROVIDER_CMAKE=ON so this block is skipped during a conan-driven build.
+if(DEFINED SKIP_CONAN_PROVIDER_CMAKE)
+    message(STATUS "Skipping cmake-conan provider (SKIP_CONAN_PROVIDER_CMAKE is set)")
+else()
+    message(STATUS "Using cmake-conan provider for automatic conan install")
+    # Opt-in hermetic mode: use a project-local Conan home. Off by default so we
+    # reuse the user's global Conan home (which already has remotes + recipe cache).
+    # A fresh local home would have no remotes configured and the install would fail.
+    option(TC_LOCAL_CONAN_HOME "Use a project-local .conan2 home (hermetic)" OFF)
+    if(TC_LOCAL_CONAN_HOME AND NOT DEFINED ENV{CONAN_HOME})
+        file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/.conan2")
+        set(ENV{CONAN_HOME} "${CMAKE_SOURCE_DIR}/.conan2")
+    endif()
+    set(CONAN_HOST_PROFILE "auto-cmake" CACHE STRING "Conan host profile")
+    set(CONAN_BUILD_PROFILE "auto-cmake" CACHE STRING "Conan build profile")
+    set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
+        "${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_provider.cmake")
+endif()
+
+# ===== Project =====
+cmake_minimum_required(VERSION 3.20)
+project(testcontainers VERSION 0.1.0 LANGUAGES CXX)
+
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 20)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+option(TC_BUILD_EXAMPLES "Build examples" ON)
+
+if(BUILD_SHARED_LIBS)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+endif()
+
+# ===== Dependencies (provided by Conan / CMakeDeps) =====
+find_package(Boost REQUIRED)            # header-only Beast + Asio
+find_package(OpenSSL REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(LibArchive REQUIRED)
+
+# ===== Library =====
+add_library(testcontainers
+    src/version.cpp
+    src/docker/DockerHost.cpp
+    src/docker/Transport.cpp
+    src/docker/ApiMapping.cpp
+    src/docker/DockerClient.cpp
+)
+add_library(testcontainers::testcontainers ALIAS testcontainers)
+
+target_include_directories(testcontainers
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src   # internal headers, e.g. "docker/Transport.hpp"
+)
+target_compile_features(testcontainers PUBLIC cxx_std_20)
+
+# Third-party deps are implementation details: keep them PRIVATE so the public
+# headers stay free of Boost/OpenSSL/json/libarchive types.
+target_link_libraries(testcontainers PRIVATE
+    boost::boost
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    LibArchive::LibArchive
+)
+
+if(WIN32)
+    # Asio named-pipe / TCP transport.
+    target_link_libraries(testcontainers PRIVATE ws2_32 mswsock crypt32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(testcontainers PRIVATE Threads::Threads)
+endif()
+
+# ===== Examples =====
+if(TC_BUILD_EXAMPLES)
+    add_executable(tc_smoke examples/smoke.cpp)
+    target_link_libraries(tc_smoke PRIVATE testcontainers::testcontainers)
+
+    add_executable(tc_ping examples/ping.cpp)
+    target_link_libraries(tc_ping PRIVATE testcontainers::testcontainers)
+endif()
+
+# ===== Tests =====
+include(CTest)
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+
+    # Unit tests — no Docker required.
+    add_executable(tc_unit_tests
+        tests/unit/version_test.cpp
+        tests/unit/DockerHostTest.cpp
+        tests/unit/ResponseTest.cpp
+        tests/unit/ApiMappingTest.cpp
+    )
+    target_link_libraries(tc_unit_tests PRIVATE
+        testcontainers::testcontainers
+        nlohmann_json::nlohmann_json
+        GTest::gtest
+        GTest::gtest_main
+    )
+    # ApiMappingTest includes internal headers under src/.
+    target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME unit COMMAND tc_unit_tests)
+    set_tests_properties(unit PROPERTIES LABELS "unit")
+
+    # Integration tests — require a reachable Docker daemon (skipped otherwise).
+    add_executable(tc_integration_tests
+        tests/integration/ContainerLifecycleTest.cpp
+    )
+    target_link_libraries(tc_integration_tests PRIVATE
+        testcontainers::testcontainers
+        GTest::gtest
+        GTest::gtest_main
+    )
+    add_test(NAME integration COMMAND tc_integration_tests)
+    set_tests_properties(integration PROPERTIES LABELS "integration")
+endif()
+
+# ===== Install =====
+include(GNUInstallDirs)
+install(TARGETS testcontainers
+    EXPORT testcontainersTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp"
+)

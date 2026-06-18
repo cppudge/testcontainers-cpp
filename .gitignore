@@ -1,0 +1,20 @@
+# Build & install
+/build/
+/install/
+/out/
+compile_commands.json
+
+# Conan (project-local home + generated files)
+/.conan2/
+CMakeUserPresets.json
+conan_toolchain.cmake
+conandata.yml.lock
+
+# Editor / IDE
+/.vs/
+/.idea/
+*.user
+
+# Reference-only nested repos (external sources / previous FFI fork) — not part of this project
+/testcontainers-cxx/
+/_research/

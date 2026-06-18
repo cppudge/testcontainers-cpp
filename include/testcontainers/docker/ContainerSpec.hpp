@@ -1,0 +1,43 @@
+#pragma once
+
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace testcontainers {
+
+/// Minimal request for `POST /containers/create`.
+///
+/// This is a deliberately small, flat precursor to the full `ContainerRequest`
+/// model; it carries just enough to create and run a container.
+struct CreateContainerSpec {
+    std::string image;                                       ///< "alpine:3.20"
+    std::vector<std::string> cmd;                            ///< command / args
+    std::vector<std::string> env;                            ///< "KEY=VALUE" entries
+    std::vector<std::string> exposed_ports;                  ///< "6379/tcp"
+    std::vector<std::pair<std::string, std::string>> labels; ///< container labels
+    std::optional<std::string> name;                         ///< container name (?name=)
+    bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts
+};
+
+/// A single published port binding from a container inspect.
+struct PortBinding {
+    std::string host_ip;          ///< "0.0.0.0" / "::"
+    std::uint16_t host_port = 0;  ///< host-side port
+};
+
+/// The subset of `GET /containers/{id}/json` we currently care about.
+struct ContainerInspect {
+    std::string id;
+    std::string name;
+    std::string status;                       ///< State.Status ("running", "exited", …)
+    bool running = false;                      ///< State.Running
+    std::optional<std::int64_t> exit_code;     ///< State.ExitCode (when not running)
+    /// "6379/tcp" -> published host bindings (from NetworkSettings.Ports).
+    std::map<std::string, std::vector<PortBinding>> ports;
+};
+
+} // namespace testcontainers
