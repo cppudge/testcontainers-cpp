@@ -47,6 +47,11 @@ review are recorded here so they aren't lost between milestones.
   resource types (named volumes, images) must also be tagged to be reaped. The global `Reaper` has
   no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is
   `AutoRemove`d on exit. Image pinned to `testcontainers/ryuk:0.11.0`.
+- **Registry credential helpers unsupported** — `auth_from_docker_config` reads only plain `auths`
+  (base64) + `identitytoken`; `credsStore`/`credHelpers` (the default on Docker Desktop) return
+  nullopt (no subprocess to `docker-credential-*`). The Docker auth config is also re-read from disk
+  on every pull (no caching). End-to-end private-registry pull isn't integration-tested (needs a
+  reachable authenticated registry; flaky on Docker Desktop).
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

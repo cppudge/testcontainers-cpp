@@ -43,7 +43,7 @@ Container GenericImage::start() const {
     spec.network = network_;
     spec.name = container_name_;
 
-    const std::string id = client.create_container(spec);
+    const std::string id = client.create_container(spec, registry_auth_);
     client.start_container(id);
 
     try {

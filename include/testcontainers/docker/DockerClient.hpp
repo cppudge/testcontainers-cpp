@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "testcontainers/ExecResult.hpp"
+#include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -54,13 +55,19 @@ public:
 
     /// `POST /images/create?fromImage=...` — pull an image (blocks until done).
     /// `image` is "name[:tag]" (tag defaults to "latest").
-    void pull_image(const std::string& image);
+    ///
+    /// When `auth` is provided it is sent verbatim as `X-Registry-Auth`;
+    /// otherwise credentials are auto-resolved from the Docker config for the
+    /// image's registry. A public pull (no credentials found) is unaffected.
+    void pull_image(const std::string& image,
+                    const std::optional<RegistryAuth>& auth = std::nullopt);
 
     // --- Container lifecycle ---
 
     /// `POST /containers/create` — returns the new container id. If the image is
-    /// missing (404), pulls it and retries once.
-    std::string create_container(const CreateContainerSpec& spec);
+    /// missing (404), pulls it (threading `auth` through) and retries once.
+    std::string create_container(const CreateContainerSpec& spec,
+                                 const std::optional<RegistryAuth>& auth = std::nullopt);
 
     /// `POST /containers/{id}/start`.
     void start_container(const std::string& id);

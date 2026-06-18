@@ -1,6 +1,7 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "docker/ApiMapping.hpp"
+#include "docker/Auth.hpp"
 #include "docker/LogDemux.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
@@ -115,12 +116,21 @@ bool DockerClient::ping() {
     return request("GET", "/_ping").ok();
 }
 
-void DockerClient::pull_image(const std::string& image) {
+void DockerClient::pull_image(const std::string& image, const std::optional<RegistryAuth>& auth) {
     const auto [name, tag] = docker::split_image(image);
     const std::string target =
         "/images/create?fromImage=" + url_encode(name) + "&tag=" + url_encode(tag);
 
-    const Response res = request("POST", target);
+    // Use the explicit credentials if given, else auto-resolve from the Docker
+    // config for this image's registry. No credentials -> a plain public pull.
+    const std::optional<RegistryAuth> cred =
+        auth ? auth : docker::resolve_auth_for_image(image);
+    std::vector<std::pair<std::string, std::string>> headers;
+    if (cred) {
+        headers.emplace_back("X-Registry-Auth", docker::encode_x_registry_auth(*cred));
+    }
+
+    const Response res = request("POST", target, /*body*/ {}, headers);
     if (res.status_code != 200) {
         throw DockerError("Failed to pull image '" + image + "': HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
@@ -130,7 +140,8 @@ void DockerClient::pull_image(const std::string& image) {
     docker::throw_if_pull_error(res.body, image);
 }
 
-std::string DockerClient::create_container(const CreateContainerSpec& spec) {
+std::string DockerClient::create_container(const CreateContainerSpec& spec,
+                                           const std::optional<RegistryAuth>& auth) {
     const std::string body = docker::build_create_body(spec).dump();
     std::string target = "/containers/create";
     if (spec.name) {
@@ -141,8 +152,8 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec) {
 
     Response res = request("POST", target, body, headers);
     if (res.status_code == 404) {
-        // Image not present locally — pull it and retry once.
-        pull_image(spec.image);
+        // Image not present locally — pull it (with auth) and retry once.
+        pull_image(spec.image, auth);
         res = request("POST", target, body, headers);
     }
     if (res.status_code != 201) {

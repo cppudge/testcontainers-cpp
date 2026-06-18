@@ -10,6 +10,7 @@
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
@@ -158,6 +159,17 @@ public:
         return std::move(*this);
     }
 
+    /// Supply explicit registry credentials for pulling a private image. When
+    /// unset, credentials are auto-resolved from the Docker config (if any).
+    GenericImage& with_registry_auth(RegistryAuth auth) & {
+        registry_auth_ = std::move(auth);
+        return *this;
+    }
+    GenericImage&& with_registry_auth(RegistryAuth auth) && {
+        registry_auth_ = std::move(auth);
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -178,6 +190,7 @@ public:
     const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
     const std::optional<std::string>& network() const noexcept { return network_; }
     const std::optional<std::string>& container_name() const noexcept { return container_name_; }
+    const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -201,6 +214,7 @@ private:
     std::optional<Healthcheck> healthcheck_;
     std::optional<std::string> network_;
     std::optional<std::string> container_name_;
+    std::optional<RegistryAuth> registry_auth_;
 };
 
 } // namespace testcontainers

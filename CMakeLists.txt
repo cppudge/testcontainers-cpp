@@ -55,6 +55,7 @@ add_library(testcontainers
     src/docker/DockerHost.cpp
     src/docker/Transport.cpp
     src/docker/ApiMapping.cpp
+    src/docker/Auth.cpp
     src/docker/LogDemux.cpp
     src/docker/DockerClient.cpp
     src/WaitStrategies.cpp
@@ -112,6 +113,7 @@ if(BUILD_TESTING)
         tests/unit/DockerHostTest.cpp
         tests/unit/ResponseTest.cpp
         tests/unit/ApiMappingTest.cpp
+        tests/unit/AuthTest.cpp
         tests/unit/LogDemuxTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/WaitForTest.cpp
@@ -126,7 +128,7 @@ if(BUILD_TESTING)
         GTest::gtest
         GTest::gtest_main
     )
-    # ApiMappingTest includes internal headers under src/.
+    # ApiMappingTest / AuthTest include internal headers under src/.
     target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME unit COMMAND tc_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS "unit")
@@ -141,6 +143,7 @@ if(BUILD_TESTING)
         tests/integration/ExecTest.cpp
         tests/integration/NetworkTest.cpp
         tests/integration/ReaperTest.cpp
+        tests/integration/AuthTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers

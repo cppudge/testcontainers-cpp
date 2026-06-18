@@ -115,7 +115,16 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
       holds a persistent TCP control connection and reaps everything matching the session label
       when the process dies (covers `SIGKILL`/crash where C++ destructors don't run). Opt out via
       `TESTCONTAINERS_RYUK_DISABLED=true`.
-- [ ] Cleanup: copy, registry auth
+- [x] **Registry authentication** (pull private images): `X-Registry-Auth` on
+      `POST /images/create`, sent for both explicit credentials
+      (`GenericImage::with_registry_auth` / `DockerClient::pull_image(image, auth)`)
+      and auto-resolved ones from the Docker config (`DOCKER_AUTH_CONFIG` →
+      `$DOCKER_CONFIG/config.json` → `~/.docker/config.json`). Registry resolution
+      follows the Docker CLI heuristic (`ghcr.io/...`→`ghcr.io`,
+      `confluentinc/cp-kafka`→`index.docker.io`), with a small standalone base64
+      codec. Credential helpers (`credsStore`/`credHelpers`) are not yet
+      supported (no shelling out). Covered by 17 unit tests.
+- [ ] Cleanup: copy files into containers
 
 ## Build
 
