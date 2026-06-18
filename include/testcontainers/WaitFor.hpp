@@ -46,12 +46,18 @@ struct Http {
     std::chrono::milliseconds poll_interval{200}; ///< delay between probes
 };
 
+/// Wait until the mapped host port for `port` accepts a TCP connection.
+struct Port {
+    ContainerPort port;                           ///< container port to probe
+    std::chrono::milliseconds poll_interval{200}; ///< delay between probes
+};
+
 } // namespace wait
 
 /// A readiness condition: a closed sum of the small wait strategies above,
 /// dispatched with `std::visit`. Copyable so it lives happily in a vector.
 using WaitFor = std::variant<wait::None, wait::LogMessage, wait::Duration, wait::Exit,
-                             wait::Healthcheck, wait::Http>;
+                             wait::Healthcheck, wait::Http, wait::Port>;
 
 /// Convenience factories that build the right `WaitFor` alternative.
 namespace wait_for {
@@ -104,6 +110,13 @@ inline WaitFor http(std::string path, ContainerPort port, int status = 200) {
     h.port = port;
     h.expected_status = status;
     return h;
+}
+
+/// Wait until the mapped host port for `port` accepts a TCP connection.
+inline WaitFor listening_port(ContainerPort port) {
+    wait::Port p;
+    p.port = port;
+    return p;
 }
 
 } // namespace wait_for

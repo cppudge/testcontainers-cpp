@@ -32,9 +32,14 @@ review are recorded here so they aren't lost between milestones.
   every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
   item above). (`src/WaitStrategies.cpp`)
 - **Wait-strategy port resolution duplicated** — `mapped_host_port` in
-  `src/WaitStrategies.cpp` (HTTP wait) re-implements `Container::get_host_port`'s IPv4-binding
-  preference; factor into one shared helper. The HTTP wait also opens a fresh TCP connection +
+  `src/WaitStrategies.cpp` (HTTP + port waits) re-implements `Container::get_host_port`'s IPv4-binding
+  preference; factor into one shared helper. The HTTP/port waits also open a fresh TCP connection +
   `io_context` per probe (fine for ~200ms polling).
+- **`wait::Port` probes only the externally mapped host port** — `wait_for::listening_port` resolves
+  the published host port and does a TCP connect; it does NOT do the in-container `/proc/net/tcp`
+  listening check that testcontainers-java additionally performs (`tcp_probe` in
+  `src/WaitStrategies.cpp`). Adequate for "is the service reachable from the host", which is what tests
+  need, but a container whose port is published before the process binds could read as ready early.
 - **msvc-preset configure noise** — under the Visual Studio (multi-config) preset, CMake prints
   non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release` errors for OpenSSL/zlib because Conan
   installs Release-only; the Release build and tests still succeed. The default `ninja` preset is

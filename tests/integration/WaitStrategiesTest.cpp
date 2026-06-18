@@ -16,6 +16,7 @@
 //   WaitStrategies.ExitCodeWaitSucceeds - a container that runs `exit 7` with wait_for::exit_code(7) starts, becomes ready, and is no longer running.
 //   WaitStrategies.HealthcheckWaitBecomesHealthy - an alpine container with a passing healthcheck and wait_for::healthy() starts and is running once healthy.
 //   WaitStrategies.HttpWaitReachesNginx - an nginx container with wait_for::http("/", tcp(80), 200) starts, publishes a reachable host port, and is running.
+//   WaitStrategies.PortWaitReachesRedis - a redis container with wait_for::listening_port(tcp(6379)) starts, publishes a reachable host port, and is running.
 
 using namespace testcontainers;
 using namespace std::chrono_literals;
@@ -58,5 +59,14 @@ TEST_F(WaitStrategies, HttpWaitReachesNginx) {
                       .with_wait(wait_for::http("/", tcp(80), 200))
                       .start();
     EXPECT_GT(c.get_host_port(tcp(80)), 0);
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WaitStrategies, PortWaitReachesRedis) {
+    Container c = GenericImage("redis", "7.2")
+                      .with_exposed_port(tcp(6379))
+                      .with_wait(wait_for::listening_port(tcp(6379)))
+                      .start();
+    EXPECT_GT(c.get_host_port(tcp(6379)), 0);
     EXPECT_TRUE(c.is_running());
 }

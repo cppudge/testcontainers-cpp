@@ -18,6 +18,7 @@
 //   WaitFor.HealthyFactory - wait_for::healthy builds a Healthcheck alternative.
 //   WaitFor.HttpFactory - wait_for::http builds an Http with the given path, port, and status (and a default poll interval).
 //   WaitFor.HttpFactoryDefaultStatus - wait_for::http defaults the expected status to 200.
+//   WaitFor.ListeningPortFactory - wait_for::listening_port builds a Port with the given port (and a default poll interval).
 //   WaitFor.Copyable - a WaitFor (and a vector of them) can be copied.
 //   WaitFor.VisitDispatches - std::visit dispatches to the active alternative.
 
@@ -92,6 +93,14 @@ TEST(WaitFor, HttpFactoryDefaultStatus) {
     const WaitFor w = wait_for::http("/", tcp(80));
     ASSERT_TRUE(std::holds_alternative<wait::Http>(w));
     EXPECT_EQ(std::get<wait::Http>(w).expected_status, 200);
+}
+
+TEST(WaitFor, ListeningPortFactory) {
+    const WaitFor w = wait_for::listening_port(tcp(5432));
+    ASSERT_TRUE(std::holds_alternative<wait::Port>(w));
+    const auto& p = std::get<wait::Port>(w);
+    EXPECT_EQ(p.port, tcp(5432));
+    EXPECT_EQ(p.poll_interval, std::chrono::milliseconds(200)); // default
 }
 
 TEST(WaitFor, Copyable) {

@@ -200,6 +200,37 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
     }
 }
 
+/// One TCP probe: resolve host:port and open a connection. Returns true on a
+/// successful connect (the caller treats that as "ready"), false on any
+/// refusal/unreachable/error (treated as "not ready yet").
+bool tcp_probe(const std::string& host, std::uint16_t port) {
+    namespace asio = boost::asio;
+    using asio::ip::tcp;
+
+    try {
+        asio::io_context io;
+        tcp::resolver resolver(io);
+        boost::system::error_code ec;
+        const auto endpoints = resolver.resolve(host, std::to_string(port), ec);
+        if (ec) {
+            return false;
+        }
+
+        tcp::socket socket(io);
+        asio::connect(socket, endpoints, ec);
+        if (ec) {
+            return false; // refused / unreachable -> not ready yet
+        }
+
+        boost::system::error_code ignore;
+        socket.shutdown(tcp::socket::shutdown_both, ignore);
+        return true;
+    } catch (...) {
+        // Any transient transport failure is treated as "not ready yet".
+        return false;
+    }
+}
+
 /// Resolve the mapped host port once, then probe `cond.path` every
 /// `poll_interval` until the response status matches `expected_status`.
 /// Connection errors are non-fatal. Throw on the deadline.
@@ -225,6 +256,30 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
                               " from " + host + ":" + std::to_string(port) + cond.path +
                               " (container " + id + ", last status " + std::to_string(last_status) +
                               ")");
+        }
+        std::this_thread::sleep_for(interval);
+    }
+}
+
+/// Resolve the mapped host port once, then attempt a TCP connect every
+/// `poll_interval` until it succeeds. Connection errors are non-fatal. Throw on
+/// the deadline.
+void wait_for_port(DockerClient& client, const std::string& id, const wait::Port& cond,
+                   Clock::time_point deadline) {
+    const std::string host = client.host().http_host();
+    const std::uint16_t port = mapped_host_port(client, id, cond.port);
+
+    const std::chrono::milliseconds interval =
+        cond.poll_interval.count() > 0 ? cond.poll_interval : std::chrono::milliseconds(200);
+
+    for (;;) {
+        if (tcp_probe(host, port)) {
+            return;
+        }
+
+        if (Clock::now() >= deadline) {
+            throw DockerError("Timed out waiting for TCP connection to " + host + ":" +
+                              std::to_string(port) + " (container " + id + ")");
         }
         std::this_thread::sleep_for(interval);
     }
@@ -257,6 +312,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                     wait_for_healthcheck(client, id, deadline);
                 } else if constexpr (std::is_same_v<T, wait::Http>) {
                     wait_for_http(client, id, cond, deadline);
+                } else if constexpr (std::is_same_v<T, wait::Port>) {
+                    wait_for_port(client, id, cond, deadline);
                 }
             },
             w);
