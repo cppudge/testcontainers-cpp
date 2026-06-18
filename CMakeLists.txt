@@ -55,6 +55,9 @@ add_library(testcontainers
     src/docker/ApiMapping.cpp
     src/docker/LogDemux.cpp
     src/docker/DockerClient.cpp
+    src/WaitStrategies.cpp
+    src/GenericImage.cpp
+    src/Container.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 
@@ -106,6 +109,9 @@ if(BUILD_TESTING)
         tests/unit/ResponseTest.cpp
         tests/unit/ApiMappingTest.cpp
         tests/unit/LogDemuxTest.cpp
+        tests/unit/ContainerPortTest.cpp
+        tests/unit/WaitForTest.cpp
+        tests/unit/GenericImageTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
@@ -122,12 +128,19 @@ if(BUILD_TESTING)
     add_executable(tc_integration_tests
         tests/integration/ContainerLifecycleTest.cpp
         tests/integration/ContainerLogsTest.cpp
+        tests/integration/RedisMvpTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers
+        # RedisMvpTest opens a raw TCP socket with Boost.Asio (allowed in a test
+        # translation unit — it is not a public header).
+        boost::boost
         GTest::gtest
         GTest::gtest_main
     )
+    if(WIN32)
+        target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
+    endif()
     add_test(NAME integration COMMAND tc_integration_tests)
     set_tests_properties(integration PROPERTIES LABELS "integration")
 endif()

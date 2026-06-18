@@ -99,10 +99,11 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
       3 integration tests (real container lifecycle, skipped if no daemon).
 - [x] **Multiplexed log-stream parser**; container logs + `GET /containers/{id}/logs`
       (incremental demuxer handling split headers/payloads, `DockerClient::logs()`).
-- [ ] Value types & `GenericImage`/`Container` builder; `start()` lifecycle
-- [ ] Wait strategies (log / http / healthcheck / exit), 60s startup timeout
-- [ ] Host-port discovery from `NetworkSettings.Ports`
-- [ ] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
+- [x] Value types (`ContainerPort`, `WaitFor`) & `GenericImage`/`Container` builder; `start()` lifecycle
+- [x] Host-port discovery from `NetworkSettings.Ports` (`Container::get_host_port`)
+- [ ] Wait strategies: log message (polling) + fixed duration done; http / healthcheck / exit pending,
+      60s startup timeout
+- [x] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
 - [ ] Cleanup: RAII + Ryuk reaper; networks, mounts, copy, exec, registry auth
 
 ## Build

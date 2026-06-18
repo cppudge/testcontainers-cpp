@@ -24,13 +24,21 @@ review are recorded here so they aren't lost between milestones.
   (see `docs/01` §2).
 - **One connection per request** — `request()` opens/closes a transport each call
   (no keep-alive / pooling).
+- **`get_host_port` IPv4/IPv6** — now prefers the IPv4 binding, but there are no
+  explicit `get_host_port_ipv4/ipv6` accessors (cf. Rust's ipv4/ipv6 maps), and it
+  re-inspects the container on every call (no caching of the published ports).
+  (`src/Container.cpp`)
+- **Log-wait polling cost** — the log wait re-fetches the full `tail=all` snapshot
+  every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
+  item above). (`src/WaitStrategies.cpp`)
+- **Only log + duration wait strategies** — HTTP-probe, healthcheck (`State.Health`),
+  and exit-code waits are not implemented yet.
 
-## Next milestones (toward the redis MVP)
-- Value types (`ContainerPort`, `Mount`, `WaitFor` variant, …) as plain copyable types.
-- `GenericImage` / `Container` builder (in-place, ref-qualified `with_*`) + `start()` lifecycle.
-- Wait strategies (log / http / healthcheck / exit) with the 60s startup timeout.
-- Host-port discovery helper over inspect ports.
-- **MVP:** `GenericImage("redis","7.2")` up → connect → auto-remove.
+## Next milestones
+- Remaining wait strategies: HTTP probe, healthcheck (`State.Health`), exit-code.
+- Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
+  working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.
+- `Mount` value type (bind / volume / tmpfs).
 
 ## Later
 - Cleanup: RAII container + Ryuk reaper (crash-safe).
