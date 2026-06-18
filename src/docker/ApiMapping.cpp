@@ -231,4 +231,60 @@ std::pair<std::string, std::string> split_image(const std::string& image) {
     return {image, "latest"};
 }
 
+std::string build_build_query(const BuildOptions& options,
+                              const std::function<std::string(const std::string&)>& encode) {
+    std::string query;
+    auto append = [&](const std::string& key, const std::string& value) {
+        query += query.empty() ? '?' : '&';
+        query += key;
+        query += '=';
+        query += encode(value);
+    };
+    append("t", options.tag);
+    append("dockerfile", options.dockerfile);
+    if (options.no_cache) {
+        append("nocache", "1");
+    }
+    if (options.pull) {
+        append("pull", "1");
+    }
+    if (!options.target.empty()) {
+        append("target", options.target);
+    }
+    if (!options.build_args.empty()) {
+        nlohmann::json args = nlohmann::json::object();
+        for (const auto& [key, value] : options.build_args) {
+            args[key] = value;
+        }
+        append("buildargs", args.dump());
+    }
+    return query;
+}
+
+void throw_if_build_error(const std::string& build_stream) {
+    std::size_t start = 0;
+    while (start < build_stream.size()) {
+        const std::size_t nl = build_stream.find('\n', start);
+        const std::string line =
+            build_stream.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        start = (nl == std::string::npos) ? build_stream.size() : nl + 1;
+        if (line.empty()) {
+            continue;
+        }
+        try {
+            const nlohmann::json json = nlohmann::json::parse(line);
+            if (const auto err = json.find("error"); err != json.end() && err->is_string()) {
+                throw DockerError("image build failed: " + err->get<std::string>());
+            }
+            if (const auto detail = json.find("errorDetail");
+                detail != json.end() && detail->is_object()) {
+                throw DockerError("image build failed: " +
+                                  detail->value("message", std::string{}));
+            }
+        } catch (const nlohmann::json::parse_error&) {
+            // Non-JSON line (shouldn't happen) — ignore.
+        }
+    }
+}
+
 } // namespace testcontainers::docker

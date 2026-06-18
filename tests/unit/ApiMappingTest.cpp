@@ -39,16 +39,23 @@
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
+//   ApiMapping.BuildErrorThrows - a build stream containing error/errorDetail throws DockerError.
+//   ApiMapping.BuildSuccessDoesNotThrow - a clean build progress stream does not throw.
+//   ApiMapping.BuildQueryBasics - build_build_query always emits t and dockerfile and includes nocache/pull/target only when set.
+//   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
 
 using namespace testcontainers;
 using namespace std::chrono_literals;
+using testcontainers::docker::build_build_query;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
+using testcontainers::docker::BuildOptions;
 using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::split_image;
+using testcontainers::docker::throw_if_build_error;
 using testcontainers::docker::throw_if_pull_error;
 
 namespace {
@@ -366,4 +373,64 @@ TEST(ApiMapping, PullSuccessDoesNotThrow) {
         R"({"status":"Download complete"})"
         "\n";
     EXPECT_NO_THROW(throw_if_pull_error(stream, "alpine:3.20"));
+}
+
+TEST(ApiMapping, BuildErrorThrows) {
+    const std::string stream =
+        R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
+        "\n"
+        R"({"errorDetail":{"message":"boom"},"error":"boom"})"
+        "\n";
+    EXPECT_THROW(throw_if_build_error(stream), DockerError);
+}
+
+TEST(ApiMapping, BuildSuccessDoesNotThrow) {
+    const std::string stream =
+        R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
+        "\n"
+        R"({"stream":"Successfully built abc123"})"
+        "\n";
+    EXPECT_NO_THROW(throw_if_build_error(stream));
+}
+
+TEST(ApiMapping, BuildQueryBasics) {
+    BuildOptions options;
+    options.tag = "myimg:latest";
+    // identity encoder: the query keys/structure are what matter here.
+    const auto identity = [](const std::string& v) { return v; };
+
+    const std::string q = build_build_query(options, identity);
+    EXPECT_NE(q.find("t=myimg:latest"), std::string::npos);
+    EXPECT_NE(q.find("dockerfile=Dockerfile"), std::string::npos);
+    // Off-by-default flags / unset target are omitted.
+    EXPECT_EQ(q.find("nocache="), std::string::npos);
+    EXPECT_EQ(q.find("pull="), std::string::npos);
+    EXPECT_EQ(q.find("target="), std::string::npos);
+
+    options.no_cache = true;
+    options.pull = true;
+    options.target = "builder";
+    const std::string q2 = build_build_query(options, identity);
+    EXPECT_NE(q2.find("nocache=1"), std::string::npos);
+    EXPECT_NE(q2.find("pull=1"), std::string::npos);
+    EXPECT_NE(q2.find("target=builder"), std::string::npos);
+}
+
+TEST(ApiMapping, BuildQueryBuildArgs) {
+    BuildOptions options;
+    options.tag = "myimg:latest";
+    options.build_args = {{"VERSION", "1.2"}, {"FLAG", "on"}};
+
+    // Use the real test_encode (percent-encodes only '/') is insufficient here;
+    // instead capture the raw buildargs value and assert it parses as the JSON map.
+    const std::string q = build_build_query(options, [](const std::string& v) { return v; });
+    const std::size_t pos = q.find("buildargs=");
+    ASSERT_NE(pos, std::string::npos);
+    std::string value = q.substr(pos + std::string("buildargs=").size());
+    if (const std::size_t amp = value.find('&'); amp != std::string::npos) {
+        value = value.substr(0, amp);
+    }
+    const auto parsed = nlohmann::json::parse(value);
+    EXPECT_EQ(parsed["VERSION"], "1.2");
+    EXPECT_EQ(parsed["FLAG"], "on");
 }

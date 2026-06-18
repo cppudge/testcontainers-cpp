@@ -5,11 +5,17 @@
 
 #include "Reaper.hpp"
 #include "WaitStrategies.hpp"
+#include "docker/ApiMapping.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
 namespace testcontainers {
+
+GenericImage GenericImage::from_reference(const std::string& reference) {
+    const auto [image, tag] = docker::split_image(reference);
+    return GenericImage(image, tag);
+}
 
 Container GenericImage::start() const {
     // Make sure the crash-safety reaper is up before we create anything it should

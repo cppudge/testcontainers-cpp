@@ -7,6 +7,7 @@
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
+#include "testcontainers/ImageFromDockerfile.hpp"
 #include "testcontainers/WaitFor.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/DockerHost.hpp"

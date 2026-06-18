@@ -9,6 +9,7 @@
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/RegistryAuth.hpp"
+#include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -73,6 +74,11 @@ public:
     /// image's registry. A public pull (no credentials found) is unaffected.
     void pull_image(const std::string& image,
                     const std::optional<RegistryAuth>& auth = std::nullopt);
+
+    /// `POST /build` — build an image from a tar build context (`context_tar`, an
+    /// `application/x-tar` body). Blocks until the build finishes. Throws DockerError
+    /// on a non-200 status or a build error embedded in the streamed output.
+    void build_image(const std::string& context_tar, const docker::BuildOptions& options);
 
     // --- Container lifecycle ---
 

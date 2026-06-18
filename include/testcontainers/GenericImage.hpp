@@ -28,6 +28,10 @@ public:
     explicit GenericImage(std::string image, std::string tag = "latest")
         : image_(std::move(image)), tag_(std::move(tag)) {}
 
+    /// Construct from a full image reference "name[:tag]" (tag defaults to "latest").
+    /// Pairs with ImageFromDockerfile::build(): GenericImage::from_reference(img.build()).
+    static GenericImage from_reference(const std::string& reference);
+
     // --- In-place, ref-qualified builders ---
 
     GenericImage& with_exposed_port(ContainerPort p) & {

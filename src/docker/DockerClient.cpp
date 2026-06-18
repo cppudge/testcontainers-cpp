@@ -185,6 +185,24 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
     docker::throw_if_pull_error(res.body, image);
 }
 
+void DockerClient::build_image(const std::string& context_tar,
+                               const docker::BuildOptions& options) {
+    const std::string target =
+        "/build" +
+        docker::build_build_query(options, [](const std::string& v) { return url_encode(v); });
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/x-tar"}};
+
+    const Response res = request("POST", target, context_tar, headers);
+    if (res.status_code != 200) {
+        throw DockerError("build_image('" + options.tag + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    // Docker streams build output as newline-delimited JSON and returns 200 even
+    // on a build failure, embedding the error in the stream.
+    docker::throw_if_build_error(res.body);
+}
+
 std::string DockerClient::create_container(const CreateContainerSpec& spec,
                                            const std::optional<RegistryAuth>& auth) {
     const std::string body = docker::build_create_body(spec).dump();

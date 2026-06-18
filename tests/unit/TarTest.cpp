@@ -26,13 +26,16 @@
 //   Tar.MissingHostFileThrows - building a tar from a non-existent host file throws DockerError.
 //   Tar.ExtractRoundTrip - build_tar then extract_tar yields one regular-file entry with the slash-stripped name, body, and mode preserved.
 //   Tar.ExtractBinaryRoundTrip - a body with embedded NUL bytes survives build_tar then extract_tar byte-for-byte.
+//   Tar.ContextTarTwoFiles - build_context_tar packs two files and extract_tar reads both back with their names, bodies, and modes.
 
 using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
+using testcontainers::docker::build_context_tar;
 using testcontainers::docker::build_tar;
 using testcontainers::docker::extract_tar;
 using testcontainers::docker::strip_leading_slash;
 using testcontainers::docker::TarEntry;
+using testcontainers::docker::TarFile;
 
 namespace {
 
@@ -177,4 +180,24 @@ TEST(Tar, ExtractBinaryRoundTrip) {
     EXPECT_TRUE(e.is_regular_file);
     EXPECT_EQ(e.body, payload); // byte-exact, including the NULs
     EXPECT_EQ(e.body.size(), 5u);
+}
+
+TEST(Tar, ContextTarTwoFiles) {
+    const std::vector<TarFile> files = {
+        TarFile{"Dockerfile", "FROM alpine:3.20\n"},
+        TarFile{"app/x.txt", "hello-context", 0600},
+    };
+    const std::string tar = build_context_tar(files);
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].name, "Dockerfile");
+    EXPECT_EQ(entries[0].body, "FROM alpine:3.20\n");
+    EXPECT_TRUE(entries[0].is_regular_file);
+    EXPECT_EQ(entries[0].mode & 0777, 0644); // default mode
+
+    EXPECT_EQ(entries[1].name, "app/x.txt");
+    EXPECT_EQ(entries[1].body, "hello-context");
+    EXPECT_TRUE(entries[1].is_regular_file);
+    EXPECT_EQ(entries[1].mode & 0777, 0600);
 }

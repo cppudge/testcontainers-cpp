@@ -29,6 +29,18 @@ std::string strip_leading_slash(const std::string& path);
 /// produced.
 std::string build_tar(const CopyToContainer& source);
 
+/// One file to place into a build-context tar.
+struct TarFile {
+    std::string name;   ///< path within the context (e.g. "Dockerfile", "app/x.txt")
+    std::string body;   ///< file contents (may be binary)
+    int mode = 0644;    ///< octal regular-file mode
+};
+
+/// Build a USTAR archive holding all `files` as regular-file entries (names used
+/// verbatim, leading '/' stripped). Returns the raw tar bytes. Throws DockerError
+/// on failure. This is the build-context body for `POST /build`.
+std::string build_context_tar(const std::vector<TarFile>& files);
+
 /// One entry extracted from a tar archive.
 struct TarEntry {
     std::string name;             ///< entry pathname as stored in the archive

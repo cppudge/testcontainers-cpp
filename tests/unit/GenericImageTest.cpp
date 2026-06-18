@@ -20,6 +20,7 @@
 //   GenericImage.ChainsOnLvalue - with_* chains on a named lvalue and accumulates all settings.
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
 //   GenericImage.ReusableAfterWith - a named image survives a with_* call and reflects both early and later settings (no use-after-move).
+//   GenericImage.FromReference - from_reference splits "name[:tag]" into image and tag, defaulting to "latest" and handling a registry host:port.
 
 using namespace testcontainers;
 
@@ -187,4 +188,19 @@ TEST(GenericImage, ReusableAfterWith) {
 
     img.with_exposed_port(tcp(6380)); // and again
     EXPECT_EQ(img.exposed_ports().size(), 2u);
+}
+
+TEST(GenericImage, FromReference) {
+    const GenericImage with_tag = GenericImage::from_reference("repo:tag");
+    EXPECT_EQ(with_tag.image(), "repo");
+    EXPECT_EQ(with_tag.tag(), "tag");
+
+    const GenericImage no_tag = GenericImage::from_reference("repo");
+    EXPECT_EQ(no_tag.image(), "repo");
+    EXPECT_EQ(no_tag.tag(), "latest"); // tag defaults to latest
+
+    // A registry host:port is not mistaken for a tag.
+    const GenericImage with_registry = GenericImage::from_reference("host:5000/repo:1.2");
+    EXPECT_EQ(with_registry.image(), "host:5000/repo");
+    EXPECT_EQ(with_registry.tag(), "1.2");
 }

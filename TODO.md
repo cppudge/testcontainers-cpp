@@ -70,6 +70,13 @@ review are recorded here so they aren't lost between milestones.
   the low-level `copy_from_container` + `docker::extract_tar`) cover a single regular file. Directory-tree
   extraction from `copy_from_container` is not exposed via a high-level helper yet; use `extract_tar`
   directly on the raw tar bytes for trees.
+- **build-from-Dockerfile: no .dockerignore, buffered output, unreaped images** —
+  `ImageFromDockerfile::from_path` packs the whole directory tree (no `.dockerignore`
+  filtering). `DockerClient::build_image` buffers the entire build-output stream (no live
+  build-log streaming/consumer — could reuse the `follow_logs` chunked-read approach). Built
+  images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
+  are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets,
+  ssh, cache-from, squash, and platform on build are not. (`src/ImageFromDockerfile.cpp`)
 - **Windows containers: dotnet-parity only** — the engine mode is detected (`is_windows_engine()`) and
   Ryuk is skipped on the Windows engine, so there is **no crash-safe reaping** on Windows (RAII /
   AutoRemove only), matching testcontainers-dotnet. `copy-to-container` still Unix-normalizes the entry

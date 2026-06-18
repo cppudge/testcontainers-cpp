@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 
 // Mapping between our value types and the Docker Engine API JSON. Kept separate
@@ -46,5 +47,17 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
 /// Split "name[:tag]" into {name, tag}; tag defaults to "latest". Handles a
 /// registry host with a port (e.g. "my-reg:5000/img" -> {"my-reg:5000/img", "latest"}).
 std::pair<std::string, std::string> split_image(const std::string& image);
+
+/// Build the query string (incl. leading '?') for `POST /build`: t, dockerfile,
+/// nocache, pull, target (when set), and buildargs (a JSON object, percent-encoded).
+/// `encode` is the caller's URL-encoder. Unit-testable without a daemon.
+std::string build_build_query(const BuildOptions& options,
+                              const std::function<std::string(const std::string&)>& encode);
+
+/// Scan a `POST /build` progress stream (newline-delimited JSON) and throw
+/// DockerError if any line reports an error ("error"/"errorDetail"). Docker
+/// returns HTTP 200 even on build failure (the error is embedded in the stream),
+/// exactly like the pull stream.
+void throw_if_build_error(const std::string& build_stream);
 
 } // namespace testcontainers::docker

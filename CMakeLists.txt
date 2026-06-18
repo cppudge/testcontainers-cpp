@@ -61,6 +61,7 @@ add_library(testcontainers
     src/docker/DockerClient.cpp
     src/WaitStrategies.cpp
     src/GenericImage.cpp
+    src/ImageFromDockerfile.cpp
     src/Container.cpp
     src/Network.cpp
     src/Reaper.cpp
@@ -146,6 +147,7 @@ if(BUILD_TESTING)
         tests/integration/WaitStrategiesTest.cpp
         tests/integration/ExecTest.cpp
         tests/integration/CopyTest.cpp
+        tests/integration/BuildImageTest.cpp
         tests/integration/NetworkTest.cpp
         tests/integration/ReaperTest.cpp
         tests/integration/AuthTest.cpp

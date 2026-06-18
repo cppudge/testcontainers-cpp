@@ -102,6 +102,62 @@ std::string build_tar(const CopyToContainer& source) {
     return out;
 }
 
+std::string build_context_tar(const std::vector<TarFile>& files) {
+    struct archive* a = archive_write_new();
+    if (a == nullptr) {
+        throw DockerError("build_context_tar: archive_write_new failed");
+    }
+    // USTAR is the simplest portable format Docker accepts for a build context.
+    archive_write_set_format_ustar(a);
+
+    std::string out;
+    if (archive_write_open(a, &out, /*open*/ nullptr, append_to_string, /*close*/ nullptr) !=
+        ARCHIVE_OK) {
+        const std::string err = archive_error_string(a) ? archive_error_string(a) : "unknown error";
+        archive_write_free(a);
+        throw DockerError("build_context_tar: archive_write_open failed: " + err);
+    }
+
+    for (const TarFile& file : files) {
+        const std::string name = strip_leading_slash(file.name);
+
+        struct archive_entry* entry = archive_entry_new();
+        archive_entry_set_pathname(entry, name.c_str());
+        archive_entry_set_filetype(entry, AE_IFREG);
+        archive_entry_set_perm(entry, file.mode);
+        archive_entry_set_size(entry, static_cast<la_int64_t>(file.body.size()));
+
+        if (archive_write_header(a, entry) != ARCHIVE_OK) {
+            const std::string err =
+                archive_error_string(a) ? archive_error_string(a) : "unknown error";
+            archive_entry_free(entry);
+            archive_write_free(a);
+            throw DockerError("build_context_tar: archive_write_header failed: " + err);
+        }
+        if (!file.body.empty()) {
+            const la_ssize_t written = archive_write_data(a, file.body.data(), file.body.size());
+            if (written < 0 || static_cast<std::size_t>(written) != file.body.size()) {
+                const std::string err =
+                    archive_error_string(a) ? archive_error_string(a) : "short write";
+                archive_entry_free(entry);
+                archive_write_free(a);
+                throw DockerError("build_context_tar: archive_write_data failed: " + err);
+            }
+        }
+        archive_entry_free(entry);
+    }
+
+    // archive_write_close flushes the trailing blocks; archive_write_free closes
+    // implicitly but we close explicitly to surface any flush error.
+    if (archive_write_close(a) != ARCHIVE_OK) {
+        const std::string err = archive_error_string(a) ? archive_error_string(a) : "unknown error";
+        archive_write_free(a);
+        throw DockerError("build_context_tar: archive_write_close failed: " + err);
+    }
+    archive_write_free(a);
+    return out;
+}
+
 std::vector<TarEntry> extract_tar(const std::string& tar_bytes) {
     struct archive* a = archive_read_new();
     if (a == nullptr) {
