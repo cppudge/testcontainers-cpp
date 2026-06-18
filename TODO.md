@@ -35,6 +35,10 @@ review are recorded here so they aren't lost between milestones.
   `src/WaitStrategies.cpp` (HTTP wait) re-implements `Container::get_host_port`'s IPv4-binding
   preference; factor into one shared helper. The HTTP wait also opens a fresh TCP connection +
   `io_context` per probe (fine for ~200ms polling).
+- **msvc-preset configure noise** — under the Visual Studio (multi-config) preset, CMake prints
+  non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release` errors for OpenSSL/zlib because Conan
+  installs Release-only; the Release build and tests still succeed. The default `ninja` preset is
+  unaffected. (Install both configs, or filter the message, if it becomes annoying.)
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

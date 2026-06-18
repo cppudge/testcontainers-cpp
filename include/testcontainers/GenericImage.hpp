@@ -9,6 +9,7 @@
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Healthcheck.hpp"
+#include "testcontainers/Mount.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
@@ -51,6 +52,51 @@ public:
     }
     GenericImage&& with_cmd(std::vector<std::string> cmd) && {
         cmd_ = std::move(cmd);
+        return std::move(*this);
+    }
+
+    GenericImage& with_entrypoint(std::vector<std::string> entrypoint) & {
+        entrypoint_ = std::move(entrypoint);
+        return *this;
+    }
+    GenericImage&& with_entrypoint(std::vector<std::string> entrypoint) && {
+        entrypoint_ = std::move(entrypoint);
+        return std::move(*this);
+    }
+
+    GenericImage& with_working_dir(std::string working_dir) & {
+        working_dir_ = std::move(working_dir);
+        return *this;
+    }
+    GenericImage&& with_working_dir(std::string working_dir) && {
+        working_dir_ = std::move(working_dir);
+        return std::move(*this);
+    }
+
+    GenericImage& with_user(std::string user) & {
+        user_ = std::move(user);
+        return *this;
+    }
+    GenericImage&& with_user(std::string user) && {
+        user_ = std::move(user);
+        return std::move(*this);
+    }
+
+    GenericImage& with_privileged(bool privileged = true) & {
+        privileged_ = privileged;
+        return *this;
+    }
+    GenericImage&& with_privileged(bool privileged = true) && {
+        privileged_ = privileged;
+        return std::move(*this);
+    }
+
+    GenericImage& with_mount(Mount mount) & {
+        mounts_.push_back(std::move(mount));
+        return *this;
+    }
+    GenericImage&& with_mount(Mount mount) && {
+        mounts_.push_back(std::move(mount));
         return std::move(*this);
     }
 
@@ -97,6 +143,11 @@ public:
     const std::vector<ContainerPort>& exposed_ports() const noexcept { return exposed_ports_; }
     const std::vector<std::pair<std::string, std::string>>& env() const noexcept { return env_; }
     const std::vector<std::string>& cmd() const noexcept { return cmd_; }
+    const std::vector<std::string>& entrypoint() const noexcept { return entrypoint_; }
+    const std::optional<std::string>& working_dir() const noexcept { return working_dir_; }
+    const std::optional<std::string>& user() const noexcept { return user_; }
+    bool privileged() const noexcept { return privileged_; }
+    const std::vector<Mount>& mounts() const noexcept { return mounts_; }
     const std::vector<std::pair<std::string, std::string>>& labels() const noexcept {
         return labels_;
     }
@@ -115,6 +166,11 @@ private:
     std::vector<ContainerPort> exposed_ports_;
     std::vector<std::pair<std::string, std::string>> env_;
     std::vector<std::string> cmd_;
+    std::vector<std::string> entrypoint_;
+    std::optional<std::string> working_dir_;
+    std::optional<std::string> user_;
+    bool privileged_ = false;
+    std::vector<Mount> mounts_;
     std::vector<std::pair<std::string, std::string>> labels_;
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};

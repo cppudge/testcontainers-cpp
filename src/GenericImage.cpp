@@ -16,6 +16,11 @@ Container GenericImage::start() const {
     CreateContainerSpec spec;
     spec.image = image_ + ":" + tag_;
     spec.cmd = cmd_;
+    spec.entrypoint = entrypoint_;
+    spec.working_dir = working_dir_;
+    spec.user = user_;
+    spec.privileged = privileged_;
+    spec.mounts = mounts_;
     spec.labels = labels_;
     for (const auto& [key, value] : env_) {
         spec.env.push_back(key + "=" + value);

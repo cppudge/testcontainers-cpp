@@ -13,8 +13,17 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (!spec.cmd.empty()) {
         body["Cmd"] = spec.cmd;
     }
+    if (!spec.entrypoint.empty()) {
+        body["Entrypoint"] = spec.entrypoint;
+    }
     if (!spec.env.empty()) {
         body["Env"] = spec.env;
+    }
+    if (spec.working_dir) {
+        body["WorkingDir"] = *spec.working_dir;
+    }
+    if (spec.user) {
+        body["User"] = *spec.user;
     }
     if (!spec.labels.empty()) {
         nlohmann::json labels = nlohmann::json::object();
@@ -53,6 +62,43 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     nlohmann::json host_config = nlohmann::json::object();
     if (spec.publish_all_ports) {
         host_config["PublishAllPorts"] = true;
+    }
+    if (spec.privileged) {
+        host_config["Privileged"] = true;
+    }
+    if (!spec.mounts.empty()) {
+        nlohmann::json mounts = nlohmann::json::array();
+        for (const Mount& m : spec.mounts) {
+            nlohmann::json entry = nlohmann::json::object();
+            switch (m.type()) {
+            case MountType::Bind:
+                entry["Type"] = "bind";
+                entry["Source"] = m.source();
+                break;
+            case MountType::Volume:
+                entry["Type"] = "volume";
+                entry["Source"] = m.source();
+                break;
+            case MountType::Tmpfs:
+                entry["Type"] = "tmpfs";
+                // No Source for tmpfs.
+                break;
+            }
+            entry["Target"] = m.target();
+            entry["ReadOnly"] = m.is_read_only();
+            if (m.type() == MountType::Tmpfs && (m.tmpfs_size() || m.tmpfs_mode())) {
+                nlohmann::json tmpfs = nlohmann::json::object();
+                if (m.tmpfs_size()) {
+                    tmpfs["SizeBytes"] = *m.tmpfs_size();
+                }
+                if (m.tmpfs_mode()) {
+                    tmpfs["Mode"] = *m.tmpfs_mode();
+                }
+                entry["TmpfsOptions"] = std::move(tmpfs);
+            }
+            mounts.push_back(std::move(entry));
+        }
+        host_config["Mounts"] = std::move(mounts);
     }
     if (!host_config.empty()) {
         body["HostConfig"] = std::move(host_config);

@@ -104,7 +104,9 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
 - [x] Wait strategies: log message, fixed duration, **exit (optional code), healthcheck (`State.Health`),
       and HTTP probe (host-port GET)**, run sequentially under a shared 60s startup timeout
 - [x] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
-- [ ] Cleanup: RAII + Ryuk reaper; networks, mounts, copy, exec, registry auth
+- [x] **Richer container config**: entrypoint, working dir, user, privileged, and a `Mount`
+      value type (bind / volume / tmpfs) mapped into the create body + `HostConfig`
+- [ ] Cleanup: RAII + Ryuk reaper; networks, copy, exec, registry auth
 
 ## Build
 

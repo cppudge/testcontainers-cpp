@@ -11,6 +11,9 @@
 //   GenericImage.DefaultsTagAndTimeout - a freshly constructed image defaults to the "latest" tag and a 60s startup timeout.
 //   GenericImage.ExplicitTag - the two-argument constructor stores the given tag.
 //   GenericImage.GettersReflectBuilders - each with_* builder records into the matching getter.
+//   GenericImage.ConfigBuildersReflectGetters - entrypoint/working-dir/user/privileged/mount builders record into the matching getters.
+//   GenericImage.ConfigDefaults - a freshly constructed image has no entrypoint/working-dir/user/mounts and is not privileged.
+//   GenericImage.ConfigChainsOnRvalue - the new config builders chain on a temporary rvalue.
 //   GenericImage.ChainsOnLvalue - with_* chains on a named lvalue and accumulates all settings.
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
 //   GenericImage.ReusableAfterWith - a named image survives a with_* call and reflects both early and later settings (no use-after-move).
@@ -62,6 +65,55 @@ TEST(GenericImage, GettersReflectBuilders) {
     EXPECT_EQ(std::get<wait::LogMessage>(img.waits()[0]).text, "Ready");
 
     EXPECT_EQ(img.startup_timeout(), std::chrono::milliseconds(5000));
+}
+
+TEST(GenericImage, ConfigDefaults) {
+    const GenericImage img("alpine", "3.20");
+    EXPECT_TRUE(img.entrypoint().empty());
+    EXPECT_FALSE(img.working_dir().has_value());
+    EXPECT_FALSE(img.user().has_value());
+    EXPECT_FALSE(img.privileged());
+    EXPECT_TRUE(img.mounts().empty());
+}
+
+TEST(GenericImage, ConfigBuildersReflectGetters) {
+    GenericImage img("alpine", "3.20");
+    img.with_entrypoint({"echo"})
+        .with_working_dir("/tmp")
+        .with_user("1000:1000")
+        .with_privileged()
+        .with_mount(Mount::tmpfs("/cache").with_tmpfs_size(1024))
+        .with_mount(Mount::bind("/host", "/data").read_only());
+
+    EXPECT_EQ(img.entrypoint(), (std::vector<std::string>{"echo"}));
+    ASSERT_TRUE(img.working_dir().has_value());
+    EXPECT_EQ(*img.working_dir(), "/tmp");
+    ASSERT_TRUE(img.user().has_value());
+    EXPECT_EQ(*img.user(), "1000:1000");
+    EXPECT_TRUE(img.privileged());
+
+    ASSERT_EQ(img.mounts().size(), 2u);
+    EXPECT_EQ(img.mounts()[0].type(), MountType::Tmpfs);
+    EXPECT_EQ(img.mounts()[0].target(), "/cache");
+    ASSERT_TRUE(img.mounts()[0].tmpfs_size().has_value());
+    EXPECT_EQ(*img.mounts()[0].tmpfs_size(), 1024);
+    EXPECT_EQ(img.mounts()[1].type(), MountType::Bind);
+    EXPECT_TRUE(img.mounts()[1].is_read_only());
+}
+
+TEST(GenericImage, ConfigChainsOnRvalue) {
+    const GenericImage img = GenericImage("alpine", "3.20")
+                                 .with_entrypoint({"echo"})
+                                 .with_working_dir("/tmp")
+                                 .with_user("root")
+                                 .with_privileged(true)
+                                 .with_mount(Mount::tmpfs("/cache"));
+    EXPECT_EQ(img.entrypoint(), (std::vector<std::string>{"echo"}));
+    EXPECT_EQ(*img.working_dir(), "/tmp");
+    EXPECT_EQ(*img.user(), "root");
+    EXPECT_TRUE(img.privileged());
+    ASSERT_EQ(img.mounts().size(), 1u);
+    EXPECT_EQ(img.mounts()[0].type(), MountType::Tmpfs);
 }
 
 TEST(GenericImage, ChainsOnLvalue) {

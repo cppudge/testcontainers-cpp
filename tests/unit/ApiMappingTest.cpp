@@ -9,12 +9,20 @@
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/Healthcheck.hpp"
+#include "testcontainers/Mount.hpp"
 
 // Tests in this file:
 //   ApiMapping.BuildCreateBodyMinimal - a spec with only an image produces a body with just Image and no optional sections.
 //   ApiMapping.BuildCreateBodyFull - cmd, env, labels, exposed ports, and publish-all map to the correct Docker create-body fields.
 //   ApiMapping.BuildCreateBodyHealthcheck - a healthcheck maps to a Healthcheck object with the Test array, nanosecond durations, and retries.
 //   ApiMapping.BuildCreateBodyNoHealthcheckByDefault - a spec without a healthcheck emits no Healthcheck field.
+//   ApiMapping.BuildCreateBodyProcessConfig - entrypoint, working dir, and user map to Entrypoint, WorkingDir, and User.
+//   ApiMapping.BuildCreateBodyProcessConfigOmittedByDefault - entrypoint/working dir/user are absent when unset.
+//   ApiMapping.BuildCreateBodyPrivileged - the privileged flag maps to HostConfig.Privileged.
+//   ApiMapping.BuildCreateBodyBindMount - a read-only bind mount maps to a HostConfig.Mounts entry with Type/Source/Target/ReadOnly and no TmpfsOptions.
+//   ApiMapping.BuildCreateBodyVolumeMount - a volume mount maps to a HostConfig.Mounts entry with Type=volume and Source set to the volume name.
+//   ApiMapping.BuildCreateBodyTmpfsMount - a tmpfs mount maps to Type=tmpfs with no Source and TmpfsOptions SizeBytes/Mode.
+//   ApiMapping.BuildCreateBodyNoMountsByDefault - a spec without mounts/privileged emits no HostConfig.Mounts or Privileged.
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
@@ -83,6 +91,92 @@ TEST(ApiMapping, BuildCreateBodyNoHealthcheckByDefault) {
     spec.image = "alpine:3.20";
     const auto body = build_create_body(spec);
     EXPECT_FALSE(body.contains("Healthcheck"));
+}
+
+TEST(ApiMapping, BuildCreateBodyProcessConfig) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.entrypoint = {"echo"};
+    spec.working_dir = "/tmp";
+    spec.user = "1000:1000";
+
+    const auto body = build_create_body(spec);
+    EXPECT_EQ(body["Entrypoint"], nlohmann::json({"echo"}));
+    EXPECT_EQ(body["WorkingDir"], "/tmp");
+    EXPECT_EQ(body["User"], "1000:1000");
+}
+
+TEST(ApiMapping, BuildCreateBodyProcessConfigOmittedByDefault) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    const auto body = build_create_body(spec);
+    EXPECT_FALSE(body.contains("Entrypoint"));
+    EXPECT_FALSE(body.contains("WorkingDir"));
+    EXPECT_FALSE(body.contains("User"));
+}
+
+TEST(ApiMapping, BuildCreateBodyPrivileged) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.privileged = true;
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    EXPECT_TRUE(body["HostConfig"]["Privileged"].get<bool>());
+}
+
+TEST(ApiMapping, BuildCreateBodyBindMount) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.mounts = {Mount::bind("/host/data", "/data").read_only()};
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    ASSERT_TRUE(body["HostConfig"].contains("Mounts"));
+    const auto& mounts = body["HostConfig"]["Mounts"];
+    ASSERT_EQ(mounts.size(), 1u);
+    EXPECT_EQ(mounts[0]["Type"], "bind");
+    EXPECT_EQ(mounts[0]["Source"], "/host/data");
+    EXPECT_EQ(mounts[0]["Target"], "/data");
+    EXPECT_TRUE(mounts[0]["ReadOnly"].get<bool>());
+    EXPECT_FALSE(mounts[0].contains("TmpfsOptions"));
+}
+
+TEST(ApiMapping, BuildCreateBodyVolumeMount) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.mounts = {Mount::volume("my-vol", "/var/lib/data")};
+
+    const auto body = build_create_body(spec);
+    const auto& mounts = body["HostConfig"]["Mounts"];
+    ASSERT_EQ(mounts.size(), 1u);
+    EXPECT_EQ(mounts[0]["Type"], "volume");
+    EXPECT_EQ(mounts[0]["Source"], "my-vol");
+    EXPECT_EQ(mounts[0]["Target"], "/var/lib/data");
+    EXPECT_FALSE(mounts[0]["ReadOnly"].get<bool>());
+}
+
+TEST(ApiMapping, BuildCreateBodyTmpfsMount) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.mounts = {Mount::tmpfs("/cache").with_tmpfs_size(1048576).with_tmpfs_mode(0700)};
+
+    const auto body = build_create_body(spec);
+    const auto& mounts = body["HostConfig"]["Mounts"];
+    ASSERT_EQ(mounts.size(), 1u);
+    EXPECT_EQ(mounts[0]["Type"], "tmpfs");
+    EXPECT_FALSE(mounts[0].contains("Source")); // no source for tmpfs
+    EXPECT_EQ(mounts[0]["Target"], "/cache");
+    ASSERT_TRUE(mounts[0].contains("TmpfsOptions"));
+    EXPECT_EQ(mounts[0]["TmpfsOptions"]["SizeBytes"].get<std::int64_t>(), 1048576);
+    EXPECT_EQ(mounts[0]["TmpfsOptions"]["Mode"].get<int>(), 0700);
+}
+
+TEST(ApiMapping, BuildCreateBodyNoMountsByDefault) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    const auto body = build_create_body(spec);
+    EXPECT_FALSE(body.contains("HostConfig"));
 }
 
 TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {
