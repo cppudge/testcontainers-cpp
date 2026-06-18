@@ -19,6 +19,7 @@
 //   ApiMapping.BuildCreateBodyProcessConfig - entrypoint, working dir, and user map to Entrypoint, WorkingDir, and User.
 //   ApiMapping.BuildCreateBodyProcessConfigOmittedByDefault - entrypoint/working dir/user are absent when unset.
 //   ApiMapping.BuildCreateBodyPrivileged - the privileged flag maps to HostConfig.Privileged.
+//   ApiMapping.BuildCreateBodyAutoRemove - the auto_remove flag maps to HostConfig.AutoRemove and is absent by default.
 //   ApiMapping.BuildCreateBodyBindMount - a read-only bind mount maps to a HostConfig.Mounts entry with Type/Source/Target/ReadOnly and no TmpfsOptions.
 //   ApiMapping.BuildCreateBodyVolumeMount - a volume mount maps to a HostConfig.Mounts entry with Type=volume and Source set to the volume name.
 //   ApiMapping.BuildCreateBodyTmpfsMount - a tmpfs mount maps to Type=tmpfs with no Source and TmpfsOptions SizeBytes/Mode.
@@ -129,6 +130,20 @@ TEST(ApiMapping, BuildCreateBodyPrivileged) {
     const auto body = build_create_body(spec);
     ASSERT_TRUE(body.contains("HostConfig"));
     EXPECT_TRUE(body["HostConfig"]["Privileged"].get<bool>());
+}
+
+TEST(ApiMapping, BuildCreateBodyAutoRemove) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.auto_remove = true;
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    EXPECT_TRUE(body["HostConfig"]["AutoRemove"].get<bool>());
+
+    CreateContainerSpec plain;
+    plain.image = "alpine:3.20";
+    EXPECT_FALSE(build_create_body(plain).contains("HostConfig"));
 }
 
 TEST(ApiMapping, BuildCreateBodyBindMount) {

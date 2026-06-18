@@ -4,6 +4,8 @@
 #include <random>
 #include <string>
 
+#include "Reaper.hpp"
+
 namespace testcontainers {
 
 namespace {
@@ -23,8 +25,12 @@ std::string random_network_name() {
 } // namespace
 
 Network Network::create(std::string name) {
+    // Bring up the reaper first so a network created here is reaped on a crash
+    // (no-op if Ryuk is disabled).
+    detail::Reaper::instance().ensure_started();
+
     DockerClient client = DockerClient::from_environment();
-    std::string id = client.create_network(name);
+    std::string id = client.create_network(name, detail::testcontainers_labels());
     return Network(std::move(client), std::move(id), std::move(name));
 }
 

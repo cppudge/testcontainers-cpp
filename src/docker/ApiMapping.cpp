@@ -66,6 +66,9 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.privileged) {
         host_config["Privileged"] = true;
     }
+    if (spec.auto_remove) {
+        host_config["AutoRemove"] = true;
+    }
     if (spec.network) {
         host_config["NetworkMode"] = *spec.network;
     }

@@ -3,6 +3,7 @@
 #include <string>
 #include <utility>
 
+#include "Reaper.hpp"
 #include "WaitStrategies.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -11,6 +12,10 @@
 namespace testcontainers {
 
 Container GenericImage::start() const {
+    // Make sure the crash-safety reaper is up before we create anything it should
+    // reap (no-op if Ryuk is disabled).
+    detail::Reaper::instance().ensure_started();
+
     DockerClient client = DockerClient::from_environment();
 
     CreateContainerSpec spec;
@@ -22,6 +27,10 @@ Container GenericImage::start() const {
     spec.privileged = privileged_;
     spec.mounts = mounts_;
     spec.labels = labels_;
+    // Tag the container so Ryuk (and tooling) can find it: managed-by + session.
+    for (const auto& label : detail::testcontainers_labels()) {
+        spec.labels.push_back(label);
+    }
     for (const auto& [key, value] : env_) {
         spec.env.push_back(key + "=" + value);
     }

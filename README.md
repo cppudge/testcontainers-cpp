@@ -109,7 +109,13 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
 - [x] **`exec`** (run a command in a running container, capturing stdout/stderr + exit code)
       and **user-defined networks** (`Network` RAII handle; `GenericImage::with_network` /
       `with_container_name` so peers resolve each other by name)
-- [ ] Cleanup: RAII + Ryuk reaper; copy, registry auth
+- [x] **Ryuk resource reaper** (crash-safety net): a process-wide session id +
+      `org.testcontainers.{managed-by,session-id}` labels on every created container/network;
+      a single `testcontainers/ryuk:0.11.0` sidecar (docker.sock bind-mounted, 8080/tcp published)
+      holds a persistent TCP control connection and reaps everything matching the session label
+      when the process dies (covers `SIGKILL`/crash where C++ destructors don't run). Opt out via
+      `TESTCONTAINERS_RYUK_DISABLED=true`.
+- [ ] Cleanup: copy, registry auth
 
 ## Build
 

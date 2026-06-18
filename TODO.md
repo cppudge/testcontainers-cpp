@@ -43,6 +43,10 @@ review are recorded here so they aren't lost between milestones.
   memory and has no stdin/TTY (fine for run-command-capture-output); a streaming/interactive exec
   needs the hijacked-connection path. `Network` has no process-wide dedup (each `Network::create`
   makes a new network) and no inspect / connect-to-existing.
+- **Ryuk coverage & lifecycle** — only containers + networks get the session-id label, so future
+  resource types (named volumes, images) must also be tagged to be reaped. The global `Reaper` has
+  no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is
+  `AutoRemove`d on exit. Image pinned to `testcontainers/ryuk:0.11.0`.
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

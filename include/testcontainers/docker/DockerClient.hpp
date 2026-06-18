@@ -88,7 +88,9 @@ public:
     // --- Network operations ---
 
     /// `POST /networks/create` — create a user-defined network, returning its id.
-    std::string create_network(const std::string& name);
+    /// `labels` are emitted as the network's `Labels` map (e.g. for Ryuk reaping).
+    std::string create_network(const std::string& name,
+                               const std::vector<std::pair<std::string, std::string>>& labels = {});
 
     /// `DELETE /networks/{id}` — remove a network (204 expected).
     void remove_network(const std::string& id);

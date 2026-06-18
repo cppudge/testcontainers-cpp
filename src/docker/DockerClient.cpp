@@ -257,9 +257,17 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     return out;
 }
 
-std::string DockerClient::create_network(const std::string& name) {
+std::string DockerClient::create_network(
+    const std::string& name, const std::vector<std::pair<std::string, std::string>>& labels) {
     nlohmann::json body;
     body["Name"] = name;
+    if (!labels.empty()) {
+        nlohmann::json json_labels = nlohmann::json::object();
+        for (const auto& [key, value] : labels) {
+            json_labels[key] = value;
+        }
+        body["Labels"] = std::move(json_labels);
+    }
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 

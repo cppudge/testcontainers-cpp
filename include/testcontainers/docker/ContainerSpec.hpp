@@ -29,6 +29,7 @@ struct CreateContainerSpec {
     std::optional<std::string> user;                         ///< User
     bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts
     bool privileged = false;                                 ///< HostConfig.Privileged
+    bool auto_remove = false;                                ///< HostConfig.AutoRemove
     std::vector<Mount> mounts;                               ///< HostConfig.Mounts
     std::optional<Healthcheck> healthcheck;                  ///< Healthcheck (create-body)
 };

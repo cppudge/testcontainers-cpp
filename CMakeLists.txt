@@ -61,6 +61,7 @@ add_library(testcontainers
     src/GenericImage.cpp
     src/Container.cpp
     src/Network.cpp
+    src/Reaper.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 
@@ -117,6 +118,7 @@ if(BUILD_TESTING)
         tests/unit/HealthcheckTest.cpp
         tests/unit/MountTest.cpp
         tests/unit/GenericImageTest.cpp
+        tests/unit/ReaperTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
@@ -138,15 +140,20 @@ if(BUILD_TESTING)
         tests/integration/WaitStrategiesTest.cpp
         tests/integration/ExecTest.cpp
         tests/integration/NetworkTest.cpp
+        tests/integration/ReaperTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers
-        # RedisMvpTest opens a raw TCP socket with Boost.Asio (allowed in a test
-        # translation unit — it is not a public header).
+        # RedisMvpTest / ReaperTest open raw TCP sockets with Boost.Asio (allowed
+        # in a test translation unit — it is not a public header).
         boost::boost
+        # ReaperTest parses raw inspect JSON to read back a container's labels.
+        nlohmann_json::nlohmann_json
         GTest::gtest
         GTest::gtest_main
     )
+    # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id).
+    target_include_directories(tc_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(WIN32)
         target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
     endif()
