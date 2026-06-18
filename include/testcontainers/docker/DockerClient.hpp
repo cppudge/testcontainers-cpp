@@ -98,6 +98,13 @@ public:
     /// Only the non-follow case is supported here; `opts.follow` is ignored.
     ContainerLogs logs(const std::string& id, const LogOptions& opts = {});
 
+    /// `GET /containers/{id}/logs?follow=1` — stream the multiplexed logs, decoding
+    /// frames and invoking `consumer` per chunk until the stream ends (container
+    /// stops) or `consumer` returns false. Blocking: run on your own thread for
+    /// background consumption. `opts.follow` is forced on. Throws DockerError if the
+    /// initial response is not 200.
+    void follow_logs(const std::string& id, const LogOptions& opts, const LogConsumer& consumer);
+
     /// Run `cmd` inside the running container and capture its output and exit
     /// code. Creates the exec (`POST /containers/{id}/exec`), starts it without a
     /// TTY (`POST /exec/{exec_id}/start`) — demultiplexing the returned stream —

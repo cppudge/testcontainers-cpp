@@ -11,9 +11,14 @@ review are recorded here so they aren't lost between milestones.
 - **TTY containers not handled** — with `Tty=true` Docker returns a raw, unframed
   log stream; `demux_all` would garble it. We never enable TTY today, but add a raw
   path when TTY support is introduced. (`src/docker/LogDemux.cpp`)
-- **No streaming / follow logs** — `logs()` only does the non-follow snapshot;
-  `LogOptions::follow` is sent but the body is fully buffered. A callback /
-  incremental transport read is needed for the log-wait strategy.
+- **follow logs: blocking + cooperative-stop only** — `DockerClient::follow_logs` /
+  `Container::follow_logs` stream incrementally (`read_some` + `LogDemuxer`) and stop when
+  the consumer returns false, but it is BLOCKING: run it on your own `std::thread` for
+  background consumption. A background-thread RAII log handle with socket-level cancellation
+  (stop even when no new bytes arrive) is not provided yet. (`src/docker/DockerClient.cpp`)
+- **log-wait still polls snapshots** — the log wait in `src/WaitStrategies.cpp` re-fetches the
+  full `tail=all` snapshot every 200ms; it could now be reimplemented on `follow_logs` (scan
+  chunks, return false from the consumer once the substring count is reached).
 - **TLS (https) transport not implemented** — `connect()` throws for the Https
   scheme. Needs `ssl::stream` + cert handling (`DOCKER_CERT_PATH`: ca/cert/key).
   (`src/docker/Transport.cpp`)

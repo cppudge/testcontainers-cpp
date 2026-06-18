@@ -12,6 +12,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/optional.hpp>
 
+#include <array>
 #include <cctype>
 #include <mutex>
 #include <optional>
@@ -252,12 +253,21 @@ void DockerClient::remove_container(const std::string& id, bool force, bool remo
     }
 }
 
+namespace {
+
+/// Build the `GET /containers/{id}/logs` query target. `follow` is passed
+/// explicitly so the snapshot path can use `opts.follow` while the streaming
+/// path forces it on.
+std::string build_logs_target(const std::string& id, const LogOptions& opts, bool follow) {
+    return "/containers/" + id + "/logs?stdout=" + (opts.include_stdout ? "1" : "0") +
+           "&stderr=" + (opts.include_stderr ? "1" : "0") + "&follow=" + (follow ? "1" : "0") +
+           "&tail=" + url_encode(opts.tail) + "&timestamps=" + (opts.timestamps ? "1" : "0");
+}
+
+} // namespace
+
 ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) {
-    const std::string target = "/containers/" + id + "/logs?stdout=" +
-                               (opts.include_stdout ? "1" : "0") + "&stderr=" +
-                               (opts.include_stderr ? "1" : "0") + "&follow=" +
-                               (opts.follow ? "1" : "0") + "&tail=" + url_encode(opts.tail) +
-                               "&timestamps=" + (opts.timestamps ? "1" : "0");
+    const std::string target = build_logs_target(id, opts, opts.follow);
 
     const Response res = request("GET", target);
     if (res.status_code != 200) {
@@ -270,6 +280,92 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
     out.stdout_data = std::move(demuxed.stdout_data);
     out.stderr_data = std::move(demuxed.stderr_data);
     return out;
+}
+
+void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
+                               const LogConsumer& consumer) {
+    auto transport = docker::connect(host_);
+    docker::TransportStream stream{*transport};
+
+    // follow is forced on regardless of opts.follow; everything else mirrors logs().
+    const std::string target = build_logs_target(id, opts, /*follow*/ true);
+
+    http::request<http::empty_body> req{http::verb::get, target, /*HTTP*/ 11};
+    req.set(http::field::host, host_.http_host());
+    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
+    req.keep_alive(false); // one connection per request for now
+
+    boost::system::error_code ec;
+    http::write(stream, req, ec);
+    if (ec) {
+        throw DockerError("Failed to send request to Docker (GET " + target + "): " + ec.message());
+    }
+
+    // Read incrementally with a buffer_body parser so frames are decoded as they
+    // arrive instead of waiting for the (unbounded, follow) body to complete.
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::buffer_body> parser;
+    parser.body_limit(boost::none);
+
+    http::read_header(stream, buffer, parser, ec);
+    if (ec && ec != http::error::end_of_stream) {
+        transport->close();
+        throw DockerError("Failed to read response from Docker (GET " + target +
+                          "): " + ec.message());
+    }
+    if (parser.get().result_int() != 200) {
+        const int status = static_cast<int>(parser.get().result_int());
+        transport->close();
+        throw DockerError("follow_logs(" + id + ") failed: HTTP " + std::to_string(status));
+    }
+
+    docker::LogDemuxer demuxer;
+    std::array<char, 8192> buf{};
+    bool stop = false;
+    while (!stop && !parser.is_done()) {
+        parser.get().body().data = buf.data();
+        parser.get().body().size = buf.size();
+
+        // read_some (not read): read returns only when the whole message is
+        // complete, which for a follow stream means "when the container stops" —
+        // that would batch all output to the end. read_some returns after each
+        // socket read, so frames are delivered as the daemon flushes them.
+        http::read_some(stream, buffer, parser, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {}; // the buffer filled up: not an error, just keep reading
+        }
+        if (ec == http::error::end_of_stream) {
+            break; // the container's log stream ended (it stopped)
+        }
+        if (ec) {
+            break; // the stream was reset/closed by the daemon; treat as end
+        }
+
+        const std::size_t n = buf.size() - parser.get().body().size;
+        if (n == 0) {
+            continue;
+        }
+        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
+            LogSource source = LogSource::Stdout;
+            switch (frame.stream) {
+            case docker::LogStreamKind::StdIn:
+                continue; // never present in log output
+            case docker::LogStreamKind::StdOut:
+                source = LogSource::Stdout;
+                break;
+            case docker::LogStreamKind::StdErr:
+                source = LogSource::Stderr;
+                break;
+            }
+            if (!consumer(source, frame.data)) {
+                stop = true; // consumer asked to stop; close the connection below
+                break;
+            }
+        }
+    }
+
+    // Closing the connection tells Docker to stop streaming (also on early stop).
+    transport->close();
 }
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd) {

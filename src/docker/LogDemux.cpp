@@ -23,7 +23,10 @@ std::vector<LogFrame> LogDemuxer::feed(std::string_view bytes) {
     std::vector<LogFrame> frames;
     pending_.append(bytes.data(), bytes.size());
 
-    std::size_t pos = 0;
+    // Parse from start_ (the first unconsumed byte) and advance it as frames are
+    // consumed, instead of erasing from the front on every call. Erasing each
+    // time is O(n) per chunk and O(n²) across many small streaming chunks.
+    std::size_t pos = start_;
     while (true) {
         if (!have_header_) {
             if (pending_.size() - pos < kHeaderSize) {
@@ -52,10 +55,13 @@ std::vector<LogFrame> LogDemuxer::feed(std::string_view bytes) {
         have_header_ = false;
         payload_len_ = 0;
     }
+    start_ = pos;
 
-    // Drop the bytes we consumed; keep the unparsed remainder for the next feed.
-    if (pos > 0) {
-        pending_.erase(0, pos);
+    // Compact lazily: only drop the consumed prefix when it has grown large, so a
+    // single-shot feed (demux_all) never copies and streaming stays amortized O(n).
+    if (start_ > 65536 || start_ * 2 > pending_.size()) {
+        pending_.erase(0, start_);
+        start_ = 0;
     }
     return frames;
 }

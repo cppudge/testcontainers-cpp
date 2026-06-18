@@ -34,6 +34,10 @@ std::uint16_t Container::get_host_port(ContainerPort port) const {
 
 ContainerLogs Container::logs() const { return client_.logs(id_); }
 
+void Container::follow_logs(const LogConsumer& consumer, const LogOptions& opts) const {
+    client_.follow_logs(id_, opts, consumer);
+}
+
 ExecResult Container::exec(const std::vector<std::string>& cmd) const {
     return client_.exec(id_, cmd);
 }

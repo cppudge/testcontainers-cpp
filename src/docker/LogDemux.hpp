@@ -38,7 +38,8 @@ public:
 private:
     static constexpr std::size_t kHeaderSize = 8;
 
-    std::string pending_;            ///< bytes not yet consumed into a frame
+    std::string pending_;            ///< buffered bytes (from start_ onward are unconsumed)
+    std::size_t start_ = 0;          ///< offset of the first unconsumed byte in pending_
     bool have_header_ = false;       ///< true once the current frame's header is parsed
     LogStreamKind stream_ = LogStreamKind::StdOut; ///< current frame's stream
     std::uint32_t payload_len_ = 0;  ///< current frame's expected payload length

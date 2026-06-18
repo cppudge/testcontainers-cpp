@@ -62,6 +62,11 @@ public:
     /// A snapshot of the container's stdout / stderr logs.
     ContainerLogs logs() const;
 
+    /// Stream this container's logs to `consumer` until the container stops or the
+    /// consumer returns false. Blocking — run on your own std::thread for background
+    /// consumption. See DockerClient::follow_logs.
+    void follow_logs(const LogConsumer& consumer, const LogOptions& opts = {}) const;
+
     /// Run a command inside the running container, capturing its stdout / stderr
     /// and exit code.
     ExecResult exec(const std::vector<std::string>& cmd) const;

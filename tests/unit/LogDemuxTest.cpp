@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -15,6 +17,8 @@
 //   LogDemux.FrameSplitInsideHeader - a frame whose 8-byte header is split across two feeds decodes once complete.
 //   LogDemux.FrameSplitInsidePayload - a frame whose payload is split across two feeds decodes once complete.
 //   LogDemux.MultipleFramesSplitAtArbitraryPoints - five frames fed one byte at a time all decode correctly in order.
+//   LogDemux.ByteByByteMatchesDemuxAll - feeding a multi-frame buffer one byte at a time yields the same frames as demux_all of the whole buffer.
+//   LogDemux.ManySmallFramesInVaryingChunks - many small frames fed in deterministically cycling chunk sizes reassemble to the expected stdout/stderr.
 //   LogDemux.DemuxAllConcatenatesByStream - demux_all concatenates stdout frames and stderr frames into their respective buffers.
 //   LogDemux.DemuxAllIgnoresStdin - demux_all drops stdin frames and keeps only stdout/stderr.
 
@@ -157,6 +161,83 @@ TEST(LogDemux, MultipleFramesSplitAtArbitraryPoints) {
     EXPECT_TRUE(all[3].data.empty());
     EXPECT_EQ(all[4].stream, LogStreamKind::StdOut);
     EXPECT_EQ(all[4].data, "delta");
+}
+
+TEST(LogDemux, ByteByByteMatchesDemuxAll) {
+    std::string buf;
+    buf += encode_frame(LogStreamKind::StdOut, "first line\n");
+    buf += encode_frame(LogStreamKind::StdErr, "an error\n");
+    buf += encode_frame(LogStreamKind::StdOut, "second line\n");
+
+    // Feeding one byte at a time exercises the partial-header / partial-payload
+    // paths and the lazy compaction of the consumed offset.
+    LogDemuxer demux;
+    std::vector<LogFrame> all;
+    for (char ch : buf) {
+        for (auto& f : demux.feed(std::string(1, ch))) {
+            all.push_back(std::move(f));
+        }
+    }
+
+    // Must match the single-shot demux of the same bytes, frame for frame.
+    const auto expected = demux_all(buf);
+    std::string stdout_data;
+    std::string stderr_data;
+    for (const auto& f : all) {
+        if (f.stream == LogStreamKind::StdOut) {
+            stdout_data += f.data;
+        } else if (f.stream == LogStreamKind::StdErr) {
+            stderr_data += f.data;
+        }
+    }
+    ASSERT_EQ(all.size(), 3u);
+    EXPECT_EQ(stdout_data, expected.stdout_data);
+    EXPECT_EQ(stderr_data, expected.stderr_data);
+    EXPECT_EQ(all[0].stream, LogStreamKind::StdOut);
+    EXPECT_EQ(all[0].data, "first line\n");
+    EXPECT_EQ(all[1].stream, LogStreamKind::StdErr);
+    EXPECT_EQ(all[1].data, "an error\n");
+    EXPECT_EQ(all[2].stream, LogStreamKind::StdOut);
+    EXPECT_EQ(all[2].data, "second line\n");
+}
+
+TEST(LogDemux, ManySmallFramesInVaryingChunks) {
+    // Build N small frames, alternating stdout/stderr, with the index baked into
+    // each payload so the expected concatenation is unambiguous.
+    constexpr int kFrames = 200;
+    std::string buf;
+    std::string expected_stdout;
+    std::string expected_stderr;
+    for (int i = 0; i < kFrames; ++i) {
+        const bool to_stdout = (i % 2 == 0);
+        const std::string payload = (to_stdout ? "o" : "e") + std::to_string(i) + "\n";
+        buf += encode_frame(to_stdout ? LogStreamKind::StdOut : LogStreamKind::StdErr, payload);
+        (to_stdout ? expected_stdout : expected_stderr) += payload;
+    }
+
+    // Feed in deterministically varying chunk sizes (cycle 1, 3, 7 bytes) so the
+    // split points fall arbitrarily across headers and payloads — no real RNG.
+    static constexpr std::size_t kChunkSizes[] = {1, 3, 7};
+    LogDemuxer demux;
+    std::string stdout_data;
+    std::string stderr_data;
+    std::size_t off = 0;
+    std::size_t which = 0;
+    while (off < buf.size()) {
+        const std::size_t n = std::min(kChunkSizes[which % 3], buf.size() - off);
+        ++which;
+        for (const auto& f : demux.feed(std::string_view(buf).substr(off, n))) {
+            if (f.stream == LogStreamKind::StdOut) {
+                stdout_data += f.data;
+            } else if (f.stream == LogStreamKind::StdErr) {
+                stderr_data += f.data;
+            }
+        }
+        off += n;
+    }
+
+    EXPECT_EQ(stdout_data, expected_stdout);
+    EXPECT_EQ(stderr_data, expected_stderr);
 }
 
 TEST(LogDemux, DemuxAllConcatenatesByStream) {
