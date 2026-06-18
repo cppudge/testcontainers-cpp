@@ -1,6 +1,7 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "docker/ApiMapping.hpp"
+#include "docker/LogDemux.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/version.hpp"
@@ -195,6 +196,26 @@ void DockerClient::remove_container(const std::string& id, bool force, bool remo
         throw DockerError("remove_container(" + id + ") failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
+}
+
+ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) {
+    const std::string target = "/containers/" + id + "/logs?stdout=" +
+                               (opts.include_stdout ? "1" : "0") + "&stderr=" +
+                               (opts.include_stderr ? "1" : "0") + "&follow=" +
+                               (opts.follow ? "1" : "0") + "&tail=" + url_encode(opts.tail) +
+                               "&timestamps=" + (opts.timestamps ? "1" : "0");
+
+    const Response res = request("GET", target);
+    if (res.status_code != 200) {
+        throw DockerError("logs(" + id + ") failed: HTTP " + std::to_string(res.status_code) +
+                          " " + res.body);
+    }
+
+    const docker::DemuxedLogs demuxed = docker::demux_all(res.body);
+    ContainerLogs out;
+    out.stdout_data = std::move(demuxed.stdout_data);
+    out.stderr_data = std::move(demuxed.stderr_data);
+    return out;
 }
 
 } // namespace testcontainers

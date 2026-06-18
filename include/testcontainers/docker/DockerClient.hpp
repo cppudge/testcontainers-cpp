@@ -8,6 +8,7 @@
 
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
+#include "testcontainers/docker/Logs.hpp"
 
 namespace testcontainers {
 
@@ -71,6 +72,11 @@ public:
 
     /// `DELETE /containers/{id}` — force-kill and remove anonymous volumes by default.
     void remove_container(const std::string& id, bool force = true, bool remove_volumes = true);
+
+    /// `GET /containers/{id}/logs` — fetch a snapshot of the container's logs and
+    /// demultiplex the (non-TTY) stream into separate stdout / stderr text.
+    /// Only the non-follow case is supported here; `opts.follow` is ignored.
+    ContainerLogs logs(const std::string& id, const LogOptions& opts = {});
 
 private:
     DockerHost host_;

@@ -97,7 +97,8 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
 - [x] **Core container endpoints**: pull / create (+ lazy pull on 404) / start / inspect /
       stop / remove, with `ApiMapping` (types ↔ Docker JSON). Covered by 21 unit tests +
       3 integration tests (real container lifecycle, skipped if no daemon).
-- [ ] Multiplexed log-stream parser; container logs + `GET /containers/{id}/logs`
+- [x] **Multiplexed log-stream parser**; container logs + `GET /containers/{id}/logs`
+      (incremental demuxer handling split headers/payloads, `DockerClient::logs()`).
 - [ ] Value types & `GenericImage`/`Container` builder; `start()` lifecycle
 - [ ] Wait strategies (log / http / healthcheck / exit), 60s startup timeout
 - [ ] Host-port discovery from `NetworkSettings.Ports`

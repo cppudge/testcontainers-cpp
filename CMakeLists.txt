@@ -53,6 +53,7 @@ add_library(testcontainers
     src/docker/DockerHost.cpp
     src/docker/Transport.cpp
     src/docker/ApiMapping.cpp
+    src/docker/LogDemux.cpp
     src/docker/DockerClient.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
@@ -104,6 +105,7 @@ if(BUILD_TESTING)
         tests/unit/DockerHostTest.cpp
         tests/unit/ResponseTest.cpp
         tests/unit/ApiMappingTest.cpp
+        tests/unit/LogDemuxTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
@@ -119,6 +121,7 @@ if(BUILD_TESTING)
     # Integration tests — require a reachable Docker daemon (skipped otherwise).
     add_executable(tc_integration_tests
         tests/integration/ContainerLifecycleTest.cpp
+        tests/integration/ContainerLogsTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers
