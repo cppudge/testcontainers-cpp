@@ -225,6 +225,16 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignore
       create→copy→start so a copy failure removes the container) and into a
       running container (`Container::copy_to`). Covered by 6 unit tests (tar
       built and read back with libarchive) + 3 integration tests.
+- [x] **Windows-container support** (parity with testcontainers-dotnet): daemon-OS
+      detection (`DockerClient::server_os()` / `is_windows_engine()` via `GET /version`,
+      cached process-wide), a free-form create `platform` (`GenericImage::with_platform`,
+      e.g. `windows/amd64` → `?platform=`), and **skipping Ryuk on the Windows engine**
+      (the Linux Ryuk image cannot run there — so there is **no crash-safe reaping on
+      Windows**; cleanup falls back to RAII removal + `AutoRemove`). Integration tests are
+      engine-aware: Linux-image tests skip in Windows-containers mode and vice versa (see
+      `tests/integration/EngineGuard.hpp`), with a dedicated `WindowsContainer` suite running
+      a real `mcr.microsoft.com/windows/nanoserver` container end to end (echo+logs and exec).
+      Covered by 6 unit tests.
 
 ## Build
 

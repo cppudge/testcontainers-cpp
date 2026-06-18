@@ -56,6 +56,12 @@ review are recorded here so they aren't lost between milestones.
   length (100 chars, 255 with prefix); very long container paths would need the pax format. Each
   `with_copy_to` source is a separate tar + `PUT .../archive` (not batched into one). The target's
   parent directory must already exist in the container. No copy-FROM-container (`GET .../archive`) yet.
+- **Windows containers: dotnet-parity only** — the engine mode is detected (`is_windows_engine()`) and
+  Ryuk is skipped on the Windows engine, so there is **no crash-safe reaping** on Windows (RAII /
+  AutoRemove only), matching testcontainers-dotnet. `copy-to-container` still Unix-normalizes the entry
+  path, so `C:\...` targets aren't handled yet. Wait strategies are OS-agnostic (no PowerShell
+  command-wait). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100).
+  A real Windows Ryuk (named-pipe mount + Windows reaper image) is unexplored — see `docs/04`.
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

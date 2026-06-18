@@ -155,6 +155,17 @@ void Reaper::ensure_started() {
     }
 
     DockerClient client = DockerClient::from_environment();
+
+    // No Linux Ryuk image can run on a Windows-containers engine, so we skip the
+    // reaper entirely there (matching testcontainers-dotnet). The managed-by /
+    // session-id labels still get applied to user containers — harmless, just
+    // unused. Consequence: there is NO crash-safe reaping on the Windows engine;
+    // cleanup relies on each container's RAII removal (and AutoRemove on exit).
+    if (client.is_windows_engine()) {
+        started_ = true;
+        return;
+    }
+
     const RyukEndpoint ep = start_ryuk(client, /*auto_remove*/ true);
 
     auto impl = std::make_unique<Impl>();

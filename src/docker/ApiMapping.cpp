@@ -113,6 +113,30 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     return body;
 }
 
+std::string parse_server_os(const std::string& version_json) {
+    const nlohmann::json json = nlohmann::json::parse(version_json);
+    return json.value("Os", std::string{});
+}
+
+std::string build_create_query(const CreateContainerSpec& spec,
+                               const std::function<std::string(const std::string&)>& encode) {
+    std::string query;
+    auto append = [&](const std::string& key, const std::string& value) {
+        query += query.empty() ? '?' : '&';
+        query += key;
+        query += '=';
+        query += encode(value);
+    };
+    if (spec.name) {
+        append("name", *spec.name);
+    }
+    if (spec.platform) {
+        // Free-form "<os>/<arch>", e.g. "windows/amd64".
+        append("platform", *spec.platform);
+    }
+    return query;
+}
+
 ContainerInspect parse_inspect(const std::string& body) {
     const nlohmann::json json = nlohmann::json::parse(body);
 

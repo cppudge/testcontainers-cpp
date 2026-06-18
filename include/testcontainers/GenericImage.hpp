@@ -172,6 +172,18 @@ public:
         return std::move(*this);
     }
 
+    /// Pin the create platform as a free-form "<os>/<arch>" string (e.g.
+    /// "windows/amd64"), sent as the `?platform=` query on create. Useful to
+    /// select a Windows image variant on a Windows-containers engine.
+    GenericImage& with_platform(std::string platform) & {
+        platform_ = std::move(platform);
+        return *this;
+    }
+    GenericImage&& with_platform(std::string platform) && {
+        platform_ = std::move(platform);
+        return std::move(*this);
+    }
+
     /// Supply explicit registry credentials for pulling a private image. When
     /// unset, credentials are auto-resolved from the Docker config (if any).
     GenericImage& with_registry_auth(RegistryAuth auth) & {
@@ -206,6 +218,7 @@ public:
     const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
     const std::optional<std::string>& network() const noexcept { return network_; }
     const std::optional<std::string>& container_name() const noexcept { return container_name_; }
+    const std::optional<std::string>& platform() const noexcept { return platform_; }
     const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
@@ -231,6 +244,7 @@ private:
     std::optional<Healthcheck> healthcheck_;
     std::optional<std::string> network_;
     std::optional<std::string> container_name_;
+    std::optional<std::string> platform_;
     std::optional<RegistryAuth> registry_auth_;
 };
 

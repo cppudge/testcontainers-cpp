@@ -7,6 +7,8 @@
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   DockerAuth.PublicPullUnaffectedByNoAuth - a public image still pulls with no registry auth (baseline; the auth path is opt-in).
 //   DockerAuth.PublicPullWithExplicitAuthHeader - sending an X-Registry-Auth header for a public image does not break the pull.
@@ -29,12 +31,8 @@ protected:
     DockerClient client = DockerClient::from_environment();
 
     void SetUp() override {
-        try {
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 };

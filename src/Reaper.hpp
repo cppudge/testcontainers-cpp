@@ -65,9 +65,12 @@ public:
     Reaper(const Reaper&) = delete;
     Reaper& operator=(const Reaper&) = delete;
 
-    /// Idempotent. No-op when Ryuk is disabled. Otherwise starts Ryuk and opens
-    /// the persistent control connection exactly once. Throws DockerError on
-    /// failure (so callers fail loudly rather than silently leaking).
+    /// Idempotent. No-op when Ryuk is disabled OR when the daemon is in
+    /// Windows-containers mode (the Linux Ryuk image cannot run there, so there
+    /// is no crash-safe reaping on Windows — matching testcontainers-dotnet).
+    /// Otherwise starts Ryuk and opens the persistent control connection exactly
+    /// once. Throws DockerError on failure (so callers fail loudly rather than
+    /// silently leaking).
     void ensure_started();
 
 private:

@@ -20,6 +20,8 @@
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   Reaper.AppliesLabelsAndStartsRyuk - a container started via GenericImage carries the managed-by and session-id labels and the global reaper came up.
 //   Reaper.RyukReapsOnDisconnect - a dedicated Ryuk reaps a labelled (never-started) container once the control TCP connection is closed.
@@ -52,13 +54,8 @@ nlohmann::json container_labels(DockerClient& client, const std::string& id) {
 class Reaper : public ::testing::Test {
 protected:
     void SetUp() override {
-        try {
-            DockerClient client = DockerClient::from_environment();
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 };

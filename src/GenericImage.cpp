@@ -42,6 +42,7 @@ Container GenericImage::start() const {
     spec.healthcheck = healthcheck_;
     spec.network = network_;
     spec.name = container_name_;
+    spec.platform = platform_;
 
     const std::string id = client.create_container(spec, registry_auth_);
 

@@ -15,6 +15,7 @@
 //   GenericImage.ConfigDefaults - a freshly constructed image has no entrypoint/working-dir/user/mounts and is not privileged.
 //   GenericImage.NetworkDefaults - a freshly constructed image has no network or container name set.
 //   GenericImage.NetworkBuildersReflectGetters - with_network and with_container_name record into the matching getters.
+//   GenericImage.PlatformDefaultsAndBuilder - platform is unset by default and with_platform records into the getter.
 //   GenericImage.ConfigChainsOnRvalue - the new config builders chain on a temporary rvalue.
 //   GenericImage.ChainsOnLvalue - with_* chains on a named lvalue and accumulates all settings.
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
@@ -92,6 +93,22 @@ TEST(GenericImage, NetworkBuildersReflectGetters) {
     EXPECT_EQ(*img.network(), "my-net");
     ASSERT_TRUE(img.container_name().has_value());
     EXPECT_EQ(*img.container_name(), "redis-srv");
+}
+
+TEST(GenericImage, PlatformDefaultsAndBuilder) {
+    const GenericImage def("mcr.microsoft.com/windows/nanoserver", "ltsc2025");
+    EXPECT_FALSE(def.platform().has_value());
+
+    GenericImage img("mcr.microsoft.com/windows/nanoserver", "ltsc2025");
+    img.with_platform("windows/amd64");
+    ASSERT_TRUE(img.platform().has_value());
+    EXPECT_EQ(*img.platform(), "windows/amd64");
+
+    // Chains on a temporary rvalue too.
+    const GenericImage chained =
+        GenericImage("alpine", "3.20").with_platform("linux/arm64");
+    ASSERT_TRUE(chained.platform().has_value());
+    EXPECT_EQ(*chained.platform(), "linux/arm64");
 }
 
 TEST(GenericImage, ConfigBuildersReflectGetters) {

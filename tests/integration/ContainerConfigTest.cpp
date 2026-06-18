@@ -9,6 +9,8 @@
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   ContainerConfig.WorkingDirAndUser - working dir and user are applied so the process runs in /tmp as uid 1000.
 //   ContainerConfig.EntrypointOverride - an explicit entrypoint overrides the image default so `echo` prints the cmd arg.
@@ -23,13 +25,8 @@ using namespace testcontainers;
 class ContainerConfig : public ::testing::Test {
 protected:
     void SetUp() override {
-        try {
-            DockerClient client = DockerClient::from_environment();
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 };

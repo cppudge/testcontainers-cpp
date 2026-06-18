@@ -9,6 +9,8 @@
 #include "testcontainers/Network.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   Networks.ResolvesPeerByContainerName - two containers on a user-defined network reach each other by container name (busybox `nc` to a redis peer on the network succeeds).
 //   Networks.CreateAndRemove - Network::create makes a real network with a non-empty id/name and remove() is idempotent.
@@ -19,13 +21,8 @@ using namespace testcontainers;
 class Networks : public ::testing::Test {
 protected:
     void SetUp() override {
-        try {
-            DockerClient client = DockerClient::from_environment();
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 };

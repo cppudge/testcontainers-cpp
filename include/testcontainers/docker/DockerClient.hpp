@@ -52,6 +52,17 @@ public:
     /// `GET /_ping` — true if the daemon answers with a 2xx status.
     bool ping();
 
+    /// `GET /version` — the daemon's operating system (the `Os` field, e.g.
+    /// "linux" / "windows"). Cached process-wide on first success: the engine
+    /// mode (Linux vs Windows containers) does not change mid-process. Throws
+    /// DockerError if the daemon is unreachable or the response is malformed.
+    std::string server_os();
+
+    /// True when the daemon is running in Windows-containers mode (server_os()
+    /// contains "windows", case-insensitive). Used to skip the Linux-only Ryuk
+    /// reaper and to route engine-specific tests.
+    bool is_windows_engine();
+
     // --- Image operations ---
 
     /// `POST /images/create?fromImage=...` — pull an image (blocks until done).

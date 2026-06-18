@@ -8,6 +8,8 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   DockerLogs.FetchesStdoutAndStderr - a container's stdout and stderr are fetched and demultiplexed into separate streams without cross-contamination.
 
@@ -39,12 +41,8 @@ protected:
     DockerClient client = DockerClient::from_environment();
 
     void SetUp() override {
-        try {
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 

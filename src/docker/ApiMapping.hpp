@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,18 @@ namespace testcontainers::docker {
 
 /// Build the JSON body for `POST /containers/create`.
 nlohmann::json build_create_body(const CreateContainerSpec& spec);
+
+/// Parse the `Os` field from a `GET /version` response body (e.g. "linux" /
+/// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
+/// the engine-OS detection in DockerClient can be unit-tested.
+std::string parse_server_os(const std::string& version_json);
+
+/// Build the query string (including the leading '?', or "" when empty) for
+/// `POST /containers/create`. Appends `name=` and/or `platform=` when set, each
+/// percent-encoded by `encode`. Kept here so the query assembly is unit-testable
+/// without a daemon. `encode` is the caller's URL-encoder.
+std::string build_create_query(const CreateContainerSpec& spec,
+                               const std::function<std::string(const std::string&)>& encode);
 
 /// Parse the response of `GET /containers/{id}/json` into ContainerInspect.
 ContainerInspect parse_inspect(const std::string& body);

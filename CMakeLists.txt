@@ -149,6 +149,7 @@ if(BUILD_TESTING)
         tests/integration/NetworkTest.cpp
         tests/integration/ReaperTest.cpp
         tests/integration/AuthTest.cpp
+        tests/integration/WindowsContainerTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers

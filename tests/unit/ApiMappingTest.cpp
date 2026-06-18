@@ -26,6 +26,11 @@
 //   ApiMapping.BuildCreateBodyNoMountsByDefault - a spec without mounts/privileged emits no HostConfig.Mounts or Privileged.
 //   ApiMapping.BuildCreateBodyNetworkMode - a set network maps to HostConfig.NetworkMode.
 //   ApiMapping.BuildCreateBodyNoNetworkModeByDefault - a spec without a network emits no HostConfig.NetworkMode.
+//   ApiMapping.BuildCreateQueryEmptyByDefault - a spec with neither name nor platform yields an empty create query.
+//   ApiMapping.BuildCreateQueryName - a spec with only a name yields "?name=<encoded>".
+//   ApiMapping.BuildCreateQueryPlatform - a spec with a platform yields "?platform=<encoded>" (slash percent-encoded).
+//   ApiMapping.BuildCreateQueryNameAndPlatform - a spec with both name and platform joins them with '&'.
+//   ApiMapping.ParseServerOs - GET /version JSON parses the Os field ("windows"/"linux"), defaulting to "" when absent.
 //   ApiMapping.BuildExecCreateBody - the exec-create body carries Cmd and AttachStdout/AttachStderr set true.
 //   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
@@ -38,11 +43,32 @@
 using namespace testcontainers;
 using namespace std::chrono_literals;
 using testcontainers::docker::build_create_body;
+using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
 using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
+using testcontainers::docker::parse_server_os;
 using testcontainers::docker::split_image;
 using testcontainers::docker::throw_if_pull_error;
+
+namespace {
+
+// A trivial percent-encoder for the create-query tests: encodes '/' as %2F so
+// the platform value is visibly distinguishable from the raw string. Mirrors
+// DockerClient's url_encode for the characters these tests exercise.
+std::string test_encode(const std::string& value) {
+    std::string out;
+    for (const char c : value) {
+        if (c == '/') {
+            out += "%2F";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 TEST(ApiMapping, BuildCreateBodyMinimal) {
     CreateContainerSpec spec;
@@ -215,6 +241,42 @@ TEST(ApiMapping, BuildCreateBodyNoNetworkModeByDefault) {
     spec.image = "alpine:3.20";
     const auto body = build_create_body(spec);
     EXPECT_FALSE(body.contains("HostConfig"));
+}
+
+TEST(ApiMapping, BuildCreateQueryEmptyByDefault) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    EXPECT_EQ(build_create_query(spec, test_encode), "");
+}
+
+TEST(ApiMapping, BuildCreateQueryName) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.name = "my-container";
+    EXPECT_EQ(build_create_query(spec, test_encode), "?name=my-container");
+}
+
+TEST(ApiMapping, BuildCreateQueryPlatform) {
+    CreateContainerSpec spec;
+    spec.image = "mcr.microsoft.com/windows/nanoserver:ltsc2025";
+    spec.platform = "windows/amd64";
+    // The encoder runs on the value, so the '/' is percent-encoded.
+    EXPECT_EQ(build_create_query(spec, test_encode), "?platform=windows%2Famd64");
+}
+
+TEST(ApiMapping, BuildCreateQueryNameAndPlatform) {
+    CreateContainerSpec spec;
+    spec.image = "mcr.microsoft.com/windows/nanoserver:ltsc2025";
+    spec.name = "win-box";
+    spec.platform = "windows/amd64";
+    EXPECT_EQ(build_create_query(spec, test_encode), "?name=win-box&platform=windows%2Famd64");
+}
+
+TEST(ApiMapping, ParseServerOs) {
+    EXPECT_EQ(parse_server_os(R"({"Version":"29.5.3","Os":"windows","Arch":"amd64"})"), "windows");
+    EXPECT_EQ(parse_server_os(R"({"Os":"linux"})"), "linux");
+    // Missing Os field defaults to "".
+    EXPECT_EQ(parse_server_os(R"({"Version":"24.0.0"})"), "");
 }
 
 TEST(ApiMapping, BuildExecCreateBody) {

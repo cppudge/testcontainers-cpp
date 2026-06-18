@@ -12,6 +12,8 @@
 #include <boost/beast/http.hpp>
 
 #include <cctype>
+#include <mutex>
+#include <optional>
 #include <string>
 
 namespace testcontainers {
@@ -117,6 +119,42 @@ bool DockerClient::ping() {
     return request("GET", "/_ping").ok();
 }
 
+std::string DockerClient::server_os() {
+    // The engine mode (Linux vs Windows containers) is fixed for the life of the
+    // process, so the first successful answer is cached and reused. Guarded by a
+    // mutex because a process may share the daemon across threads.
+    static std::mutex cache_mutex;
+    static std::optional<std::string> cached;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (cached) {
+            return *cached;
+        }
+    }
+
+    const Response res = request("GET", "/version");
+    if (!res.ok()) {
+        throw DockerError("server_os: GET /version failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    std::string os = docker::parse_server_os(res.body);
+
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    cached = os;
+    return os;
+}
+
+bool DockerClient::is_windows_engine() {
+    const std::string os = server_os();
+    // Case-insensitive "contains windows".
+    std::string lower;
+    lower.reserve(os.size());
+    for (const unsigned char c : os) {
+        lower.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return lower.find("windows") != std::string::npos;
+}
+
 void DockerClient::pull_image(const std::string& image, const std::optional<RegistryAuth>& auth) {
     const auto [name, tag] = docker::split_image(image);
     const std::string target =
@@ -144,10 +182,9 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
 std::string DockerClient::create_container(const CreateContainerSpec& spec,
                                            const std::optional<RegistryAuth>& auth) {
     const std::string body = docker::build_create_body(spec).dump();
-    std::string target = "/containers/create";
-    if (spec.name) {
-        target += "?name=" + url_encode(*spec.name);
-    }
+    const std::string target =
+        "/containers/create" +
+        docker::build_create_query(spec, [](const std::string& v) { return url_encode(v); });
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 

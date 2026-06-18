@@ -14,6 +14,8 @@
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "EngineGuard.hpp"
+
 // Tests in this file (integration; require a Docker daemon):
 //   Copy.CopyAtStartData - with_copy_to(content) lands the bytes in the container so a `cat` of the target prints them.
 //   Copy.CopyAtStartHostFile - with_copy_to(host_file) copies a host file's contents into the container.
@@ -25,13 +27,8 @@ using namespace testcontainers;
 class Copy : public ::testing::Test {
 protected:
     void SetUp() override {
-        try {
-            DockerClient client = DockerClient::from_environment();
-            if (!client.ping()) {
-                GTEST_SKIP() << "Docker daemon did not respond to /_ping";
-            }
-        } catch (const std::exception& e) {
-            GTEST_SKIP() << "Docker not available: " << e.what();
+        if (auto why = tcit::linux_engine_unavailable()) {
+            GTEST_SKIP() << *why;
         }
     }
 };
