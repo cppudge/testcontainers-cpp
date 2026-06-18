@@ -2,6 +2,10 @@
 
 #include "testcontainers/version.hpp"
 
+// Tests in this file:
+//   Version.IsNotEmpty - the library version string is non-empty.
+//   DependencyReport.MentionsEachDependency - the dependency report names Boost, nlohmann, OpenSSL, and libarchive.
+
 TEST(Version, IsNotEmpty) {
     EXPECT_FALSE(testcontainers::version().empty());
 }

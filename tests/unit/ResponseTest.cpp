@@ -2,6 +2,10 @@
 
 #include "testcontainers/docker/DockerClient.hpp"
 
+// Tests in this file:
+//   Response.HeaderLookupIsCaseInsensitive - header() matches names case-insensitively and returns "" when absent.
+//   Response.OkReflectsStatus - ok() is true only for 2xx status codes.
+
 using namespace testcontainers;
 
 TEST(Response, HeaderLookupIsCaseInsensitive) {

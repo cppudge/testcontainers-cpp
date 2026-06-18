@@ -6,6 +6,11 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+// Tests in this file (integration; require a Docker daemon):
+//   DockerLifecycle.CreateStartInspectRemove - a container is created, started, seen running, stopped, and removed, after which inspect fails.
+//   DockerLifecycle.LazyPullOnCreate - create_container transparently pulls a missing image instead of failing with 404.
+//   DockerLifecycle.PublishesExposedPort - an exposed port with publish-all gets a non-zero host port reported by inspect.
+
 using namespace testcontainers;
 
 namespace {

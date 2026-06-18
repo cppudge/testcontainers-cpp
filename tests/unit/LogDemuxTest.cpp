@@ -7,6 +7,17 @@
 
 #include "docker/LogDemux.hpp"
 
+// Tests in this file:
+//   LogDemux.SingleStdoutFrame - a lone stdout frame decodes to one frame with the stdout kind and its payload.
+//   LogDemux.SingleStderrFrame - a lone stderr frame decodes with the stderr kind.
+//   LogDemux.MultipleInterleavedFrames - back-to-back stdout/stderr frames decode in order with correct kinds.
+//   LogDemux.EmptyPayloadFrame - a zero-length-payload frame decodes without swallowing the following frame.
+//   LogDemux.FrameSplitInsideHeader - a frame whose 8-byte header is split across two feeds decodes once complete.
+//   LogDemux.FrameSplitInsidePayload - a frame whose payload is split across two feeds decodes once complete.
+//   LogDemux.MultipleFramesSplitAtArbitraryPoints - five frames fed one byte at a time all decode correctly in order.
+//   LogDemux.DemuxAllConcatenatesByStream - demux_all concatenates stdout frames and stderr frames into their respective buffers.
+//   LogDemux.DemuxAllIgnoresStdin - demux_all drops stdin frames and keeps only stdout/stderr.
+
 using testcontainers::docker::demux_all;
 using testcontainers::docker::LogDemuxer;
 using testcontainers::docker::LogFrame;

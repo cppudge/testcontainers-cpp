@@ -8,6 +8,14 @@
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
 
+// Tests in this file:
+//   ApiMapping.BuildCreateBodyMinimal - a spec with only an image produces a body with just Image and no optional sections.
+//   ApiMapping.BuildCreateBodyFull - cmd, env, labels, exposed ports, and publish-all map to the correct Docker create-body fields.
+//   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
+//   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
+//   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
+//   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
+
 using namespace testcontainers;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::parse_inspect;

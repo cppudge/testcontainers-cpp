@@ -5,6 +5,19 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 
+// Tests in this file:
+//   DockerHost.ParsesUnixSocket - a unix:// URL parses to the Unix scheme with the socket path and a localhost HTTP host.
+//   DockerHost.ParsesNamedPipe - an npipe:// URL parses to the NamedPipe scheme keeping the pipe path.
+//   DockerHost.ParsesTcpDefaultPort - a tcp:// URL without a port defaults to port 2375.
+//   DockerHost.ParsesTcpExplicitPort - a tcp:// URL with an explicit port keeps that host and port.
+//   DockerHost.ParsesHttpsDefaultPort - an https:// URL parses to the Https scheme defaulting to port 2376.
+//   DockerHost.ParsesHttpAsTcp - an http:// URL is treated as the Tcp scheme.
+//   DockerHost.ParsesIpv6Literal - a bracketed IPv6 host with a port parses the host and port correctly.
+//   DockerHost.BarePathIsUnix - a bare filesystem path with no scheme is treated as a unix socket.
+//   DockerHost.UnsupportedSchemeThrows - an unknown scheme throws DockerError.
+//   DockerHost.ResolveUsesDockerHostEnv - resolve() honors the DOCKER_HOST environment variable.
+//   DockerHost.ResolveDefaultsToPlatform - resolve() falls back to the platform default endpoint when DOCKER_HOST is unset.
+
 using namespace testcontainers;
 
 namespace {

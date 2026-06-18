@@ -8,6 +8,9 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+// Tests in this file (integration; require a Docker daemon):
+//   DockerLogs.FetchesStdoutAndStderr - a container's stdout and stderr are fetched and demultiplexed into separate streams without cross-contamination.
+
 using namespace testcontainers;
 
 namespace {
