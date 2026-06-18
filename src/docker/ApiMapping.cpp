@@ -31,6 +31,25 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         body["ExposedPorts"] = std::move(exposed);
     }
 
+    if (spec.healthcheck) {
+        const Healthcheck& hc = *spec.healthcheck;
+        nlohmann::json health = nlohmann::json::object();
+        health["Test"] = hc.test();
+        if (hc.interval()) {
+            health["Interval"] = static_cast<std::int64_t>(hc.interval()->count());
+        }
+        if (hc.timeout()) {
+            health["Timeout"] = static_cast<std::int64_t>(hc.timeout()->count());
+        }
+        if (hc.start_period()) {
+            health["StartPeriod"] = static_cast<std::int64_t>(hc.start_period()->count());
+        }
+        if (hc.retries()) {
+            health["Retries"] = *hc.retries();
+        }
+        body["Healthcheck"] = std::move(health);
+    }
+
     nlohmann::json host_config = nlohmann::json::object();
     if (spec.publish_all_ports) {
         host_config["PublishAllPorts"] = true;
@@ -55,6 +74,13 @@ ContainerInspect parse_inspect(const std::string& body) {
         if (const auto code = state->find("ExitCode");
             code != state->end() && code->is_number_integer()) {
             info.exit_code = code->get<std::int64_t>();
+        }
+        if (const auto health = state->find("Health");
+            health != state->end() && health->is_object()) {
+            if (const auto status = health->find("Status");
+                status != health->end() && status->is_string()) {
+                info.health_status = status->get<std::string>();
+            }
         }
     }
 

@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "testcontainers/Healthcheck.hpp"
+
 namespace testcontainers {
 
 /// Minimal request for `POST /containers/create`.
@@ -21,6 +23,7 @@ struct CreateContainerSpec {
     std::vector<std::pair<std::string, std::string>> labels; ///< container labels
     std::optional<std::string> name;                         ///< container name (?name=)
     bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts
+    std::optional<Healthcheck> healthcheck;                  ///< Healthcheck (create-body)
 };
 
 /// A single published port binding from a container inspect.
@@ -36,6 +39,9 @@ struct ContainerInspect {
     std::string status;                       ///< State.Status ("running", "exited", …)
     bool running = false;                      ///< State.Running
     std::optional<std::int64_t> exit_code;     ///< State.ExitCode (when not running)
+    /// State.Health.Status ("starting"/"healthy"/"unhealthy"); absent when the
+    /// container has no healthcheck configured.
+    std::optional<std::string> health_status;
     /// "6379/tcp" -> published host bindings (from NetworkSettings.Ports).
     std::map<std::string, std::vector<PortBinding>> ports;
 };

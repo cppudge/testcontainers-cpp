@@ -101,8 +101,8 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only)
       (incremental demuxer handling split headers/payloads, `DockerClient::logs()`).
 - [x] Value types (`ContainerPort`, `WaitFor`) & `GenericImage`/`Container` builder; `start()` lifecycle
 - [x] Host-port discovery from `NetworkSettings.Ports` (`Container::get_host_port`)
-- [ ] Wait strategies: log message (polling) + fixed duration done; http / healthcheck / exit pending,
-      60s startup timeout
+- [x] Wait strategies: log message, fixed duration, **exit (optional code), healthcheck (`State.Health`),
+      and HTTP probe (host-port GET)**, run sequentially under a shared 60s startup timeout
 - [x] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
 - [ ] Cleanup: RAII + Ryuk reaper; networks, mounts, copy, exec, registry auth
 

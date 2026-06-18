@@ -113,6 +113,7 @@ if(BUILD_TESTING)
         tests/unit/LogDemuxTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/WaitForTest.cpp
+        tests/unit/HealthcheckTest.cpp
         tests/unit/GenericImageTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
@@ -131,6 +132,7 @@ if(BUILD_TESTING)
         tests/integration/ContainerLifecycleTest.cpp
         tests/integration/ContainerLogsTest.cpp
         tests/integration/RedisMvpTest.cpp
+        tests/integration/WaitStrategiesTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers

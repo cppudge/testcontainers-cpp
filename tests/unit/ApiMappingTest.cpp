@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <string>
 #include <utility>
 
@@ -7,16 +8,22 @@
 
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/Healthcheck.hpp"
 
 // Tests in this file:
 //   ApiMapping.BuildCreateBodyMinimal - a spec with only an image produces a body with just Image and no optional sections.
 //   ApiMapping.BuildCreateBodyFull - cmd, env, labels, exposed ports, and publish-all map to the correct Docker create-body fields.
+//   ApiMapping.BuildCreateBodyHealthcheck - a healthcheck maps to a Healthcheck object with the Test array, nanosecond durations, and retries.
+//   ApiMapping.BuildCreateBodyNoHealthcheckByDefault - a spec without a healthcheck emits no Healthcheck field.
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
+//   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
+//   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
 
 using namespace testcontainers;
+using namespace std::chrono_literals;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::split_image;
@@ -50,6 +57,34 @@ TEST(ApiMapping, BuildCreateBodyFull) {
     EXPECT_TRUE(body["HostConfig"]["PublishAllPorts"].get<bool>());
 }
 
+TEST(ApiMapping, BuildCreateBodyHealthcheck) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.healthcheck = Healthcheck::cmd_shell("exit 0")
+                           .with_interval(500ms)
+                           .with_timeout(1s)
+                           .with_start_period(0ms)
+                           .with_retries(3);
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("Healthcheck"));
+    const auto& health = body["Healthcheck"];
+    EXPECT_EQ(health["Test"], nlohmann::json({"CMD-SHELL", "exit 0"}));
+    // Durations are int64 nanoseconds.
+    EXPECT_EQ(health["Interval"].get<std::int64_t>(),
+              std::chrono::nanoseconds(500ms).count());
+    EXPECT_EQ(health["Timeout"].get<std::int64_t>(), std::chrono::nanoseconds(1s).count());
+    EXPECT_EQ(health["StartPeriod"].get<std::int64_t>(), 0);
+    EXPECT_EQ(health["Retries"].get<int>(), 3);
+}
+
+TEST(ApiMapping, BuildCreateBodyNoHealthcheckByDefault) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    const auto body = build_create_body(spec);
+    EXPECT_FALSE(body.contains("Healthcheck"));
+}
+
 TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {
     const std::string body = R"({
         "Id": "abc123",
@@ -74,6 +109,29 @@ TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {
     EXPECT_EQ(info.ports.at("6379/tcp")[0].host_port, 32768);
     EXPECT_EQ(info.ports.at("6379/tcp")[1].host_port, 32769);
     EXPECT_TRUE(info.ports.at("80/tcp").empty()); // null bindings -> empty
+    EXPECT_FALSE(info.health_status.has_value());  // no Health section here
+}
+
+TEST(ApiMapping, ParseInspectHealthStatus) {
+    const std::string body = R"({
+        "Id": "abc123",
+        "State": {"Status": "running", "Running": true,
+                  "Health": {"Status": "healthy", "FailingStreak": 0}}
+    })";
+
+    const auto info = parse_inspect(body);
+    ASSERT_TRUE(info.health_status.has_value());
+    EXPECT_EQ(*info.health_status, "healthy");
+}
+
+TEST(ApiMapping, ParseInspectNoHealthStatus) {
+    const std::string body = R"({
+        "Id": "abc123",
+        "State": {"Status": "running", "Running": true}
+    })";
+
+    const auto info = parse_inspect(body);
+    EXPECT_FALSE(info.health_status.has_value());
 }
 
 TEST(ApiMapping, SplitImage) {

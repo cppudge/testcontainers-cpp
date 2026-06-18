@@ -1,8 +1,12 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
+
+#include "testcontainers/ContainerPort.hpp"
 
 namespace testcontainers {
 
@@ -26,11 +30,28 @@ struct Duration {
     std::chrono::milliseconds value{0};
 };
 
+/// Wait until the container stops, optionally with a specific exit code.
+struct Exit {
+    std::optional<std::int64_t> code; ///< required exit code, or any if unset
+};
+
+/// Wait until the container's Docker health status becomes "healthy".
+struct Healthcheck {};
+
+/// Wait until an HTTP GET to the mapped host port returns `expected_status`.
+struct Http {
+    std::string path = "/";                       ///< request path
+    ContainerPort port;                           ///< container port to probe
+    int expected_status = 200;                    ///< status that signals readiness
+    std::chrono::milliseconds poll_interval{200}; ///< delay between probes
+};
+
 } // namespace wait
 
 /// A readiness condition: a closed sum of the small wait strategies above,
 /// dispatched with `std::visit`. Copyable so it lives happily in a vector.
-using WaitFor = std::variant<wait::None, wait::LogMessage, wait::Duration>;
+using WaitFor = std::variant<wait::None, wait::LogMessage, wait::Duration, wait::Exit,
+                             wait::Healthcheck, wait::Http>;
 
 /// Convenience factories that build the right `WaitFor` alternative.
 namespace wait_for {
@@ -58,6 +79,31 @@ inline WaitFor seconds(int s) {
 /// Wait a fixed number of milliseconds after start.
 inline WaitFor millis(int ms) {
     return wait::Duration{std::chrono::milliseconds(ms)};
+}
+
+/// Wait until the container stops (with any exit code).
+inline WaitFor exit() {
+    return wait::Exit{};
+}
+
+/// Wait until the container stops with the given exit code.
+inline WaitFor exit_code(std::int64_t code) {
+    return wait::Exit{code};
+}
+
+/// Wait until the container's Docker health becomes "healthy".
+inline WaitFor healthy() {
+    return wait::Healthcheck{};
+}
+
+/// Wait until an HTTP GET to `path` on the mapped host port for `port` returns
+/// `status`.
+inline WaitFor http(std::string path, ContainerPort port, int status = 200) {
+    wait::Http h;
+    h.path = std::move(path);
+    h.port = port;
+    h.expected_status = status;
+    return h;
 }
 
 } // namespace wait_for

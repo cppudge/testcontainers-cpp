@@ -31,11 +31,12 @@ review are recorded here so they aren't lost between milestones.
 - **Log-wait polling cost** — the log wait re-fetches the full `tail=all` snapshot
   every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
   item above). (`src/WaitStrategies.cpp`)
-- **Only log + duration wait strategies** — HTTP-probe, healthcheck (`State.Health`),
-  and exit-code waits are not implemented yet.
+- **Wait-strategy port resolution duplicated** — `mapped_host_port` in
+  `src/WaitStrategies.cpp` (HTTP wait) re-implements `Container::get_host_port`'s IPv4-binding
+  preference; factor into one shared helper. The HTTP wait also opens a fresh TCP connection +
+  `io_context` per probe (fine for ~200ms polling).
 
 ## Next milestones
-- Remaining wait strategies: HTTP probe, healthcheck (`State.Health`), exit-code.
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
   working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.
 - `Mount` value type (bind / volume / tmpfs).

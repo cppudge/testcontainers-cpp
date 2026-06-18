@@ -13,6 +13,11 @@
 //   WaitFor.LogFactoryIsEither - wait_for::log builds a LogMessage scanning either stream.
 //   WaitFor.SecondsFactory - wait_for::seconds builds a Duration of the right millisecond value.
 //   WaitFor.MillisFactory - wait_for::millis builds a Duration of the right millisecond value.
+//   WaitFor.ExitFactory - wait_for::exit builds an Exit with no required code.
+//   WaitFor.ExitCodeFactory - wait_for::exit_code builds an Exit pinned to the given code.
+//   WaitFor.HealthyFactory - wait_for::healthy builds a Healthcheck alternative.
+//   WaitFor.HttpFactory - wait_for::http builds an Http with the given path, port, and status (and a default poll interval).
+//   WaitFor.HttpFactoryDefaultStatus - wait_for::http defaults the expected status to 200.
 //   WaitFor.Copyable - a WaitFor (and a vector of them) can be copied.
 //   WaitFor.VisitDispatches - std::visit dispatches to the active alternative.
 
@@ -52,6 +57,41 @@ TEST(WaitFor, MillisFactory) {
     const WaitFor w = wait_for::millis(250);
     ASSERT_TRUE(std::holds_alternative<wait::Duration>(w));
     EXPECT_EQ(std::get<wait::Duration>(w).value, std::chrono::milliseconds(250));
+}
+
+TEST(WaitFor, ExitFactory) {
+    const WaitFor w = wait_for::exit();
+    ASSERT_TRUE(std::holds_alternative<wait::Exit>(w));
+    EXPECT_FALSE(std::get<wait::Exit>(w).code.has_value());
+}
+
+TEST(WaitFor, ExitCodeFactory) {
+    const WaitFor w = wait_for::exit_code(7);
+    ASSERT_TRUE(std::holds_alternative<wait::Exit>(w));
+    const auto& e = std::get<wait::Exit>(w);
+    ASSERT_TRUE(e.code.has_value());
+    EXPECT_EQ(*e.code, 7);
+}
+
+TEST(WaitFor, HealthyFactory) {
+    const WaitFor w = wait_for::healthy();
+    EXPECT_TRUE(std::holds_alternative<wait::Healthcheck>(w));
+}
+
+TEST(WaitFor, HttpFactory) {
+    const WaitFor w = wait_for::http("/health", tcp(8080), 204);
+    ASSERT_TRUE(std::holds_alternative<wait::Http>(w));
+    const auto& h = std::get<wait::Http>(w);
+    EXPECT_EQ(h.path, "/health");
+    EXPECT_EQ(h.port, tcp(8080));
+    EXPECT_EQ(h.expected_status, 204);
+    EXPECT_EQ(h.poll_interval, std::chrono::milliseconds(200)); // default
+}
+
+TEST(WaitFor, HttpFactoryDefaultStatus) {
+    const WaitFor w = wait_for::http("/", tcp(80));
+    ASSERT_TRUE(std::holds_alternative<wait::Http>(w));
+    EXPECT_EQ(std::get<wait::Http>(w).expected_status, 200);
 }
 
 TEST(WaitFor, Copyable) {

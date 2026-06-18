@@ -1,12 +1,14 @@
 #pragma once
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
@@ -79,6 +81,15 @@ public:
         return std::move(*this);
     }
 
+    GenericImage& with_healthcheck(Healthcheck hc) & {
+        healthcheck_ = std::move(hc);
+        return *this;
+    }
+    GenericImage&& with_healthcheck(Healthcheck hc) && {
+        healthcheck_ = std::move(hc);
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -91,6 +102,7 @@ public:
     }
     const std::vector<WaitFor>& waits() const noexcept { return waits_; }
     std::chrono::milliseconds startup_timeout() const noexcept { return startup_timeout_; }
+    const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -106,6 +118,7 @@ private:
     std::vector<std::pair<std::string, std::string>> labels_;
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
+    std::optional<Healthcheck> healthcheck_;
 };
 
 } // namespace testcontainers
