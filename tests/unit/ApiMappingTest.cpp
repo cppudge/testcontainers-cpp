@@ -27,7 +27,10 @@
 //   ApiMapping.BuildCreateBodyNoMountsByDefault - a spec without mounts/privileged emits no HostConfig.Mounts or Privileged.
 //   ApiMapping.BuildCreateBodyNetworkMode - a set network maps to HostConfig.NetworkMode.
 //   ApiMapping.BuildCreateBodyNoNetworkModeByDefault - a spec without a network emits no HostConfig.NetworkMode.
+//   ApiMapping.BuildCreateBodyNetworkAliases - a network plus aliases maps to NetworkingConfig.EndpointsConfig.<net>.Aliases, and aliases without a network emit no NetworkingConfig.
 //   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
+//   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
+//   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
 //   ApiMapping.BuildCreateBodyPatchDeepMerges - create_body_patch deep-merges into the body, keeping existing fields while adding nested and top-level ones.
 //   ApiMapping.BuildCreateBodyPatchInvalidThrows - an invalid-JSON create_body_patch makes build_create_body throw DockerError.
 //   ApiMapping.BuildCreateQueryEmptyByDefault - a spec with neither name nor platform yields an empty create query.
@@ -55,6 +58,7 @@ using testcontainers::docker::build_build_query;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
+using testcontainers::docker::build_network_create_body;
 using testcontainers::docker::BuildOptions;
 using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
@@ -256,6 +260,25 @@ TEST(ApiMapping, BuildCreateBodyNoNetworkModeByDefault) {
     EXPECT_FALSE(body.contains("HostConfig"));
 }
 
+TEST(ApiMapping, BuildCreateBodyNetworkAliases) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.network = "netX";
+    spec.network_aliases = {"db", "primary"};
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("NetworkingConfig"));
+    const auto& endpoints = body["NetworkingConfig"]["EndpointsConfig"];
+    ASSERT_TRUE(endpoints.contains("netX"));
+    EXPECT_EQ(endpoints["netX"]["Aliases"], nlohmann::json({"db", "primary"}));
+
+    // Aliases without a target network have nothing to attach to: no-op.
+    CreateContainerSpec orphan;
+    orphan.image = "alpine:3.20";
+    orphan.network_aliases = {"db"};
+    EXPECT_FALSE(build_create_body(orphan).contains("NetworkingConfig"));
+}
+
 TEST(ApiMapping, BuildCreateBodyHostConfigKnobs) {
     CreateContainerSpec spec;
     spec.image = "alpine:3.20";
@@ -285,6 +308,50 @@ TEST(ApiMapping, BuildCreateBodyHostConfigKnobs) {
     EXPECT_EQ(host["CapAdd"], nlohmann::json({"NET_ADMIN", "SYS_TIME"}));
     EXPECT_EQ(host["CapDrop"], nlohmann::json({"MKNOD"}));
     EXPECT_EQ(host["ExtraHosts"], nlohmann::json({"myhost:1.2.3.4"}));
+}
+
+TEST(ApiMapping, BuildNetworkCreateBody) {
+    NetworkCreateSpec spec;
+    spec.name = "my-net";
+    spec.driver = "bridge";
+    spec.internal = true;
+    spec.attachable = true;
+    spec.enable_ipv6 = true;
+    spec.subnet = "172.31.250.0/24";
+    spec.gateway = "172.31.250.1";
+    spec.options = {{"com.docker.network.bridge.name", "br-tc"}};
+    spec.labels = {{"k", "v"}};
+
+    const auto body = build_network_create_body(spec);
+    EXPECT_EQ(body["Name"], "my-net");
+    EXPECT_EQ(body["Driver"], "bridge");
+    EXPECT_TRUE(body["Internal"].get<bool>());
+    EXPECT_TRUE(body["Attachable"].get<bool>());
+    EXPECT_TRUE(body["EnableIPv6"].get<bool>());
+
+    ASSERT_TRUE(body.contains("IPAM"));
+    const auto& config = body["IPAM"]["Config"];
+    ASSERT_EQ(config.size(), 1u);
+    EXPECT_EQ(config[0]["Subnet"], "172.31.250.0/24");
+    EXPECT_EQ(config[0]["Gateway"], "172.31.250.1");
+
+    EXPECT_EQ(body["Options"]["com.docker.network.bridge.name"], "br-tc");
+    EXPECT_EQ(body["Labels"]["k"], "v");
+}
+
+TEST(ApiMapping, BuildNetworkCreateBodyMinimal) {
+    NetworkCreateSpec spec;
+    spec.name = "bare-net";
+
+    const auto body = build_network_create_body(spec);
+    EXPECT_EQ(body["Name"], "bare-net");
+    EXPECT_FALSE(body.contains("Driver"));
+    EXPECT_FALSE(body.contains("Internal"));
+    EXPECT_FALSE(body.contains("Attachable"));
+    EXPECT_FALSE(body.contains("EnableIPv6"));
+    EXPECT_FALSE(body.contains("IPAM"));
+    EXPECT_FALSE(body.contains("Options"));
+    EXPECT_FALSE(body.contains("Labels"));
 }
 
 TEST(ApiMapping, BuildCreateBodyPatchDeepMerges) {

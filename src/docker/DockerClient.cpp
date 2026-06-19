@@ -502,6 +502,40 @@ std::string DockerClient::create_network(
     return nlohmann::json::parse(res.body).at("Id").get<std::string>();
 }
 
+std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
+    const std::string body = docker::build_network_create_body(spec).dump();
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+
+    const Response res = request("POST", "/networks/create", body, headers);
+    if (res.status_code != 201) {
+        throw DockerError("create_network('" + spec.name + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+}
+
+void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,
+                                   const std::vector<std::string>& aliases) {
+    nlohmann::json body;
+    body["Container"] = container_id;
+    if (!aliases.empty()) {
+        nlohmann::json endpoint = nlohmann::json::object();
+        endpoint["Aliases"] = aliases;
+        body["EndpointConfig"] = std::move(endpoint);
+    }
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+
+    const Response res =
+        request("POST", "/networks/" + network_id + "/connect", body.dump(), headers);
+    // 200 (older daemons) or 204 (current) both mean connected.
+    if (res.status_code != 200 && res.status_code != 204) {
+        throw DockerError("connect_network(" + network_id + ", " + container_id + ") failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+}
+
 void DockerClient::remove_network(const std::string& id) {
     const Response res = request("DELETE", "/networks/" + id);
     if (res.status_code != 204) {

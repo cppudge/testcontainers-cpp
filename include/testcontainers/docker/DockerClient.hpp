@@ -142,6 +142,14 @@ public:
     std::string create_network(const std::string& name,
                                const std::vector<std::pair<std::string, std::string>>& labels = {});
 
+    /// `POST /networks/create` from a full spec; returns the new network id.
+    std::string create_network(const NetworkCreateSpec& spec);
+
+    /// `POST /networks/{id}/connect` — attach an existing container, optionally with
+    /// DNS aliases on this network.
+    void connect_network(const std::string& network_id, const std::string& container_id,
+                         const std::vector<std::string>& aliases = {});
+
     /// `DELETE /networks/{id}` — remove a network (204 expected).
     void remove_network(const std::string& id);
 

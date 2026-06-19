@@ -36,7 +36,39 @@ Network Network::create(std::string name) {
 
 Network Network::create() { return create(random_network_name()); }
 
+Network Network::Builder::create() const {
+    // Bring up the reaper first so a network created here is reaped on a crash
+    // (no-op if Ryuk is disabled).
+    detail::Reaper::instance().ensure_started();
+
+    NetworkCreateSpec spec;
+    // A network always needs a name; default to a generated unique one.
+    spec.name = name_.empty() ? random_network_name() : name_;
+    spec.driver = driver_;
+    spec.internal = internal_;
+    spec.attachable = attachable_;
+    spec.enable_ipv6 = enable_ipv6_;
+    spec.subnet = subnet_;
+    spec.gateway = gateway_;
+    spec.options = options_;
+    spec.labels = labels_;
+    // Tag the network so Ryuk (and tooling) can find it: managed-by + session.
+    // Merged on top of the user labels so the network is always reaped.
+    for (const auto& label : detail::testcontainers_labels()) {
+        spec.labels.push_back(label);
+    }
+
+    DockerClient client = DockerClient::from_environment();
+    std::string id = client.create_network(spec);
+    return Network(std::move(client), std::move(id), std::move(spec.name));
+}
+
 void Network::remove() { drop(); }
+
+void Network::connect(const std::string& container_id,
+                      const std::vector<std::string>& aliases) const {
+    client_.connect_network(id_, container_id, aliases);
+}
 
 void Network::drop() noexcept {
     if (dropped_) {

@@ -51,8 +51,17 @@ review are recorded here so they aren't lost between milestones.
   unaffected. (Install both configs, or filter the message, if it becomes annoying.)
 - **exec is buffered & unidirectional** — `Container::exec` reads the whole multiplexed output into
   memory and has no stdin/TTY (fine for run-command-capture-output); a streaming/interactive exec
-  needs the hijacked-connection path. `Network` has no process-wide dedup (each `Network::create`
-  makes a new network) and no inspect / connect-to-existing.
+  needs the hijacked-connection path.
+- **richer networks: builder + aliases + connect-existing, with limits** — `Network::builder()`
+  exposes driver / internal / attachable / EnableIPv6 / IPAM subnet+gateway / driver options /
+  labels (`build_network_create_body` in `src/docker/ApiMapping.cpp`); `GenericImage::with_network_alias`
+  emits per-network DNS aliases (`NetworkingConfig`, requires `with_network`); `Network::connect`
+  attaches an already-running container (`POST /networks/{id}/connect`, optional aliases). Known
+  limits / one-line notes: (a) there is NO network inspect, and no connect-to-existing-by-name beyond
+  the id-based `connect_network`; (b) IPAM supports a single Subnet/Gateway pair only (no multiple
+  pools / IPRange / aux addresses); (c) `Network` still has no process-wide dedup — each `create()`
+  (and each `builder().create()`) makes a brand-new network.
+  (`include/testcontainers/Network.hpp`, `src/Network.cpp`, `src/docker/DockerClient.cpp`)
 - **Ryuk coverage & lifecycle** — only containers + networks get the session-id label, so future
   resource types (named volumes, images) must also be tagged to be reaped. The global `Reaper` has
   no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is

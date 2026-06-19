@@ -18,6 +18,9 @@ namespace testcontainers::docker {
 /// Build the JSON body for `POST /containers/create`.
 nlohmann::json build_create_body(const CreateContainerSpec& spec);
 
+/// Build the JSON body for `POST /networks/create` from a NetworkCreateSpec.
+nlohmann::json build_network_create_body(const NetworkCreateSpec& spec);
+
 /// Parse the `Os` field from a `GET /version` response body (e.g. "linux" /
 /// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
 /// the engine-OS detection in DockerClient can be unit-tested.

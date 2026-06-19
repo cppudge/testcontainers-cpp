@@ -60,6 +60,7 @@ Container GenericImage::start() const {
     spec.publish_all_ports = !exposed_ports_.empty();
     spec.healthcheck = healthcheck_;
     spec.network = network_;
+    spec.network_aliases = network_aliases_;
     spec.name = container_name_;
     spec.platform = platform_;
 

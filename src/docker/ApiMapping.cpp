@@ -138,6 +138,18 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         body["HostConfig"] = std::move(host_config);
     }
 
+    // Network aliases require a target network to attach to; without one there is
+    // nothing to alias, so they are ignored (no-op) when `network` is unset.
+    if (spec.network && !spec.network_aliases.empty()) {
+        nlohmann::json endpoint = nlohmann::json::object();
+        endpoint["Aliases"] = spec.network_aliases;
+        nlohmann::json endpoints = nlohmann::json::object();
+        endpoints[*spec.network] = std::move(endpoint);
+        nlohmann::json networking = nlohmann::json::object();
+        networking["EndpointsConfig"] = std::move(endpoints);
+        body["NetworkingConfig"] = std::move(networking);
+    }
+
     if (!spec.create_body_patch.empty()) {
         // RFC 7386 deep-merge of a raw Docker create-body fragment (escape hatch).
         // Lets callers set any field (nest HostConfig fields under "HostConfig").
@@ -146,6 +158,52 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         } catch (const nlohmann::json::parse_error& e) {
             throw DockerError(std::string("create_body_patch is not valid JSON: ") + e.what());
         }
+    }
+
+    return body;
+}
+
+nlohmann::json build_network_create_body(const NetworkCreateSpec& spec) {
+    nlohmann::json body;
+    body["Name"] = spec.name;
+
+    if (spec.driver) {
+        body["Driver"] = *spec.driver;
+    }
+    if (spec.internal) {
+        body["Internal"] = true;
+    }
+    if (spec.attachable) {
+        body["Attachable"] = true;
+    }
+    if (spec.enable_ipv6) {
+        body["EnableIPv6"] = true;
+    }
+    if (!spec.options.empty()) {
+        nlohmann::json options = nlohmann::json::object();
+        for (const auto& [key, value] : spec.options) {
+            options[key] = value;
+        }
+        body["Options"] = std::move(options);
+    }
+    if (!spec.labels.empty()) {
+        nlohmann::json labels = nlohmann::json::object();
+        for (const auto& [key, value] : spec.labels) {
+            labels[key] = value;
+        }
+        body["Labels"] = std::move(labels);
+    }
+    if (spec.subnet || spec.gateway) {
+        nlohmann::json config = nlohmann::json::object();
+        if (spec.subnet) {
+            config["Subnet"] = *spec.subnet;
+        }
+        if (spec.gateway) {
+            config["Gateway"] = *spec.gateway;
+        }
+        nlohmann::json ipam = nlohmann::json::object();
+        ipam["Config"] = nlohmann::json::array({std::move(config)});
+        body["IPAM"] = std::move(ipam);
     }
 
     return body;

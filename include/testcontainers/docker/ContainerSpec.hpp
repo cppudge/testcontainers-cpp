@@ -27,6 +27,7 @@ struct CreateContainerSpec {
     std::optional<std::string> name;                         ///< container name (?name=)
     std::optional<std::string> platform;                     ///< "<os>/<arch>" (?platform=)
     std::optional<std::string> network;                      ///< HostConfig.NetworkMode
+    std::vector<std::string> network_aliases;                ///< DNS aliases on `network` (NetworkingConfig)
     std::optional<std::string> working_dir;                  ///< WorkingDir
     std::optional<std::string> user;                         ///< User
     bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts
@@ -41,6 +42,19 @@ struct CreateContainerSpec {
     std::vector<std::string> cap_drop;                       ///< HostConfig.CapDrop
     std::vector<std::string> extra_hosts;                    ///< HostConfig.ExtraHosts ("host:ip")
     std::string create_body_patch;                           ///< raw JSON object deep-merged into the create body (escape hatch); empty = none
+};
+
+/// Options for `POST /networks/create` (richer than just name+labels).
+struct NetworkCreateSpec {
+    std::string name;
+    std::optional<std::string> driver;     ///< e.g. "bridge" (default when unset)
+    bool internal = false;                 ///< no external connectivity
+    bool attachable = false;               ///< standalone containers can attach
+    bool enable_ipv6 = false;              ///< EnableIPv6
+    std::optional<std::string> subnet;     ///< IPAM.Config[0].Subnet, e.g. "172.31.250.0/24"
+    std::optional<std::string> gateway;    ///< IPAM.Config[0].Gateway
+    std::vector<std::pair<std::string, std::string>> options; ///< driver Options
+    std::vector<std::pair<std::string, std::string>> labels;  ///< network Labels
 };
 
 /// A single published port binding from a container inspect.

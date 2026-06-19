@@ -174,6 +174,19 @@ public:
         return std::move(*this);
     }
 
+    /// Add a DNS alias for this container on its network (`NetworkingConfig`).
+    /// Peers on the same network can resolve this container by the alias in
+    /// addition to its container name. Requires `with_network(...)` to take
+    /// effect; aliases without a target network are ignored.
+    GenericImage& with_network_alias(std::string alias) & {
+        network_aliases_.push_back(std::move(alias));
+        return *this;
+    }
+    GenericImage&& with_network_alias(std::string alias) && {
+        network_aliases_.push_back(std::move(alias));
+        return std::move(*this);
+    }
+
     /// Set an explicit container name (passed as `?name=` on create). Useful so
     /// peers on the same network can resolve this container by name.
     GenericImage& with_container_name(std::string name) & {
@@ -330,6 +343,7 @@ public:
     std::chrono::milliseconds startup_timeout() const noexcept { return startup_timeout_; }
     const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
     const std::optional<std::string>& network() const noexcept { return network_; }
+    const std::vector<std::string>& network_aliases() const noexcept { return network_aliases_; }
     const std::optional<std::string>& container_name() const noexcept { return container_name_; }
     const std::optional<std::string>& platform() const noexcept { return platform_; }
     const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
@@ -367,6 +381,7 @@ private:
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
     std::optional<Healthcheck> healthcheck_;
     std::optional<std::string> network_;
+    std::vector<std::string> network_aliases_;
     std::optional<std::string> container_name_;
     std::optional<std::string> platform_;
     std::optional<RegistryAuth> registry_auth_;
