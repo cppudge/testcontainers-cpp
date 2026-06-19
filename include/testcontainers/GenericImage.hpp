@@ -30,9 +30,10 @@ enum class ImagePullPolicy {
 /// A reusable, copyable description of a container to run: image reference,
 /// exposed ports, environment, command, labels, and readiness conditions.
 ///
-/// The `with_*` builders mutate in place and return `*this` (ref-qualified), so
-/// a named config can be configured incrementally and started many times — no
-/// consume-self, no use-after-move.
+/// The `with_*` builders mutate in place and return `*this` by reference, so a
+/// named config can be configured incrementally and started many times — no
+/// consume-self, no use-after-move. A single unqualified overload chains on both
+/// a named lvalue and a temporary (`GenericImage("redis","7.2").with_*()...`).
 ///
 /// The "create" fields (command, mounts, labels, host-config knobs, …) are held
 /// directly in an embedded `CreateContainerSpec spec_`, so a new create option is
@@ -52,283 +53,175 @@ public:
     /// Pairs with ImageFromDockerfile::build(): GenericImage::from_reference(img.build()).
     static GenericImage from_reference(const std::string& reference);
 
-    // --- In-place, ref-qualified builders ---
+    // --- In-place builders (single overload; chains on lvalues and temporaries) ---
 
-    GenericImage& with_exposed_port(ContainerPort p) & {
+    GenericImage& with_exposed_port(ContainerPort p) {
         exposed_ports_.push_back(p);
         return *this;
     }
-    GenericImage&& with_exposed_port(ContainerPort p) && {
-        exposed_ports_.push_back(p);
-        return std::move(*this);
-    }
 
-    GenericImage& with_env(std::string key, std::string value) & {
+    GenericImage& with_env(std::string key, std::string value) {
         env_.emplace_back(std::move(key), std::move(value));
         return *this;
     }
-    GenericImage&& with_env(std::string key, std::string value) && {
-        env_.emplace_back(std::move(key), std::move(value));
-        return std::move(*this);
-    }
 
-    GenericImage& with_cmd(std::vector<std::string> cmd) & {
+    GenericImage& with_cmd(std::vector<std::string> cmd) {
         spec_.cmd = std::move(cmd);
         return *this;
     }
-    GenericImage&& with_cmd(std::vector<std::string> cmd) && {
-        spec_.cmd = std::move(cmd);
-        return std::move(*this);
-    }
 
-    GenericImage& with_entrypoint(std::vector<std::string> entrypoint) & {
+    GenericImage& with_entrypoint(std::vector<std::string> entrypoint) {
         spec_.entrypoint = std::move(entrypoint);
         return *this;
     }
-    GenericImage&& with_entrypoint(std::vector<std::string> entrypoint) && {
-        spec_.entrypoint = std::move(entrypoint);
-        return std::move(*this);
-    }
 
-    GenericImage& with_working_dir(std::string working_dir) & {
+    GenericImage& with_working_dir(std::string working_dir) {
         spec_.working_dir = std::move(working_dir);
         return *this;
     }
-    GenericImage&& with_working_dir(std::string working_dir) && {
-        spec_.working_dir = std::move(working_dir);
-        return std::move(*this);
-    }
 
-    GenericImage& with_user(std::string user) & {
+    GenericImage& with_user(std::string user) {
         spec_.user = std::move(user);
         return *this;
     }
-    GenericImage&& with_user(std::string user) && {
-        spec_.user = std::move(user);
-        return std::move(*this);
-    }
 
-    GenericImage& with_privileged(bool privileged = true) & {
+    GenericImage& with_privileged(bool privileged = true) {
         spec_.privileged = privileged;
         return *this;
-    }
-    GenericImage&& with_privileged(bool privileged = true) && {
-        spec_.privileged = privileged;
-        return std::move(*this);
     }
 
     /// Allocate a pseudo-TTY for the container (`Tty=true`). The log stream is
     /// then raw/unframed (no multiplex header) with no separate stderr channel —
     /// `Container::logs()` / `follow_logs()` read it without demuxing. Note a TTY
     /// also rewrites `\n` to `\r\n`.
-    GenericImage& with_tty(bool tty = true) & {
+    GenericImage& with_tty(bool tty = true) {
         spec_.tty = tty;
         return *this;
-    }
-    GenericImage&& with_tty(bool tty = true) && {
-        spec_.tty = tty;
-        return std::move(*this);
     }
 
-    GenericImage& with_mount(Mount mount) & {
+    GenericImage& with_mount(Mount mount) {
         spec_.mounts.push_back(std::move(mount));
         return *this;
-    }
-    GenericImage&& with_mount(Mount mount) && {
-        spec_.mounts.push_back(std::move(mount));
-        return std::move(*this);
     }
 
     /// Copy a host file or in-memory bytes into the container after it is
     /// created and before it is started (the target's parent directory must
     /// already exist in the image). Add several to copy multiple entries.
-    GenericImage& with_copy_to(CopyToContainer source) & {
+    GenericImage& with_copy_to(CopyToContainer source) {
         copy_to_sources_.push_back(std::move(source));
         return *this;
     }
-    GenericImage&& with_copy_to(CopyToContainer source) && {
-        copy_to_sources_.push_back(std::move(source));
-        return std::move(*this);
-    }
 
-    GenericImage& with_label(std::string key, std::string value) & {
+    GenericImage& with_label(std::string key, std::string value) {
         spec_.labels.emplace_back(std::move(key), std::move(value));
         return *this;
     }
-    GenericImage&& with_label(std::string key, std::string value) && {
-        spec_.labels.emplace_back(std::move(key), std::move(value));
-        return std::move(*this);
-    }
 
-    GenericImage& with_wait(WaitFor w) & {
+    GenericImage& with_wait(WaitFor w) {
         waits_.push_back(std::move(w));
         return *this;
     }
-    GenericImage&& with_wait(WaitFor w) && {
-        waits_.push_back(std::move(w));
-        return std::move(*this);
-    }
 
-    GenericImage& with_startup_timeout(std::chrono::milliseconds timeout) & {
+    GenericImage& with_startup_timeout(std::chrono::milliseconds timeout) {
         startup_timeout_ = timeout;
         return *this;
     }
-    GenericImage&& with_startup_timeout(std::chrono::milliseconds timeout) && {
-        startup_timeout_ = timeout;
-        return std::move(*this);
-    }
 
-    GenericImage& with_healthcheck(Healthcheck hc) & {
+    GenericImage& with_healthcheck(Healthcheck hc) {
         spec_.healthcheck = std::move(hc);
         return *this;
-    }
-    GenericImage&& with_healthcheck(Healthcheck hc) && {
-        spec_.healthcheck = std::move(hc);
-        return std::move(*this);
     }
 
     /// Join the container to a user-defined network (`HostConfig.NetworkMode`).
     /// Containers on the same network resolve each other by container name.
-    GenericImage& with_network(std::string network) & {
+    GenericImage& with_network(std::string network) {
         spec_.network = std::move(network);
         return *this;
-    }
-    GenericImage&& with_network(std::string network) && {
-        spec_.network = std::move(network);
-        return std::move(*this);
     }
 
     /// Add a DNS alias for this container on its network (`NetworkingConfig`).
     /// Peers on the same network can resolve this container by the alias in
     /// addition to its container name. Requires `with_network(...)` to take
     /// effect; aliases without a target network are ignored.
-    GenericImage& with_network_alias(std::string alias) & {
+    GenericImage& with_network_alias(std::string alias) {
         spec_.network_aliases.push_back(std::move(alias));
         return *this;
-    }
-    GenericImage&& with_network_alias(std::string alias) && {
-        spec_.network_aliases.push_back(std::move(alias));
-        return std::move(*this);
     }
 
     /// Set an explicit container name (passed as `?name=` on create). Useful so
     /// peers on the same network can resolve this container by name.
-    GenericImage& with_container_name(std::string name) & {
+    GenericImage& with_container_name(std::string name) {
         spec_.name = std::move(name);
         return *this;
-    }
-    GenericImage&& with_container_name(std::string name) && {
-        spec_.name = std::move(name);
-        return std::move(*this);
     }
 
     /// Pin the create platform as a free-form "<os>/<arch>" string (e.g.
     /// "windows/amd64"), sent as the `?platform=` query on create. Useful to
     /// select a Windows image variant on a Windows-containers engine.
-    GenericImage& with_platform(std::string platform) & {
+    GenericImage& with_platform(std::string platform) {
         spec_.platform = std::move(platform);
         return *this;
-    }
-    GenericImage&& with_platform(std::string platform) && {
-        spec_.platform = std::move(platform);
-        return std::move(*this);
     }
 
     /// Supply explicit registry credentials for pulling a private image. When
     /// unset, credentials are auto-resolved from the Docker config (if any).
-    GenericImage& with_registry_auth(RegistryAuth auth) & {
+    GenericImage& with_registry_auth(RegistryAuth auth) {
         registry_auth_ = std::move(auth);
         return *this;
-    }
-    GenericImage&& with_registry_auth(RegistryAuth auth) && {
-        registry_auth_ = std::move(auth);
-        return std::move(*this);
     }
 
     /// Set a hard memory limit in bytes (`HostConfig.Memory`).
-    GenericImage& with_memory_limit(std::int64_t bytes) & {
+    GenericImage& with_memory_limit(std::int64_t bytes) {
         spec_.memory_bytes = bytes;
         return *this;
-    }
-    GenericImage&& with_memory_limit(std::int64_t bytes) && {
-        spec_.memory_bytes = bytes;
-        return std::move(*this);
     }
 
     /// Set the size of `/dev/shm` in bytes (`HostConfig.ShmSize`).
-    GenericImage& with_shm_size(std::int64_t bytes) & {
+    GenericImage& with_shm_size(std::int64_t bytes) {
         spec_.shm_size_bytes = bytes;
         return *this;
-    }
-    GenericImage&& with_shm_size(std::int64_t bytes) && {
-        spec_.shm_size_bytes = bytes;
-        return std::move(*this);
     }
 
     /// Add a process resource limit (`HostConfig.Ulimits`), e.g.
     /// `with_ulimit("nofile", 1024, 2048)`. Add several to set multiple limits.
-    GenericImage& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) & {
+    GenericImage& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) {
         spec_.ulimits.push_back(Ulimit{std::move(name), soft, hard});
         return *this;
-    }
-    GenericImage&& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) && {
-        spec_.ulimits.push_back(Ulimit{std::move(name), soft, hard});
-        return std::move(*this);
     }
 
     /// Add a Linux capability to grant (`HostConfig.CapAdd`), e.g. "NET_ADMIN".
-    GenericImage& with_cap_add(std::string cap) & {
+    GenericImage& with_cap_add(std::string cap) {
         spec_.cap_add.push_back(std::move(cap));
         return *this;
-    }
-    GenericImage&& with_cap_add(std::string cap) && {
-        spec_.cap_add.push_back(std::move(cap));
-        return std::move(*this);
     }
 
     /// Add a Linux capability to drop (`HostConfig.CapDrop`).
-    GenericImage& with_cap_drop(std::string cap) & {
+    GenericImage& with_cap_drop(std::string cap) {
         spec_.cap_drop.push_back(std::move(cap));
         return *this;
-    }
-    GenericImage&& with_cap_drop(std::string cap) && {
-        spec_.cap_drop.push_back(std::move(cap));
-        return std::move(*this);
     }
 
     /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
-    GenericImage& with_extra_host(std::string host, std::string ip) & {
+    GenericImage& with_extra_host(std::string host, std::string ip) {
         spec_.extra_hosts.push_back(host + ":" + ip);
         return *this;
-    }
-    GenericImage&& with_extra_host(std::string host, std::string ip) && {
-        spec_.extra_hosts.push_back(host + ":" + ip);
-        return std::move(*this);
     }
 
     /// Deep-merge a raw Docker `/containers/create` body fragment into the create
     /// body (RFC 7386 merge applied AFTER our typed fields, so it overrides them).
     /// This is the escape hatch for any field not exposed as a typed setter: nest
     /// HostConfig fields under `"HostConfig"`. `json_object` must be a JSON object.
-    GenericImage& with_create_body_patch(std::string json_object) & {
+    GenericImage& with_create_body_patch(std::string json_object) {
         spec_.create_body_patch = std::move(json_object);
         return *this;
-    }
-    GenericImage&& with_create_body_patch(std::string json_object) && {
-        spec_.create_body_patch = std::move(json_object);
-        return std::move(*this);
     }
 
     /// Control whether the image is pulled before create. `Default` keeps the
     /// lazy behavior (pull only on a create 404); `Always` pulls before create
     /// even when the image is already present locally.
-    GenericImage& with_image_pull_policy(ImagePullPolicy policy) & {
+    GenericImage& with_image_pull_policy(ImagePullPolicy policy) {
         pull_policy_ = policy;
         return *this;
-    }
-    GenericImage&& with_image_pull_policy(ImagePullPolicy policy) && {
-        pull_policy_ = policy;
-        return std::move(*this);
     }
 
     /// Enable container reuse (à la testcontainers `.withReuse(true)`). When
@@ -340,27 +233,18 @@ public:
     /// container on destruction, and the container is NOT Ryuk-reaped, so it
     /// survives across runs). When reuse is not enabled globally this is a no-op:
     /// `start()` behaves exactly like a normal (reaped, auto-removed) container.
-    GenericImage& with_reuse(bool reuse = true) & {
+    GenericImage& with_reuse(bool reuse = true) {
         reuse_ = reuse;
         return *this;
-    }
-    GenericImage&& with_reuse(bool reuse = true) && {
-        reuse_ = reuse;
-        return std::move(*this);
     }
 
     /// Override how the image reference is rewritten before create. When set this
     /// REPLACES the default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX);
     /// the function receives "name:tag" and returns the reference to actually use.
     GenericImage& with_image_name_substitutor(
-        std::function<std::string(const std::string&)> fn) & {
+        std::function<std::string(const std::string&)> fn) {
         substitutor_ = std::move(fn);
         return *this;
-    }
-    GenericImage&& with_image_name_substitutor(
-        std::function<std::string(const std::string&)> fn) && {
-        substitutor_ = std::move(fn);
-        return std::move(*this);
     }
 
     /// Register a hook fired right after the container is created (id assigned),
@@ -368,38 +252,26 @@ public:
     /// start() and the partial container is cleaned up. Add several to run them
     /// in registration order. The hook receives the public DockerClient and the
     /// container id, so it can inspect/exec/copy via the existing API.
-    GenericImage& with_created_hook(LifecycleHook hook) & {
+    GenericImage& with_created_hook(LifecycleHook hook) {
         created_hooks_.push_back(std::move(hook));
         return *this;
-    }
-    GenericImage&& with_created_hook(LifecycleHook hook) && {
-        created_hooks_.push_back(std::move(hook));
-        return std::move(*this);
     }
 
     /// Register a hook fired after copy-to and immediately before the container
     /// is started. A throwing starting hook aborts start() and the partial
     /// container is cleaned up. Add several to run them in registration order.
-    GenericImage& with_starting_hook(LifecycleHook hook) & {
+    GenericImage& with_starting_hook(LifecycleHook hook) {
         starting_hooks_.push_back(std::move(hook));
         return *this;
-    }
-    GenericImage&& with_starting_hook(LifecycleHook hook) && {
-        starting_hooks_.push_back(std::move(hook));
-        return std::move(*this);
     }
 
     /// Register a hook fired after the container is started AND has become ready
     /// (wait strategies satisfied), before the handle is returned. A throwing
     /// started hook aborts start() and the container is cleaned up. Add several
     /// to run them in registration order.
-    GenericImage& with_started_hook(LifecycleHook hook) & {
+    GenericImage& with_started_hook(LifecycleHook hook) {
         started_hooks_.push_back(std::move(hook));
         return *this;
-    }
-    GenericImage&& with_started_hook(LifecycleHook hook) && {
-        started_hooks_.push_back(std::move(hook));
-        return std::move(*this);
     }
 
     /// Register a hook fired by the Container when it is being torn down: on an
@@ -407,26 +279,18 @@ public:
     /// before the container is removed. Fired exactly once and never on a
     /// persistent (reusable) handle's drop. A throwing stopping hook is swallowed
     /// (teardown is best-effort). Add several to run them in registration order.
-    GenericImage& with_stopping_hook(LifecycleHook hook) & {
+    GenericImage& with_stopping_hook(LifecycleHook hook) {
         stopping_hooks_.push_back(std::move(hook));
         return *this;
-    }
-    GenericImage&& with_stopping_hook(LifecycleHook hook) && {
-        stopping_hooks_.push_back(std::move(hook));
-        return std::move(*this);
     }
 
     /// Retry the whole create→start→wait sequence up to `n` times if an attempt
     /// fails (each retry creates a brand-new container). Values < 1 are treated
     /// as 1 (a single attempt, no retry). Mirrors testcontainers
     /// `withStartupAttempts`.
-    GenericImage& with_startup_attempts(int n) & {
+    GenericImage& with_startup_attempts(int n) {
         startup_attempts_ = n < 1 ? 1 : n;
         return *this;
-    }
-    GenericImage&& with_startup_attempts(int n) && {
-        startup_attempts_ = n < 1 ? 1 : n;
-        return std::move(*this);
     }
 
     // --- Getters ---

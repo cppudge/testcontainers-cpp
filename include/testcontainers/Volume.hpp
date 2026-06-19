@@ -22,48 +22,32 @@ public:
     /// A copyable builder for a richer named volume: driver, driver options, and
     /// labels. Defined in std types only (no Boost/json leak through the header).
     ///
-    /// The `with_*` setters mutate in place and return `*this` (ref-qualified), so
-    /// the chain works on both lvalues and rvalues. `create()` assembles the spec,
-    /// runs the Reaper hook, and creates the volume.
+    /// The `with_*` setters mutate in place and return `*this` by reference; a
+    /// single unqualified overload chains on both a named lvalue and a temporary.
+    /// `create()` assembles the spec, runs the Reaper hook, and creates the volume.
     class Builder {
     public:
-        Builder& with_name(std::string name) & {
+        Builder& with_name(std::string name) {
             name_ = std::move(name);
             return *this;
-        }
-        Builder&& with_name(std::string name) && {
-            name_ = std::move(name);
-            return std::move(*this);
         }
 
-        Builder& with_driver(std::string driver) & {
+        Builder& with_driver(std::string driver) {
             driver_ = std::move(driver);
             return *this;
-        }
-        Builder&& with_driver(std::string driver) && {
-            driver_ = std::move(driver);
-            return std::move(*this);
         }
 
         /// Add a driver option (`DriverOpts`). Add several to set multiple options.
-        Builder& with_driver_opt(std::string key, std::string value) & {
+        Builder& with_driver_opt(std::string key, std::string value) {
             driver_opts_.emplace_back(std::move(key), std::move(value));
             return *this;
-        }
-        Builder&& with_driver_opt(std::string key, std::string value) && {
-            driver_opts_.emplace_back(std::move(key), std::move(value));
-            return std::move(*this);
         }
 
         /// Add a volume label (`Labels`). The testcontainers session labels are
         /// always merged in by `create()` for Ryuk reaping.
-        Builder& with_label(std::string key, std::string value) & {
+        Builder& with_label(std::string key, std::string value) {
             labels_.emplace_back(std::move(key), std::move(value));
             return *this;
-        }
-        Builder&& with_label(std::string key, std::string value) && {
-            labels_.emplace_back(std::move(key), std::move(value));
-            return std::move(*this);
         }
 
         /// Create the volume from the configured options, returning the handle.
