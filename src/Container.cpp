@@ -106,6 +106,11 @@ void Container::drop() noexcept {
         return;
     }
     dropped_ = true;
+    if (!remove_on_drop_) {
+        // A persistent (reusable) handle leaves the container running so a later
+        // run can adopt it; the caller is responsible for removing it.
+        return;
+    }
     try {
         client_.remove_container(id_, /*force*/ true, /*remove_volumes*/ true);
     } catch (...) {

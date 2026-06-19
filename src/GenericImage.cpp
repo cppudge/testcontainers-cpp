@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "Reaper.hpp"
+#include "Reuse.hpp"
 #include "WaitStrategies.hpp"
 #include "docker/ApiMapping.hpp"
 #include "docker/Auth.hpp"
@@ -46,10 +47,6 @@ Container GenericImage::start() const {
     spec.extra_hosts = extra_hosts_;
     spec.create_body_patch = create_body_patch_;
     spec.labels = labels_;
-    // Tag the container so Ryuk (and tooling) can find it: managed-by + session.
-    for (const auto& label : detail::testcontainers_labels()) {
-        spec.labels.push_back(label);
-    }
     for (const auto& [key, value] : env_) {
         spec.env.push_back(key + "=" + value);
     }
@@ -70,36 +67,81 @@ Container GenericImage::start() const {
         client.pull_image(effective, registry_auth_);
     }
 
-    const std::string id = client.create_container(spec, registry_auth_);
+    // The shared create→copy→start→wait tail, returning a handle. `remove_on_drop`
+    // is false for reusable containers (they must persist across runs).
+    const auto create_start_wait = [&](const CreateContainerSpec& s,
+                                       bool remove_on_drop) -> Container {
+        const std::string id = client.create_container(s, registry_auth_);
 
-    // Copy files/data in after create, before start (the create→copy→start
-    // order). A copy failure must not leak the partially-created container.
-    try {
-        for (const CopyToContainer& source : copy_to_sources_) {
-            client.copy_to_container(id, source);
-        }
-    } catch (...) {
+        // Copy files/data in after create, before start (the create→copy→start
+        // order). A copy failure must not leak the partially-created container.
         try {
-            client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
+            for (const CopyToContainer& source : copy_to_sources_) {
+                client.copy_to_container(id, source);
+            }
         } catch (...) {
+            try {
+                client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
+            } catch (...) {
+            }
+            throw;
         }
-        throw;
+
+        client.start_container(id);
+
+        try {
+            detail::wait_until_ready(client, id, waits_, startup_timeout_);
+        } catch (...) {
+            // A container that started but never became ready must not leak.
+            try {
+                client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
+            } catch (...) {
+            }
+            throw;
+        }
+
+        return Container(std::move(client), id, remove_on_drop);
+    };
+
+    // Reuse is a safety-gated opt-in: it only activates when enabled globally
+    // (~/.testcontainers.properties or TESTCONTAINERS_REUSE_ENABLE); otherwise
+    // with_reuse(true) degrades to a normal (reaped, auto-removed) container.
+    const bool use_reuse = reuse_ && detail::reuse_enabled();
+    if (use_reuse) {
+        // Canonical config for the hash: the create body WITHOUT any reuse/session
+        // labels, plus the copy-to descriptors (so copied content participates).
+        std::string canonical = docker::build_create_body(spec).dump();
+        for (const CopyToContainer& s : copy_to_sources_) {
+            canonical += "\n" + s.target() + "\n" + (s.is_file() ? s.host_path() : s.bytes());
+        }
+        const std::string hash = detail::reuse_hash(canonical);
+
+        // Reuse containers are NOT session-reaped (they must survive); tag
+        // managed-by + the reuse hash only (no session-id label, or Ryuk would
+        // reap them).
+        spec.labels.emplace_back("org.testcontainers.managed-by", "testcontainers");
+        spec.labels.emplace_back(detail::reuse_hash_label(), hash);
+
+        // Look for a running container already matching this hash.
+        const auto matches = client.list_containers(
+            {{"label", std::string(detail::reuse_hash_label()) + "=" + hash}}, /*all*/ false);
+        for (const ContainerSummary& m : matches) {
+            if (m.state == "running") {
+                // Adopt it: wait for readiness, return a NON-removing handle.
+                detail::wait_until_ready(client, m.id, waits_, startup_timeout_);
+                return Container(std::move(client), m.id, /*remove_on_drop*/ false);
+            }
+        }
+        // No match: create a NEW reuse container (persistent, not reaped).
+        return create_start_wait(spec, /*remove_on_drop*/ false);
     }
 
-    client.start_container(id);
-
-    try {
-        detail::wait_until_ready(client, id, waits_, startup_timeout_);
-    } catch (...) {
-        // A container that started but never became ready must not leak.
-        try {
-            client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
-        } catch (...) {
-        }
-        throw;
+    // Normal path: tag the container so Ryuk (and tooling) can find it
+    // (managed-by + session), and auto-remove the handle on drop.
+    for (const auto& label : detail::testcontainers_labels()) {
+        spec.labels.push_back(label);
     }
-
-    return Container(std::move(client), id);
+    return create_start_wait(spec, /*remove_on_drop*/ true);
 }
 
 } // namespace testcontainers

@@ -65,6 +65,7 @@ add_library(testcontainers
     src/Container.cpp
     src/Network.cpp
     src/Reaper.cpp
+    src/Reuse.cpp
     src/DockerComposeContainer.cpp
     src/Process.cpp
     src/compose/ComposeCommand.cpp
@@ -127,6 +128,7 @@ if(BUILD_TESTING)
         tests/unit/MountTest.cpp
         tests/unit/GenericImageTest.cpp
         tests/unit/ReaperTest.cpp
+        tests/unit/ReuseTest.cpp
         tests/unit/TarTest.cpp
         tests/unit/DockerComposeContainerTest.cpp
         tests/unit/ComposeCommandTest.cpp
@@ -156,6 +158,7 @@ if(BUILD_TESTING)
         tests/integration/BuildImageTest.cpp
         tests/integration/NetworkTest.cpp
         tests/integration/ReaperTest.cpp
+        tests/integration/ReuseTest.cpp
         tests/integration/AuthTest.cpp
         tests/integration/WindowsContainerTest.cpp
         tests/integration/ComposeTest.cpp

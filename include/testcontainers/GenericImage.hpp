@@ -307,6 +307,24 @@ public:
         return std::move(*this);
     }
 
+    /// Enable container reuse (à la testcontainers `.withReuse(true)`). When
+    /// reuse is also enabled globally (`testcontainers.reuse.enable=true` in
+    /// ~/.testcontainers.properties or `TESTCONTAINERS_REUSE_ENABLE=true`),
+    /// `start()` first looks for an already-running container matching this
+    /// config (by a stable reuse-hash label) and ADOPTS it instead of creating a
+    /// new one; the returned handle is persistent (it does NOT remove the
+    /// container on destruction, and the container is NOT Ryuk-reaped, so it
+    /// survives across runs). When reuse is not enabled globally this is a no-op:
+    /// `start()` behaves exactly like a normal (reaped, auto-removed) container.
+    GenericImage& with_reuse(bool reuse = true) & {
+        reuse_ = reuse;
+        return *this;
+    }
+    GenericImage&& with_reuse(bool reuse = true) && {
+        reuse_ = reuse;
+        return std::move(*this);
+    }
+
     /// Override how the image reference is rewritten before create. When set this
     /// REPLACES the default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX);
     /// the function receives "name:tag" and returns the reference to actually use.
@@ -355,6 +373,7 @@ public:
     const std::vector<std::string>& extra_hosts() const noexcept { return extra_hosts_; }
     const std::string& create_body_patch() const noexcept { return create_body_patch_; }
     ImagePullPolicy image_pull_policy() const noexcept { return pull_policy_; }
+    bool reuse() const noexcept { return reuse_; }
     const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
         return substitutor_;
     }
@@ -394,6 +413,7 @@ private:
     std::string create_body_patch_;
     ImagePullPolicy pull_policy_ = ImagePullPolicy::Default;
     std::function<std::string(const std::string&)> substitutor_;
+    bool reuse_ = false;
 };
 
 } // namespace testcontainers

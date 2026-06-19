@@ -17,19 +17,24 @@ namespace testcontainers {
 /// Move-only: it owns a real external resource and force-removes the container
 /// on destruction (best-effort, exceptions swallowed). Copying is deleted so the
 /// removal happens exactly once.
+///
+/// A persistent handle (`remove_on_drop == false`) does NOT remove the container
+/// on destruction; it is used for reusable containers (`with_reuse`), which must
+/// survive across test runs. The caller is then responsible for removing it.
 class Container {
 public:
     /// Adopt an already-created, already-started container. Used by
-    /// `GenericImage::start()`.
-    Container(DockerClient client, std::string id)
-        : client_(std::move(client)), id_(std::move(id)) {}
+    /// `GenericImage::start()`. With `remove_on_drop == false` the handle is
+    /// persistent: it never removes the container (reusable containers).
+    Container(DockerClient client, std::string id, bool remove_on_drop = true)
+        : client_(std::move(client)), id_(std::move(id)), remove_on_drop_(remove_on_drop) {}
 
     Container(const Container&) = delete;
     Container& operator=(const Container&) = delete;
 
     Container(Container&& other) noexcept
         : client_(std::move(other.client_)), id_(std::move(other.id_)),
-          dropped_(other.dropped_) {
+          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_) {
         other.dropped_ = true; // the moved-from handle owns nothing
     }
 
@@ -39,6 +44,7 @@ public:
             client_ = std::move(other.client_);
             id_ = std::move(other.id_);
             dropped_ = other.dropped_;
+            remove_on_drop_ = other.remove_on_drop_;
             other.dropped_ = true;
         }
         return *this;
@@ -50,6 +56,10 @@ public:
 
     /// The full container id.
     const std::string& id() const noexcept { return id_; }
+
+    /// True when this is a persistent (reusable) handle that will NOT remove the
+    /// container on destruction.
+    bool is_persistent() const noexcept { return !remove_on_drop_; }
 
     /// The address a client on this host should connect to ("localhost" for a
     /// unix socket / named pipe, otherwise the daemon hostname).
@@ -108,6 +118,7 @@ private:
     mutable DockerClient client_;
     std::string id_;
     bool dropped_ = false;
+    bool remove_on_drop_ = true; ///< false for persistent (reusable) handles
 };
 
 } // namespace testcontainers

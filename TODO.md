@@ -139,6 +139,22 @@ review are recorded here so they aren't lost between milestones.
   compose stack is still NOT Ryuk-reaped (compose containers carry no session-id label).
   (`src/DockerComposeContainer.cpp`, `src/compose/*`)
 
+- **reusable containers (`with_reuse`): exact-config hash, never auto-removed** —
+  `GenericImage::with_reuse(true)` adopts an already-running container matching a stable
+  reuse-hash label (`org.testcontainers.reuse.hash`, FNV-1a over the create body + copy-to
+  descriptors); safety-gated on `TESTCONTAINERS_REUSE_ENABLE` / `testcontainers.reuse.enable=true`
+  in `~/.testcontainers.properties`, degrading to a normal container otherwise. Reuse containers
+  carry no session-id label (so Ryuk won't reap them) and the handle is persistent (no remove on
+  drop). Known limits / one-line notes:
+  (a) the reuse hash covers the create body + copy-to descriptors, but for HOST-FILE copies it
+  hashes the host PATH, not the bytes — a changed file at the same path still reuses the old container;
+  (b) reuse containers are NEVER auto-removed and NOT reaped — callers / CI must prune them
+  (e.g. `docker container prune` or a label sweep on `org.testcontainers.reuse.hash`);
+  (c) there is no "reuse enabled" marker label and no reuse-across-different-images dedup beyond
+  the exact-config hash (any config difference yields a different hash → a fresh container).
+  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/Reuse.cpp`,
+  `include/testcontainers/Container.hpp`)
+
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
   working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.
