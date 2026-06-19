@@ -61,7 +61,7 @@ add_library(testcontainers
     src/docker/DockerClient.cpp
     src/WaitStrategies.cpp
     src/GenericImage.cpp
-    src/ImageFromDockerfile.cpp
+    src/GenericBuildableImage.cpp
     src/Container.cpp
     src/Network.cpp
     src/Volume.cpp

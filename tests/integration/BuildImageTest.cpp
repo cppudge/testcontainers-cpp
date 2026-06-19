@@ -4,14 +4,14 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/GenericBuildableImage.hpp"
 #include "testcontainers/GenericImage.hpp"
-#include "testcontainers/ImageFromDockerfile.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 #include "EngineGuard.hpp"
 
 // Tests in this file (integration; require a Linux Docker daemon):
-//   BuildImage.BuildsAndRunsInlineDockerfile - an inline Dockerfile builds an image that, run via from_reference, prints the baked-in content.
+//   BuildImage.BuildsAndRunsInlineDockerfile - an inline Dockerfile builds an image whose returned GenericImage, run to exit, prints the baked-in content.
 //   BuildImage.BuildFailureThrows - a Dockerfile whose RUN exits non-zero makes build() throw DockerError.
 
 using namespace testcontainers;
@@ -28,15 +28,15 @@ protected:
 
 TEST_F(BuildImage, BuildsAndRunsInlineDockerfile) {
     // Build an image that bakes a known string into a file, then runs `cat` on it.
-    const std::string ref =
-        ImageFromDockerfile::from_content("FROM alpine:3.20\n"
-                                          "RUN echo built-content > /built.txt\n"
-                                          "CMD [\"cat\",\"/built.txt\"]")
-            .build();
-    ASSERT_FALSE(ref.empty());
+    // build() returns a runnable GenericImage tagged "<name>:<tag>".
+    GenericImage image = GenericBuildableImage("tc-build-test", "latest")
+                             .with_dockerfile_string("FROM alpine:3.20\n"
+                                                     "RUN echo built-content > /built.txt\n"
+                                                     "CMD [\"cat\",\"/built.txt\"]")
+                             .build();
 
     // Run the built image to completion; its logs should carry the baked content.
-    Container c = GenericImage::from_reference(ref).with_wait(wait_for::exit()).start();
+    Container c = image.with_wait(wait_for::exit()).start();
 
     const ContainerLogs out = c.logs();
     EXPECT_NE(out.stdout_data.find("built-content"), std::string::npos)
@@ -46,7 +46,8 @@ TEST_F(BuildImage, BuildsAndRunsInlineDockerfile) {
 TEST_F(BuildImage, BuildFailureThrows) {
     // A RUN that exits non-zero fails the build; Docker returns HTTP 200 with the
     // error embedded in the stream, so build() must surface it as a DockerError.
-    EXPECT_THROW(
-        ImageFromDockerfile::from_content("FROM alpine:3.20\nRUN exit 3").build(),
-        DockerError);
+    EXPECT_THROW(GenericBuildableImage("tc-build-fail", "latest")
+                     .with_dockerfile_string("FROM alpine:3.20\nRUN exit 3")
+                     .build(),
+                 DockerError);
 }

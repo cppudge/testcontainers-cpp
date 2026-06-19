@@ -49,8 +49,9 @@ public:
     explicit GenericImage(std::string image, std::string tag = "latest")
         : image_(std::move(image)), tag_(std::move(tag)) {}
 
-    /// Construct from a full image reference "name[:tag]" (tag defaults to "latest").
-    /// Pairs with ImageFromDockerfile::build(): GenericImage::from_reference(img.build()).
+    /// Construct from a full image reference "name[:tag]" (tag defaults to "latest"),
+    /// e.g. for an externally-resolved reference. To run an image built by
+    /// GenericBuildableImage, prefer its `build()`, which returns a GenericImage.
     static GenericImage from_reference(const std::string& reference);
 
     // --- In-place builders (single overload; chains on lvalues and temporaries) ---
