@@ -121,28 +121,27 @@ std::string Container::read_file(const std::string& container_path) const {
 }
 
 void Container::copy_file_from(const std::string& container_path,
-                               const std::string& host_dest) const {
+                               const std::filesystem::path& host_dest) const {
     const std::string bytes = read_file(container_path);
 
-    const std::filesystem::path dest(host_dest);
-    const std::filesystem::path parent = dest.parent_path();
+    const std::filesystem::path parent = host_dest.parent_path();
     if (!parent.empty()) {
         std::error_code ec;
         std::filesystem::create_directories(parent, ec);
         if (ec) {
-            throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+            throw DockerError("copy_file_from('" + container_path + "', '" + host_dest.string() +
                               "'): cannot create parent directory: " + ec.message());
         }
     }
 
-    std::ofstream out(dest, std::ios::binary);
+    std::ofstream out(host_dest, std::ios::binary);
     if (!out) {
-        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest.string() +
                           "'): cannot open host file for writing");
     }
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!out) {
-        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest +
+        throw DockerError("copy_file_from('" + container_path + "', '" + host_dest.string() +
                           "'): failed writing host file");
     }
 }

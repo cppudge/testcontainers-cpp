@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -147,10 +148,12 @@ public:
     /// file (e.g. a directory). The bytes may be binary.
     std::string read_file(const std::string& container_path) const;
 
-    /// Copy a single regular file out of the container to `host_dest` (a host file
-    /// path; its parent directory is created if missing). Throws DockerError on
-    /// failure. For directory trees use copy_from_container + extract_tar directly.
-    void copy_file_from(const std::string& container_path, const std::string& host_dest) const;
+    /// Copy a single regular file out of the container to `host_dest` (a host
+    /// filesystem path; its parent directory is created if missing). Throws
+    /// DockerError on failure. For directory trees use copy_from_container +
+    /// extract_tar directly.
+    void copy_file_from(const std::string& container_path,
+                        const std::filesystem::path& host_dest) const;
 
     /// Stop the container (it is still removed on destruction).
     void stop();

@@ -46,7 +46,7 @@ GenericImage GenericBuildableImage::build() const {
             continue;
         }
 
-        const std::filesystem::path src(entry.host_path());
+        const std::filesystem::path& src = entry.host_path();
         std::error_code ec;
         if (std::filesystem::is_directory(src, ec)) {
             const std::filesystem::path base(entry.target());

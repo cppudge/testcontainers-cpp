@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -47,7 +48,7 @@ public:
 
     /// Add a Dockerfile from the host filesystem, placed at `Dockerfile` in the
     /// build context (mirrors rust `with_dockerfile`).
-    GenericBuildableImage& with_dockerfile(std::string source_path) {
+    GenericBuildableImage& with_dockerfile(std::filesystem::path source_path) {
         context_.push_back(CopyToContainer::host_file(std::move(source_path), "Dockerfile"));
         return *this;
     }
@@ -64,7 +65,7 @@ public:
     /// is added recursively, each file under `target/<relpath>`). Mirrors rust
     /// `with_file`. The Dockerfile must be named `Dockerfile` unless added via
     /// `with_dockerfile*`.
-    GenericBuildableImage& with_file(std::string source_path, std::string target) {
+    GenericBuildableImage& with_file(std::filesystem::path source_path, std::string target) {
         context_.push_back(CopyToContainer::host_file(std::move(source_path), std::move(target)));
         return *this;
     }

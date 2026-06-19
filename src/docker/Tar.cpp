@@ -6,6 +6,7 @@
 #include <archive_entry.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <string>
@@ -26,14 +27,14 @@ la_ssize_t append_to_string(struct archive* /*a*/, void* client_data, const void
 }
 
 /// Read the whole host file into a string (binary), or throw DockerError.
-std::string read_host_file(const std::string& path) {
+std::string read_host_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        throw DockerError("copy_to_container: cannot open host file '" + path + "'");
+        throw DockerError("copy_to_container: cannot open host file '" + path.string() + "'");
     }
     std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (in.bad()) {
-        throw DockerError("copy_to_container: failed reading host file '" + path + "'");
+        throw DockerError("copy_to_container: failed reading host file '" + path.string() + "'");
     }
     return data;
 }

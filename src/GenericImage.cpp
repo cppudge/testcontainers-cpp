@@ -146,7 +146,8 @@ Container GenericImage::start() const {
         // labels, plus the copy-to descriptors (so copied content participates).
         std::string canonical = docker::build_create_body(spec).dump();
         for (const CopyToContainer& s : copy_to_sources_) {
-            canonical += "\n" + s.target() + "\n" + (s.is_file() ? s.host_path() : s.bytes());
+            canonical +=
+                "\n" + s.target() + "\n" + (s.is_file() ? s.host_path().string() : s.bytes());
         }
         const std::string hash = detail::reuse_hash(canonical);
 
