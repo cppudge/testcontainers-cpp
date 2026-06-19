@@ -17,6 +17,7 @@
 //   DockerHost.UnsupportedSchemeThrows - an unknown scheme throws DockerError.
 //   DockerHost.ResolveUsesDockerHostEnv - resolve() honors the DOCKER_HOST environment variable.
 //   DockerHost.ResolveDefaultsToPlatform - resolve() falls back to the platform default endpoint when DOCKER_HOST is unset.
+//   DockerHost.ResolveHonorsDockerHostEnv - resolve() round-trips an explicit DOCKER_HOST URL through to_string().
 
 using namespace testcontainers;
 
@@ -106,4 +107,17 @@ TEST(DockerHost, ResolveDefaultsToPlatform) {
 #else
     EXPECT_EQ(h.scheme(), DockerScheme::Unix);
 #endif
+}
+
+TEST(DockerHost, ResolveHonorsDockerHostEnv) {
+    // Daemon-free: setting DOCKER_HOST (step 1) wins over every other source and
+    // round-trips through parse(), regardless of the local Docker config.
+    constexpr const char* kUrl = "tcp://10.20.30.40:2375";
+    set_env("DOCKER_HOST", kUrl);
+    const auto h = DockerHost::resolve();
+    EXPECT_EQ(h.to_string(), kUrl);
+    EXPECT_EQ(h.scheme(), DockerScheme::Tcp);
+    EXPECT_EQ(h.hostname(), "10.20.30.40");
+    EXPECT_EQ(h.port(), 2375);
+    set_env("DOCKER_HOST", nullptr);
 }

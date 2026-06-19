@@ -24,9 +24,19 @@ review are recorded here so they aren't lost between milestones.
   (`src/docker/Transport.cpp`)
 - **No registry auth** — `pull_image` sends no `X-Registry-Auth`; private images
   won't pull. (`src/docker/DockerClient.cpp`)
-- **Docker host resolution is partial** — only `DOCKER_HOST` + platform default;
-  the rootless socket fallbacks and `~/.testcontainers.properties` are not done
-  (see `docs/01` §2).
+- **Docker host resolution: full order, endpoint-only** — `DockerHost::resolve` now does the
+  testcontainers order (first hit wins): `DOCKER_HOST` → `docker.host` in
+  `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT`/`currentContext`/`default`,
+  reading `Endpoints.docker.Host` from `~/.docker/contexts/meta/<sha256(name)>/meta.json`) → default
+  socket with rootless fallbacks (`$XDG_RUNTIME_DIR/docker.sock`, `$HOME/.docker/run/docker.sock`,
+  else `/var/run/docker.sock`; Windows named pipe). Pure parsers + a vendored SHA-256 (no OpenSSL)
+  live in `src/docker/HostResolve.hpp` + `DockerHost.cpp`; steps 2-4 never throw on a malformed file.
+  Known limits / one-line notes:
+  (a) docker-context TLS materials (the context can carry ca/cert/key paths) are NOT consumed — only
+  the `Host` endpoint;
+  (b) `~/.testcontainers.properties` — only `docker.host` is read (not `tc.host` or other props);
+  (c) no `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` handling yet (that's the TLS-transport item).
+  (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
 - **One connection per request** — `request()` opens/closes a transport each call
   (no keep-alive / pooling).
 - **`get_host_port` IPv4/IPv6** — now prefers the IPv4 binding, but there are no

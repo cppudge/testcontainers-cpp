@@ -15,10 +15,20 @@ enum class DockerScheme {
 
 /// A resolved Docker daemon endpoint: where and how to reach the daemon.
 ///
-/// Resolution order (subset of the full testcontainers spec, extended later):
+/// Resolution order (first hit wins), mirroring testcontainers:
 ///   1. `DOCKER_HOST` environment variable.
-///   2. Platform default: Windows named pipe `//./pipe/docker_engine`,
-///      otherwise the unix socket `/var/run/docker.sock`.
+///   2. `docker.host` in `~/.testcontainers.properties`.
+///   3. The active Docker context's endpoint: the context name is
+///      `DOCKER_CONTEXT`, else `currentContext` in `~/.docker/config.json`,
+///      else "default". A non-"default" name reads `Endpoints.docker.Host`
+///      from `~/.docker/contexts/meta/<sha256(name)>/meta.json`.
+///   4. Platform default: Windows named pipe `//./pipe/docker_engine`;
+///      otherwise the rootless sockets `$XDG_RUNTIME_DIR/docker.sock` then
+///      `$HOME/.docker/run/docker.sock` (if they exist), else the unix socket
+///      `/var/run/docker.sock`.
+///
+/// Steps 2-4 never throw on a malformed/absent file — they fall through to the
+/// next step. A malformed `DOCKER_HOST` (step 1) still throws via parse().
 class DockerHost {
 public:
     /// Resolve from the environment / platform defaults.

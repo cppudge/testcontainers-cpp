@@ -47,6 +47,17 @@ testcontainers — это обёртка над **Docker Engine HTTP API**. Он
 Доп. env: `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, `TESTCONTAINERS_COMMAND` (`keep`/`remove`),
 `DOCKER_DEFAULT_PLATFORM`.
 
+> **Реализовано** (`DockerHost::resolve`, `src/docker/DockerHost.cpp`): порядок «первый
+> найденный выигрывает» — (1) `DOCKER_HOST`; (2) `docker.host` из
+> `~/.testcontainers.properties`; (3) активный docker-контекст (`DOCKER_CONTEXT` →
+> `currentContext` в `~/.docker/config.json` → `default`; не-`default` читает
+> `Endpoints.docker.Host` из `~/.docker/contexts/meta/<sha256(name)>/meta.json`);
+> (4) дефолтный сокет с rootless-фоллбэками (`$XDG_RUNTIME_DIR/docker.sock`,
+> `$HOME/.docker/run/docker.sock`, иначе `unix:///var/run/docker.sock`; на Windows —
+> `npipe:////./pipe/docker_engine`). Шаги 2-4 не бросают на битом файле — проваливаются к
+> следующему. TLS-материалы контекста и `DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH` пока не
+> читаются (см. TLS-транспорт).
+
 ## 3. Полный перечень вызовов Docker Engine API
 
 Это «контракт», который C++ HTTP-клиент должен покрыть.

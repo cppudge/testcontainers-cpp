@@ -118,6 +118,7 @@ if(BUILD_TESTING)
     add_executable(tc_unit_tests
         tests/unit/version_test.cpp
         tests/unit/DockerHostTest.cpp
+        tests/unit/HostResolveTest.cpp
         tests/unit/ResponseTest.cpp
         tests/unit/ApiMappingTest.cpp
         tests/unit/AuthTest.cpp
