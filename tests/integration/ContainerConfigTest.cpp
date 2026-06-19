@@ -15,6 +15,8 @@
 //   ContainerConfig.WorkingDirAndUser - working dir and user are applied so the process runs in /tmp as uid 1000.
 //   ContainerConfig.EntrypointOverride - an explicit entrypoint overrides the image default so `echo` prints the cmd arg.
 //   ContainerConfig.TmpfsMount - a tmpfs mount appears as a tmpfs filesystem at its target in /proc/mounts.
+//   ContainerConfig.UlimitApplied - a ulimit is applied so the soft nofile limit reported inside the container matches.
+//   ContainerConfig.ExtraHostApplied - an extra host (via the typed setter) resolves to its mapped IP inside the container.
 
 using namespace testcontainers;
 
@@ -69,5 +71,31 @@ TEST_F(ContainerConfig, TmpfsMount) {
     EXPECT_NE(logs.stdout_data.find("/cache"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
     EXPECT_NE(logs.stdout_data.find("tmpfs"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, UlimitApplied) {
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cmd({"sh", "-c", "ulimit -n"})
+                      .with_ulimit("nofile", 4096, 8192)
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("4096"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, ExtraHostApplied) {
+    Container c = GenericImage("alpine", "3.20")
+                      .with_extra_host("myhost", "1.2.3.4")
+                      .with_cmd({"sh", "-c", "getent hosts myhost || cat /etc/hosts"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("1.2.3.4"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("myhost"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
 }

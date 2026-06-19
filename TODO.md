@@ -77,6 +77,12 @@ review are recorded here so they aren't lost between milestones.
   images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
   are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets,
   ssh, cache-from, squash, and platform on build are not. (`src/ImageFromDockerfile.cpp`)
+- **HostConfig: typed subset + escape hatch** — `GenericImage` has typed setters for memory, shm_size,
+  ulimits, cap_add/cap_drop, extra_hosts; everything else goes through `with_create_body_patch` (a raw
+  `/containers/create` JSON fragment deep-merged via RFC-7386 AFTER our fields, so it overrides them; nest
+  HostConfig fields under `"HostConfig"`). No typed setters yet for cpu limits, restart policy, dns,
+  sysctls, devices, pids-limit (use the patch). `ContainerInspect` still doesn't surface Memory/CpuQuota/etc.,
+  so those can't be asserted via inspect. (`src/docker/ApiMapping.cpp`)
 - **Windows containers: dotnet-parity only** — the engine mode is detected (`is_windows_engine()`) and
   Ryuk is skipped on the Windows engine, so there is **no crash-safe reaping** on Windows (RAII /
   AutoRemove only), matching testcontainers-dotnet. `copy-to-container` still Unix-normalizes the entry

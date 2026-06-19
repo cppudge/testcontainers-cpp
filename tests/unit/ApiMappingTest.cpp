@@ -10,6 +10,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/Ulimit.hpp"
 
 // Tests in this file:
 //   ApiMapping.BuildCreateBodyMinimal - a spec with only an image produces a body with just Image and no optional sections.
@@ -26,6 +27,9 @@
 //   ApiMapping.BuildCreateBodyNoMountsByDefault - a spec without mounts/privileged emits no HostConfig.Mounts or Privileged.
 //   ApiMapping.BuildCreateBodyNetworkMode - a set network maps to HostConfig.NetworkMode.
 //   ApiMapping.BuildCreateBodyNoNetworkModeByDefault - a spec without a network emits no HostConfig.NetworkMode.
+//   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
+//   ApiMapping.BuildCreateBodyPatchDeepMerges - create_body_patch deep-merges into the body, keeping existing fields while adding nested and top-level ones.
+//   ApiMapping.BuildCreateBodyPatchInvalidThrows - an invalid-JSON create_body_patch makes build_create_body throw DockerError.
 //   ApiMapping.BuildCreateQueryEmptyByDefault - a spec with neither name nor platform yields an empty create query.
 //   ApiMapping.BuildCreateQueryName - a spec with only a name yields "?name=<encoded>".
 //   ApiMapping.BuildCreateQueryPlatform - a spec with a platform yields "?platform=<encoded>" (slash percent-encoded).
@@ -250,6 +254,58 @@ TEST(ApiMapping, BuildCreateBodyNoNetworkModeByDefault) {
     spec.image = "alpine:3.20";
     const auto body = build_create_body(spec);
     EXPECT_FALSE(body.contains("HostConfig"));
+}
+
+TEST(ApiMapping, BuildCreateBodyHostConfigKnobs) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.memory_bytes = 67108864;
+    spec.shm_size_bytes = 33554432;
+    spec.ulimits = {Ulimit{"nofile", 1024, 2048}, Ulimit{"nproc", 512, 1024}};
+    spec.cap_add = {"NET_ADMIN", "SYS_TIME"};
+    spec.cap_drop = {"MKNOD"};
+    spec.extra_hosts = {"myhost:1.2.3.4"};
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    const auto& host = body["HostConfig"];
+    EXPECT_EQ(host["Memory"].get<std::int64_t>(), 67108864);
+    EXPECT_EQ(host["ShmSize"].get<std::int64_t>(), 33554432);
+
+    ASSERT_TRUE(host.contains("Ulimits"));
+    const auto& ulimits = host["Ulimits"];
+    ASSERT_EQ(ulimits.size(), 2u);
+    EXPECT_EQ(ulimits[0]["Name"], "nofile");
+    EXPECT_EQ(ulimits[0]["Soft"].get<std::int64_t>(), 1024);
+    EXPECT_EQ(ulimits[0]["Hard"].get<std::int64_t>(), 2048);
+    EXPECT_EQ(ulimits[1]["Name"], "nproc");
+    EXPECT_EQ(ulimits[1]["Soft"].get<std::int64_t>(), 512);
+    EXPECT_EQ(ulimits[1]["Hard"].get<std::int64_t>(), 1024);
+
+    EXPECT_EQ(host["CapAdd"], nlohmann::json({"NET_ADMIN", "SYS_TIME"}));
+    EXPECT_EQ(host["CapDrop"], nlohmann::json({"MKNOD"}));
+    EXPECT_EQ(host["ExtraHosts"], nlohmann::json({"myhost:1.2.3.4"}));
+}
+
+TEST(ApiMapping, BuildCreateBodyPatchDeepMerges) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.privileged = true;
+    spec.create_body_patch = R"({"HostConfig":{"Memory":67108864},"Hostname":"h"})";
+
+    const auto body = build_create_body(spec);
+    // The merge is RFC 7386 (deep), so it adds to HostConfig rather than replacing it.
+    ASSERT_TRUE(body.contains("HostConfig"));
+    EXPECT_TRUE(body["HostConfig"]["Privileged"].get<bool>());
+    EXPECT_EQ(body["HostConfig"]["Memory"].get<std::int64_t>(), 67108864);
+    EXPECT_EQ(body["Hostname"], "h");
+}
+
+TEST(ApiMapping, BuildCreateBodyPatchInvalidThrows) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.create_body_patch = "{not valid json";
+    EXPECT_THROW(build_create_body(spec), DockerError);
 }
 
 TEST(ApiMapping, BuildCreateQueryEmptyByDefault) {

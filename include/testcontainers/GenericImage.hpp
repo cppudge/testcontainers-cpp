@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -12,6 +13,7 @@
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/RegistryAuth.hpp"
+#include "testcontainers/Ulimit.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
@@ -199,6 +201,80 @@ public:
         return std::move(*this);
     }
 
+    /// Set a hard memory limit in bytes (`HostConfig.Memory`).
+    GenericImage& with_memory_limit(std::int64_t bytes) & {
+        memory_bytes_ = bytes;
+        return *this;
+    }
+    GenericImage&& with_memory_limit(std::int64_t bytes) && {
+        memory_bytes_ = bytes;
+        return std::move(*this);
+    }
+
+    /// Set the size of `/dev/shm` in bytes (`HostConfig.ShmSize`).
+    GenericImage& with_shm_size(std::int64_t bytes) & {
+        shm_size_bytes_ = bytes;
+        return *this;
+    }
+    GenericImage&& with_shm_size(std::int64_t bytes) && {
+        shm_size_bytes_ = bytes;
+        return std::move(*this);
+    }
+
+    /// Add a process resource limit (`HostConfig.Ulimits`), e.g.
+    /// `with_ulimit("nofile", 1024, 2048)`. Add several to set multiple limits.
+    GenericImage& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) & {
+        ulimits_.push_back(Ulimit{std::move(name), soft, hard});
+        return *this;
+    }
+    GenericImage&& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) && {
+        ulimits_.push_back(Ulimit{std::move(name), soft, hard});
+        return std::move(*this);
+    }
+
+    /// Add a Linux capability to grant (`HostConfig.CapAdd`), e.g. "NET_ADMIN".
+    GenericImage& with_cap_add(std::string cap) & {
+        cap_add_.push_back(std::move(cap));
+        return *this;
+    }
+    GenericImage&& with_cap_add(std::string cap) && {
+        cap_add_.push_back(std::move(cap));
+        return std::move(*this);
+    }
+
+    /// Add a Linux capability to drop (`HostConfig.CapDrop`).
+    GenericImage& with_cap_drop(std::string cap) & {
+        cap_drop_.push_back(std::move(cap));
+        return *this;
+    }
+    GenericImage&& with_cap_drop(std::string cap) && {
+        cap_drop_.push_back(std::move(cap));
+        return std::move(*this);
+    }
+
+    /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
+    GenericImage& with_extra_host(std::string host, std::string ip) & {
+        extra_hosts_.push_back(host + ":" + ip);
+        return *this;
+    }
+    GenericImage&& with_extra_host(std::string host, std::string ip) && {
+        extra_hosts_.push_back(host + ":" + ip);
+        return std::move(*this);
+    }
+
+    /// Deep-merge a raw Docker `/containers/create` body fragment into the create
+    /// body (RFC 7386 merge applied AFTER our typed fields, so it overrides them).
+    /// This is the escape hatch for any field not exposed as a typed setter: nest
+    /// HostConfig fields under `"HostConfig"`. `json_object` must be a JSON object.
+    GenericImage& with_create_body_patch(std::string json_object) & {
+        create_body_patch_ = std::move(json_object);
+        return *this;
+    }
+    GenericImage&& with_create_body_patch(std::string json_object) && {
+        create_body_patch_ = std::move(json_object);
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -224,6 +300,13 @@ public:
     const std::optional<std::string>& container_name() const noexcept { return container_name_; }
     const std::optional<std::string>& platform() const noexcept { return platform_; }
     const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
+    const std::optional<std::int64_t>& memory_limit() const noexcept { return memory_bytes_; }
+    const std::optional<std::int64_t>& shm_size() const noexcept { return shm_size_bytes_; }
+    const std::vector<Ulimit>& ulimits() const noexcept { return ulimits_; }
+    const std::vector<std::string>& cap_add() const noexcept { return cap_add_; }
+    const std::vector<std::string>& cap_drop() const noexcept { return cap_drop_; }
+    const std::vector<std::string>& extra_hosts() const noexcept { return extra_hosts_; }
+    const std::string& create_body_patch() const noexcept { return create_body_patch_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -250,6 +333,13 @@ private:
     std::optional<std::string> container_name_;
     std::optional<std::string> platform_;
     std::optional<RegistryAuth> registry_auth_;
+    std::optional<std::int64_t> memory_bytes_;
+    std::optional<std::int64_t> shm_size_bytes_;
+    std::vector<Ulimit> ulimits_;
+    std::vector<std::string> cap_add_;
+    std::vector<std::string> cap_drop_;
+    std::vector<std::string> extra_hosts_;
+    std::string create_body_patch_;
 };
 
 } // namespace testcontainers

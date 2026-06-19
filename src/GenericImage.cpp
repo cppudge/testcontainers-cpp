@@ -32,6 +32,13 @@ Container GenericImage::start() const {
     spec.user = user_;
     spec.privileged = privileged_;
     spec.mounts = mounts_;
+    spec.memory_bytes = memory_bytes_;
+    spec.shm_size_bytes = shm_size_bytes_;
+    spec.ulimits = ulimits_;
+    spec.cap_add = cap_add_;
+    spec.cap_drop = cap_drop_;
+    spec.extra_hosts = extra_hosts_;
+    spec.create_body_patch = create_body_patch_;
     spec.labels = labels_;
     // Tag the container so Ryuk (and tooling) can find it: managed-by + session.
     for (const auto& label : detail::testcontainers_labels()) {

@@ -3,6 +3,8 @@
 #include "testcontainers/Error.hpp"
 
 #include <cstdint>
+#include <string>
+#include <utility>
 
 namespace testcontainers::docker {
 
@@ -72,6 +74,32 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.network) {
         host_config["NetworkMode"] = *spec.network;
     }
+    if (spec.memory_bytes) {
+        host_config["Memory"] = *spec.memory_bytes;
+    }
+    if (spec.shm_size_bytes) {
+        host_config["ShmSize"] = *spec.shm_size_bytes;
+    }
+    if (!spec.ulimits.empty()) {
+        nlohmann::json ulimits = nlohmann::json::array();
+        for (const Ulimit& u : spec.ulimits) {
+            nlohmann::json entry = nlohmann::json::object();
+            entry["Name"] = u.name;
+            entry["Soft"] = u.soft;
+            entry["Hard"] = u.hard;
+            ulimits.push_back(std::move(entry));
+        }
+        host_config["Ulimits"] = std::move(ulimits);
+    }
+    if (!spec.cap_add.empty()) {
+        host_config["CapAdd"] = spec.cap_add;
+    }
+    if (!spec.cap_drop.empty()) {
+        host_config["CapDrop"] = spec.cap_drop;
+    }
+    if (!spec.extra_hosts.empty()) {
+        host_config["ExtraHosts"] = spec.extra_hosts;
+    }
     if (!spec.mounts.empty()) {
         nlohmann::json mounts = nlohmann::json::array();
         for (const Mount& m : spec.mounts) {
@@ -108,6 +136,16 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     }
     if (!host_config.empty()) {
         body["HostConfig"] = std::move(host_config);
+    }
+
+    if (!spec.create_body_patch.empty()) {
+        // RFC 7386 deep-merge of a raw Docker create-body fragment (escape hatch).
+        // Lets callers set any field (nest HostConfig fields under "HostConfig").
+        try {
+            body.merge_patch(nlohmann::json::parse(spec.create_body_patch));
+        } catch (const nlohmann::json::parse_error& e) {
+            throw DockerError(std::string("create_body_patch is not valid JSON: ") + e.what());
+        }
     }
 
     return body;

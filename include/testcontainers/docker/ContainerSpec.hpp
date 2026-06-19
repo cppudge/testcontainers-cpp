@@ -9,6 +9,7 @@
 
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/Ulimit.hpp"
 
 namespace testcontainers {
 
@@ -33,6 +34,13 @@ struct CreateContainerSpec {
     bool auto_remove = false;                                ///< HostConfig.AutoRemove
     std::vector<Mount> mounts;                               ///< HostConfig.Mounts
     std::optional<Healthcheck> healthcheck;                  ///< Healthcheck (create-body)
+    std::optional<std::int64_t> memory_bytes;                ///< HostConfig.Memory (hard limit, bytes)
+    std::optional<std::int64_t> shm_size_bytes;              ///< HostConfig.ShmSize (bytes)
+    std::vector<Ulimit> ulimits;                             ///< HostConfig.Ulimits
+    std::vector<std::string> cap_add;                        ///< HostConfig.CapAdd
+    std::vector<std::string> cap_drop;                       ///< HostConfig.CapDrop
+    std::vector<std::string> extra_hosts;                    ///< HostConfig.ExtraHosts ("host:ip")
+    std::string create_body_patch;                           ///< raw JSON object deep-merged into the create body (escape hatch); empty = none
 };
 
 /// A single published port binding from a container inspect.
