@@ -14,7 +14,7 @@ namespace testcontainers {
 /// The `test` vector follows Docker's tagged convention: the first element is
 /// the kind (`"CMD"`, `"CMD-SHELL"`, or `"NONE"`) and the remaining elements are
 /// the command/arguments. Build one with the static factories, then tune it with
-/// the chainable, ref-qualified setters (same style as `GenericImage`).
+/// the chainable setters (same style as `GenericImage`).
 ///
 /// A plain, copyable value type (no Boost/Asio leakage).
 class Healthcheck {
@@ -44,42 +44,26 @@ public:
         return h;
     }
 
-    // --- In-place, ref-qualified setters ---
+    // --- In-place setters (single overload; chain on lvalues and temporaries) ---
 
-    Healthcheck& with_interval(std::chrono::nanoseconds interval) & {
+    Healthcheck& with_interval(std::chrono::nanoseconds interval) {
         interval_ = interval;
         return *this;
     }
-    Healthcheck&& with_interval(std::chrono::nanoseconds interval) && {
-        interval_ = interval;
-        return std::move(*this);
-    }
 
-    Healthcheck& with_timeout(std::chrono::nanoseconds timeout) & {
+    Healthcheck& with_timeout(std::chrono::nanoseconds timeout) {
         timeout_ = timeout;
         return *this;
     }
-    Healthcheck&& with_timeout(std::chrono::nanoseconds timeout) && {
-        timeout_ = timeout;
-        return std::move(*this);
-    }
 
-    Healthcheck& with_retries(int retries) & {
+    Healthcheck& with_retries(int retries) {
         retries_ = retries;
         return *this;
     }
-    Healthcheck&& with_retries(int retries) && {
-        retries_ = retries;
-        return std::move(*this);
-    }
 
-    Healthcheck& with_start_period(std::chrono::nanoseconds start_period) & {
+    Healthcheck& with_start_period(std::chrono::nanoseconds start_period) {
         start_period_ = start_period;
         return *this;
-    }
-    Healthcheck&& with_start_period(std::chrono::nanoseconds start_period) && {
-        start_period_ = start_period;
-        return std::move(*this);
     }
 
     // --- Getters ---

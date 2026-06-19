@@ -10,7 +10,7 @@ namespace testcontainers {
 ///
 /// Two sources: a host file (read at copy time) or raw in-memory bytes (which
 /// may be binary, including embedded NULs). Build one with a static factory,
-/// then optionally tune the file mode with the chainable, ref-qualified setter
+/// then optionally tune the file mode with the chainable setter
 /// (same style as `Mount`/`Healthcheck`).
 ///
 /// A plain, copyable value type (no Boost/Asio/libarchive leakage).
@@ -36,17 +36,13 @@ public:
         return c;
     }
 
-    // --- In-place, ref-qualified setters ---
+    // --- In-place setters (single overload; chain on lvalues and temporaries) ---
 
     /// Set the octal file mode of the created entry (e.g. `0644`). Defaults to
     /// `0644` when unset.
-    CopyToContainer& with_mode(int mode) & {
+    CopyToContainer& with_mode(int mode) {
         mode_ = mode;
         return *this;
-    }
-    CopyToContainer&& with_mode(int mode) && {
-        mode_ = mode;
-        return std::move(*this);
     }
 
     // --- Getters ---

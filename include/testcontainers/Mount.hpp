@@ -17,8 +17,8 @@ enum class MountType {
 /// A single filesystem mount for a container, mapping to one entry of Docker's
 /// create-body `HostConfig.Mounts` array.
 ///
-/// Build one with the static factories, then tune it with the chainable,
-/// ref-qualified setters (same style as `Healthcheck`/`GenericImage`).
+/// Build one with the static factories, then tune it with the chainable
+/// setters (same style as `Healthcheck`/`GenericImage`).
 ///
 /// A plain, copyable value type (no Boost/Asio leakage).
 class Mount {
@@ -49,33 +49,21 @@ public:
         return m;
     }
 
-    // --- In-place, ref-qualified setters ---
+    // --- In-place setters (single overload; chain on lvalues and temporaries) ---
 
-    Mount& read_only(bool ro = true) & {
+    Mount& read_only(bool ro = true) {
         read_only_ = ro;
         return *this;
     }
-    Mount&& read_only(bool ro = true) && {
-        read_only_ = ro;
-        return std::move(*this);
-    }
 
-    Mount& with_tmpfs_size(std::int64_t bytes) & {
+    Mount& with_tmpfs_size(std::int64_t bytes) {
         tmpfs_size_ = bytes;
         return *this;
     }
-    Mount&& with_tmpfs_size(std::int64_t bytes) && {
-        tmpfs_size_ = bytes;
-        return std::move(*this);
-    }
 
-    Mount& with_tmpfs_mode(int mode) & {
+    Mount& with_tmpfs_mode(int mode) {
         tmpfs_mode_ = mode;
         return *this;
-    }
-    Mount&& with_tmpfs_mode(int mode) && {
-        tmpfs_mode_ = mode;
-        return std::move(*this);
     }
 
     // --- Getters ---

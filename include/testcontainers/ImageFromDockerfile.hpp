@@ -10,8 +10,8 @@ namespace testcontainers {
 /// either an inline Dockerfile string plus in-memory context files, or a host
 /// directory used as the build context.
 ///
-/// The `with_*` builders mutate in place and return `*this` (ref-qualified), so
-/// a named config can be configured incrementally — no consume-self, no
+/// The `with_*` builders mutate in place and return `*this` by reference, so a
+/// named config can be configured incrementally — no consume-self, no
 /// use-after-move (mirrors GenericImage).
 ///
 /// Public on purpose: the header pulls in only std types. The filesystem walk
@@ -36,62 +36,38 @@ public:
                                          std::string dockerfile = "Dockerfile",
                                          std::string image_tag = "");
 
-    // --- In-place, ref-qualified builders ---
+    // --- In-place builders (single overload; chain on lvalues and temporaries) ---
 
     /// Add an in-memory file to the context (e.g. an extra file COPYed by the
     /// Dockerfile). `path_in_context` uses '/' separators.
-    ImageFromDockerfile& with_file(std::string path_in_context, std::string content) & {
+    ImageFromDockerfile& with_file(std::string path_in_context, std::string content) {
         files_.push_back(File{std::move(path_in_context), std::move(content)});
         return *this;
     }
-    ImageFromDockerfile&& with_file(std::string path_in_context, std::string content) && {
-        files_.push_back(File{std::move(path_in_context), std::move(content)});
-        return std::move(*this);
-    }
 
-    ImageFromDockerfile& with_build_arg(std::string key, std::string value) & {
+    ImageFromDockerfile& with_build_arg(std::string key, std::string value) {
         build_args_.emplace_back(std::move(key), std::move(value));
         return *this;
     }
-    ImageFromDockerfile&& with_build_arg(std::string key, std::string value) && {
-        build_args_.emplace_back(std::move(key), std::move(value));
-        return std::move(*this);
-    }
 
-    ImageFromDockerfile& with_target(std::string stage) & {
+    ImageFromDockerfile& with_target(std::string stage) {
         target_ = std::move(stage);
         return *this;
     }
-    ImageFromDockerfile&& with_target(std::string stage) && {
-        target_ = std::move(stage);
-        return std::move(*this);
-    }
 
-    ImageFromDockerfile& with_no_cache(bool no_cache = true) & {
+    ImageFromDockerfile& with_no_cache(bool no_cache = true) {
         no_cache_ = no_cache;
         return *this;
     }
-    ImageFromDockerfile&& with_no_cache(bool no_cache = true) && {
-        no_cache_ = no_cache;
-        return std::move(*this);
-    }
 
-    ImageFromDockerfile& with_pull(bool pull = true) & {
+    ImageFromDockerfile& with_pull(bool pull = true) {
         pull_ = pull;
         return *this;
     }
-    ImageFromDockerfile&& with_pull(bool pull = true) && {
-        pull_ = pull;
-        return std::move(*this);
-    }
 
-    ImageFromDockerfile& with_tag(std::string image_tag) & {
+    ImageFromDockerfile& with_tag(std::string image_tag) {
         image_tag_ = std::move(image_tag);
         return *this;
-    }
-    ImageFromDockerfile&& with_tag(std::string image_tag) && {
-        image_tag_ = std::move(image_tag);
-        return std::move(*this);
     }
 
     // --- Getters ---

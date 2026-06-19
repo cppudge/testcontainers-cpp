@@ -154,8 +154,10 @@ Lessons from auditing the FFI fork ([`docs/03`](docs/03-cxx-interface-evaluation
 
 - **Value types are plain, copyable structs/enums** (`ContainerPort`, `Mount`, `WaitFor`, …).
   No move-only-on-data, no opaque handles.
-- **Builders mutate in place and chain** via ref-qualified `with_*` (`T& ... &` / `T&& ... &&`).
-  No "consume-self-return-Self" — named configs are reusable, no use-after-move footguns.
+- **Builders mutate in place and chain** via a single `with_*` overload returning `T&` — one
+  unqualified overload chains on both named lvalues and temporaries. No "consume-self-return-Self"
+  — named configs are reusable, no use-after-move footguns. (Move-only handles like
+  `DockerComposeContainer` keep a `&`/`&&` pair so a chained temporary can move-construct.)
 - **No trait-mirror interfaces.** Runtime polymorphism only where there's real extension:
   a user-facing `Image` base (custom images) and optionally `IWaitStrategy`.
 - **`WaitFor` is a `std::variant`** of small structs, matched with `std::visit`.
