@@ -17,6 +17,7 @@
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/Ulimit.hpp"
 #include "testcontainers/WaitFor.hpp"
+#include "testcontainers/docker/ContainerSpec.hpp"
 
 namespace testcontainers {
 
@@ -32,6 +33,15 @@ enum class ImagePullPolicy {
 /// The `with_*` builders mutate in place and return `*this` (ref-qualified), so
 /// a named config can be configured incrementally and started many times — no
 /// consume-self, no use-after-move.
+///
+/// The "create" fields (command, mounts, labels, host-config knobs, …) are held
+/// directly in an embedded `CreateContainerSpec spec_`, so a new create option is
+/// added in one place (a setter + getter forwarding to `spec_`) without a
+/// parallel private field and a hand-written copy in `start()`. Only the fields
+/// that need real translation before create — the image reference (resolve +
+/// substitution), env (`pair` → "KEY=VALUE"), and exposed ports (`ContainerPort`
+/// → "6379/tcp" + publish-all) — are kept as separate domain fields, alongside
+/// the orchestration-only state (waits, copy-to sources, hooks, reuse, …).
 class GenericImage {
 public:
     /// Construct from an image name and tag (tag defaults to "latest").
@@ -63,47 +73,47 @@ public:
     }
 
     GenericImage& with_cmd(std::vector<std::string> cmd) & {
-        cmd_ = std::move(cmd);
+        spec_.cmd = std::move(cmd);
         return *this;
     }
     GenericImage&& with_cmd(std::vector<std::string> cmd) && {
-        cmd_ = std::move(cmd);
+        spec_.cmd = std::move(cmd);
         return std::move(*this);
     }
 
     GenericImage& with_entrypoint(std::vector<std::string> entrypoint) & {
-        entrypoint_ = std::move(entrypoint);
+        spec_.entrypoint = std::move(entrypoint);
         return *this;
     }
     GenericImage&& with_entrypoint(std::vector<std::string> entrypoint) && {
-        entrypoint_ = std::move(entrypoint);
+        spec_.entrypoint = std::move(entrypoint);
         return std::move(*this);
     }
 
     GenericImage& with_working_dir(std::string working_dir) & {
-        working_dir_ = std::move(working_dir);
+        spec_.working_dir = std::move(working_dir);
         return *this;
     }
     GenericImage&& with_working_dir(std::string working_dir) && {
-        working_dir_ = std::move(working_dir);
+        spec_.working_dir = std::move(working_dir);
         return std::move(*this);
     }
 
     GenericImage& with_user(std::string user) & {
-        user_ = std::move(user);
+        spec_.user = std::move(user);
         return *this;
     }
     GenericImage&& with_user(std::string user) && {
-        user_ = std::move(user);
+        spec_.user = std::move(user);
         return std::move(*this);
     }
 
     GenericImage& with_privileged(bool privileged = true) & {
-        privileged_ = privileged;
+        spec_.privileged = privileged;
         return *this;
     }
     GenericImage&& with_privileged(bool privileged = true) && {
-        privileged_ = privileged;
+        spec_.privileged = privileged;
         return std::move(*this);
     }
 
@@ -112,20 +122,20 @@ public:
     /// `Container::logs()` / `follow_logs()` read it without demuxing. Note a TTY
     /// also rewrites `\n` to `\r\n`.
     GenericImage& with_tty(bool tty = true) & {
-        tty_ = tty;
+        spec_.tty = tty;
         return *this;
     }
     GenericImage&& with_tty(bool tty = true) && {
-        tty_ = tty;
+        spec_.tty = tty;
         return std::move(*this);
     }
 
     GenericImage& with_mount(Mount mount) & {
-        mounts_.push_back(std::move(mount));
+        spec_.mounts.push_back(std::move(mount));
         return *this;
     }
     GenericImage&& with_mount(Mount mount) && {
-        mounts_.push_back(std::move(mount));
+        spec_.mounts.push_back(std::move(mount));
         return std::move(*this);
     }
 
@@ -142,11 +152,11 @@ public:
     }
 
     GenericImage& with_label(std::string key, std::string value) & {
-        labels_.emplace_back(std::move(key), std::move(value));
+        spec_.labels.emplace_back(std::move(key), std::move(value));
         return *this;
     }
     GenericImage&& with_label(std::string key, std::string value) && {
-        labels_.emplace_back(std::move(key), std::move(value));
+        spec_.labels.emplace_back(std::move(key), std::move(value));
         return std::move(*this);
     }
 
@@ -169,22 +179,22 @@ public:
     }
 
     GenericImage& with_healthcheck(Healthcheck hc) & {
-        healthcheck_ = std::move(hc);
+        spec_.healthcheck = std::move(hc);
         return *this;
     }
     GenericImage&& with_healthcheck(Healthcheck hc) && {
-        healthcheck_ = std::move(hc);
+        spec_.healthcheck = std::move(hc);
         return std::move(*this);
     }
 
     /// Join the container to a user-defined network (`HostConfig.NetworkMode`).
     /// Containers on the same network resolve each other by container name.
     GenericImage& with_network(std::string network) & {
-        network_ = std::move(network);
+        spec_.network = std::move(network);
         return *this;
     }
     GenericImage&& with_network(std::string network) && {
-        network_ = std::move(network);
+        spec_.network = std::move(network);
         return std::move(*this);
     }
 
@@ -193,22 +203,22 @@ public:
     /// addition to its container name. Requires `with_network(...)` to take
     /// effect; aliases without a target network are ignored.
     GenericImage& with_network_alias(std::string alias) & {
-        network_aliases_.push_back(std::move(alias));
+        spec_.network_aliases.push_back(std::move(alias));
         return *this;
     }
     GenericImage&& with_network_alias(std::string alias) && {
-        network_aliases_.push_back(std::move(alias));
+        spec_.network_aliases.push_back(std::move(alias));
         return std::move(*this);
     }
 
     /// Set an explicit container name (passed as `?name=` on create). Useful so
     /// peers on the same network can resolve this container by name.
     GenericImage& with_container_name(std::string name) & {
-        container_name_ = std::move(name);
+        spec_.name = std::move(name);
         return *this;
     }
     GenericImage&& with_container_name(std::string name) && {
-        container_name_ = std::move(name);
+        spec_.name = std::move(name);
         return std::move(*this);
     }
 
@@ -216,11 +226,11 @@ public:
     /// "windows/amd64"), sent as the `?platform=` query on create. Useful to
     /// select a Windows image variant on a Windows-containers engine.
     GenericImage& with_platform(std::string platform) & {
-        platform_ = std::move(platform);
+        spec_.platform = std::move(platform);
         return *this;
     }
     GenericImage&& with_platform(std::string platform) && {
-        platform_ = std::move(platform);
+        spec_.platform = std::move(platform);
         return std::move(*this);
     }
 
@@ -237,62 +247,62 @@ public:
 
     /// Set a hard memory limit in bytes (`HostConfig.Memory`).
     GenericImage& with_memory_limit(std::int64_t bytes) & {
-        memory_bytes_ = bytes;
+        spec_.memory_bytes = bytes;
         return *this;
     }
     GenericImage&& with_memory_limit(std::int64_t bytes) && {
-        memory_bytes_ = bytes;
+        spec_.memory_bytes = bytes;
         return std::move(*this);
     }
 
     /// Set the size of `/dev/shm` in bytes (`HostConfig.ShmSize`).
     GenericImage& with_shm_size(std::int64_t bytes) & {
-        shm_size_bytes_ = bytes;
+        spec_.shm_size_bytes = bytes;
         return *this;
     }
     GenericImage&& with_shm_size(std::int64_t bytes) && {
-        shm_size_bytes_ = bytes;
+        spec_.shm_size_bytes = bytes;
         return std::move(*this);
     }
 
     /// Add a process resource limit (`HostConfig.Ulimits`), e.g.
     /// `with_ulimit("nofile", 1024, 2048)`. Add several to set multiple limits.
     GenericImage& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) & {
-        ulimits_.push_back(Ulimit{std::move(name), soft, hard});
+        spec_.ulimits.push_back(Ulimit{std::move(name), soft, hard});
         return *this;
     }
     GenericImage&& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) && {
-        ulimits_.push_back(Ulimit{std::move(name), soft, hard});
+        spec_.ulimits.push_back(Ulimit{std::move(name), soft, hard});
         return std::move(*this);
     }
 
     /// Add a Linux capability to grant (`HostConfig.CapAdd`), e.g. "NET_ADMIN".
     GenericImage& with_cap_add(std::string cap) & {
-        cap_add_.push_back(std::move(cap));
+        spec_.cap_add.push_back(std::move(cap));
         return *this;
     }
     GenericImage&& with_cap_add(std::string cap) && {
-        cap_add_.push_back(std::move(cap));
+        spec_.cap_add.push_back(std::move(cap));
         return std::move(*this);
     }
 
     /// Add a Linux capability to drop (`HostConfig.CapDrop`).
     GenericImage& with_cap_drop(std::string cap) & {
-        cap_drop_.push_back(std::move(cap));
+        spec_.cap_drop.push_back(std::move(cap));
         return *this;
     }
     GenericImage&& with_cap_drop(std::string cap) && {
-        cap_drop_.push_back(std::move(cap));
+        spec_.cap_drop.push_back(std::move(cap));
         return std::move(*this);
     }
 
     /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
     GenericImage& with_extra_host(std::string host, std::string ip) & {
-        extra_hosts_.push_back(host + ":" + ip);
+        spec_.extra_hosts.push_back(host + ":" + ip);
         return *this;
     }
     GenericImage&& with_extra_host(std::string host, std::string ip) && {
-        extra_hosts_.push_back(host + ":" + ip);
+        spec_.extra_hosts.push_back(host + ":" + ip);
         return std::move(*this);
     }
 
@@ -301,11 +311,11 @@ public:
     /// This is the escape hatch for any field not exposed as a typed setter: nest
     /// HostConfig fields under `"HostConfig"`. `json_object` must be a JSON object.
     GenericImage& with_create_body_patch(std::string json_object) & {
-        create_body_patch_ = std::move(json_object);
+        spec_.create_body_patch = std::move(json_object);
         return *this;
     }
     GenericImage&& with_create_body_patch(std::string json_object) && {
-        create_body_patch_ = std::move(json_object);
+        spec_.create_body_patch = std::move(json_object);
         return std::move(*this);
     }
 
@@ -425,34 +435,36 @@ public:
     const std::string& tag() const noexcept { return tag_; }
     const std::vector<ContainerPort>& exposed_ports() const noexcept { return exposed_ports_; }
     const std::vector<std::pair<std::string, std::string>>& env() const noexcept { return env_; }
-    const std::vector<std::string>& cmd() const noexcept { return cmd_; }
-    const std::vector<std::string>& entrypoint() const noexcept { return entrypoint_; }
-    const std::optional<std::string>& working_dir() const noexcept { return working_dir_; }
-    const std::optional<std::string>& user() const noexcept { return user_; }
-    bool privileged() const noexcept { return privileged_; }
-    bool tty() const noexcept { return tty_; }
-    const std::vector<Mount>& mounts() const noexcept { return mounts_; }
+    const std::vector<std::string>& cmd() const noexcept { return spec_.cmd; }
+    const std::vector<std::string>& entrypoint() const noexcept { return spec_.entrypoint; }
+    const std::optional<std::string>& working_dir() const noexcept { return spec_.working_dir; }
+    const std::optional<std::string>& user() const noexcept { return spec_.user; }
+    bool privileged() const noexcept { return spec_.privileged; }
+    bool tty() const noexcept { return spec_.tty; }
+    const std::vector<Mount>& mounts() const noexcept { return spec_.mounts; }
     const std::vector<CopyToContainer>& copy_to_sources() const noexcept {
         return copy_to_sources_;
     }
     const std::vector<std::pair<std::string, std::string>>& labels() const noexcept {
-        return labels_;
+        return spec_.labels;
     }
     const std::vector<WaitFor>& waits() const noexcept { return waits_; }
     std::chrono::milliseconds startup_timeout() const noexcept { return startup_timeout_; }
-    const std::optional<Healthcheck>& healthcheck() const noexcept { return healthcheck_; }
-    const std::optional<std::string>& network() const noexcept { return network_; }
-    const std::vector<std::string>& network_aliases() const noexcept { return network_aliases_; }
-    const std::optional<std::string>& container_name() const noexcept { return container_name_; }
-    const std::optional<std::string>& platform() const noexcept { return platform_; }
+    const std::optional<Healthcheck>& healthcheck() const noexcept { return spec_.healthcheck; }
+    const std::optional<std::string>& network() const noexcept { return spec_.network; }
+    const std::vector<std::string>& network_aliases() const noexcept {
+        return spec_.network_aliases;
+    }
+    const std::optional<std::string>& container_name() const noexcept { return spec_.name; }
+    const std::optional<std::string>& platform() const noexcept { return spec_.platform; }
     const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
-    const std::optional<std::int64_t>& memory_limit() const noexcept { return memory_bytes_; }
-    const std::optional<std::int64_t>& shm_size() const noexcept { return shm_size_bytes_; }
-    const std::vector<Ulimit>& ulimits() const noexcept { return ulimits_; }
-    const std::vector<std::string>& cap_add() const noexcept { return cap_add_; }
-    const std::vector<std::string>& cap_drop() const noexcept { return cap_drop_; }
-    const std::vector<std::string>& extra_hosts() const noexcept { return extra_hosts_; }
-    const std::string& create_body_patch() const noexcept { return create_body_patch_; }
+    const std::optional<std::int64_t>& memory_limit() const noexcept { return spec_.memory_bytes; }
+    const std::optional<std::int64_t>& shm_size() const noexcept { return spec_.shm_size_bytes; }
+    const std::vector<Ulimit>& ulimits() const noexcept { return spec_.ulimits; }
+    const std::vector<std::string>& cap_add() const noexcept { return spec_.cap_add; }
+    const std::vector<std::string>& cap_drop() const noexcept { return spec_.cap_drop; }
+    const std::vector<std::string>& extra_hosts() const noexcept { return spec_.extra_hosts; }
+    const std::string& create_body_patch() const noexcept { return spec_.create_body_patch; }
     ImagePullPolicy image_pull_policy() const noexcept { return pull_policy_; }
     bool reuse() const noexcept { return reuse_; }
     const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
@@ -470,34 +482,27 @@ public:
     Container start() const;
 
 private:
+    /// Assemble the create spec for this image: a copy of the embedded `spec_`
+    /// (which already holds every verbatim create field) with the fields that
+    /// need translation filled in — the resolved/substituted image reference,
+    /// env joined to "KEY=VALUE", and exposed ports rendered to "6379/tcp" with
+    /// publish-all turned on. Session/reuse labels are layered on by `start()`.
+    CreateContainerSpec build_spec() const;
+
     std::string image_;
     std::string tag_;
-    std::vector<ContainerPort> exposed_ports_;
-    std::vector<std::pair<std::string, std::string>> env_;
-    std::vector<std::string> cmd_;
-    std::vector<std::string> entrypoint_;
-    std::optional<std::string> working_dir_;
-    std::optional<std::string> user_;
-    bool privileged_ = false;
-    bool tty_ = false;
-    std::vector<Mount> mounts_;
+    std::vector<ContainerPort> exposed_ports_; ///< domain ports (declared order); rendered at start()
+    std::vector<std::pair<std::string, std::string>> env_; ///< domain env; joined to "K=V" at start()
+
+    /// Every verbatim create field (cmd, entrypoint, mounts, labels, host-config
+    /// knobs, network, name, platform, …). Setters write here, getters read here,
+    /// and start() copies it as the base of the create spec.
+    CreateContainerSpec spec_;
+
     std::vector<CopyToContainer> copy_to_sources_;
-    std::vector<std::pair<std::string, std::string>> labels_;
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
-    std::optional<Healthcheck> healthcheck_;
-    std::optional<std::string> network_;
-    std::vector<std::string> network_aliases_;
-    std::optional<std::string> container_name_;
-    std::optional<std::string> platform_;
     std::optional<RegistryAuth> registry_auth_;
-    std::optional<std::int64_t> memory_bytes_;
-    std::optional<std::int64_t> shm_size_bytes_;
-    std::vector<Ulimit> ulimits_;
-    std::vector<std::string> cap_add_;
-    std::vector<std::string> cap_drop_;
-    std::vector<std::string> extra_hosts_;
-    std::string create_body_patch_;
     ImagePullPolicy pull_policy_ = ImagePullPolicy::Default;
     std::function<std::string(const std::string&)> substitutor_;
     bool reuse_ = false;

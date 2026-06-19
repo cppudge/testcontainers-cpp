@@ -19,35 +19,16 @@ GenericImage GenericImage::from_reference(const std::string& reference) {
     return GenericImage(image, tag);
 }
 
-Container GenericImage::start() const {
-    // Make sure the crash-safety reaper is up before we create anything it should
-    // reap (no-op if Ryuk is disabled).
-    detail::Reaper::instance().ensure_started();
+CreateContainerSpec GenericImage::build_spec() const {
+    // Start from the embedded spec — it already carries every verbatim create
+    // field (cmd, mounts, labels, host-config knobs, network, name, platform, …).
+    CreateContainerSpec spec = spec_;
 
-    DockerClient client = DockerClient::from_environment();
-
-    CreateContainerSpec spec;
     // Resolve the effective image reference: a custom substitutor overrides the
     // default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX).
     const std::string raw_ref = image_ + ":" + tag_;
-    const std::string effective =
-        substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
-    spec.image = effective;
-    spec.cmd = cmd_;
-    spec.entrypoint = entrypoint_;
-    spec.working_dir = working_dir_;
-    spec.user = user_;
-    spec.privileged = privileged_;
-    spec.tty = tty_;
-    spec.mounts = mounts_;
-    spec.memory_bytes = memory_bytes_;
-    spec.shm_size_bytes = shm_size_bytes_;
-    spec.ulimits = ulimits_;
-    spec.cap_add = cap_add_;
-    spec.cap_drop = cap_drop_;
-    spec.extra_hosts = extra_hosts_;
-    spec.create_body_patch = create_body_patch_;
-    spec.labels = labels_;
+    spec.image = substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
+
     for (const auto& [key, value] : env_) {
         spec.env.push_back(key + "=" + value);
     }
@@ -56,16 +37,24 @@ Container GenericImage::start() const {
     }
     // Let Docker assign host ports for everything we expose.
     spec.publish_all_ports = !exposed_ports_.empty();
-    spec.healthcheck = healthcheck_;
-    spec.network = network_;
-    spec.network_aliases = network_aliases_;
-    spec.name = container_name_;
-    spec.platform = platform_;
+
+    return spec;
+}
+
+Container GenericImage::start() const {
+    // Make sure the crash-safety reaper is up before we create anything it should
+    // reap (no-op if Ryuk is disabled).
+    detail::Reaper::instance().ensure_started();
+
+    DockerClient client = DockerClient::from_environment();
+
+    // Assemble the create spec (verbatim fields + the translated image/env/ports).
+    CreateContainerSpec spec = build_spec();
 
     // ImagePullPolicy::Always pulls before create even when the image is present
     // locally; Default relies on create's lazy pull-on-404 path.
     if (pull_policy_ == ImagePullPolicy::Always) {
-        client.pull_image(effective, registry_auth_);
+        client.pull_image(spec.image, registry_auth_);
     }
 
     // The shared create→copy→start→wait tail, returning a handle. `remove_on_drop`
@@ -103,7 +92,7 @@ Container GenericImage::start() const {
 
             client.start_container(id);
 
-            detail::wait_until_ready(client, id, waits_, startup_timeout_, tty_);
+            detail::wait_until_ready(client, id, waits_, startup_timeout_, spec.tty);
 
             // started hooks: after wait-until-ready, before constructing the handle.
             for (const LifecycleHook& hook : started_hooks_) {
@@ -124,7 +113,7 @@ Container GenericImage::start() const {
         // The handle gets its own client copy so the captured `client` stays
         // usable across startup-attempt retries (DockerClient is a stateless host
         // config — opening a fresh connection per call).
-        Container c(client, id, remove_on_drop, tty_);
+        Container c(client, id, remove_on_drop, spec.tty);
         c.set_stopping_hooks(stopping_hooks_);
         c.set_exposed_ports(exposed_ports_);
         return c;
@@ -175,8 +164,8 @@ Container GenericImage::start() const {
                 // Adopt it: wait for readiness, return a NON-removing handle. This
                 // path is NOT retried — it adopts an already-running match rather
                 // than creating anything.
-                detail::wait_until_ready(client, m.id, waits_, startup_timeout_, tty_);
-                Container c(std::move(client), m.id, /*remove_on_drop*/ false, tty_);
+                detail::wait_until_ready(client, m.id, waits_, startup_timeout_, spec.tty);
+                Container c(std::move(client), m.id, /*remove_on_drop*/ false, spec.tty);
                 c.set_stopping_hooks(stopping_hooks_);
                 c.set_exposed_ports(exposed_ports_);
                 return c;
