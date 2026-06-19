@@ -95,10 +95,12 @@ std::string absolute_path(const std::string& path) {
 } // namespace
 
 DockerComposeContainer::DockerComposeContainer(std::vector<std::string> files)
-    : project_("tc" + random_hex(8)), compose_image_(kComposeImage) {
-    compose_files_.reserve(files.size());
-    for (std::string& f : files) {
-        compose_files_.push_back(absolute_path(f));
+    : compose_files_(std::move(files)), project_("tc" + random_hex(8)),
+      compose_image_(kComposeImage) {
+    // compose `-f` wants absolute paths; absolutize in place (reusing the moved
+    // vector's buffer) rather than building a second vector element by element.
+    for (std::string& f : compose_files_) {
+        f = absolute_path(f);
     }
 }
 
