@@ -156,6 +156,7 @@ if(BUILD_TESTING)
         tests/integration/RedisMvpTest.cpp
         tests/integration/WaitStrategiesTest.cpp
         tests/integration/ExecTest.cpp
+        tests/integration/TtyTest.cpp
         tests/integration/CopyTest.cpp
         tests/integration/BuildImageTest.cpp
         tests/integration/NetworkTest.cpp

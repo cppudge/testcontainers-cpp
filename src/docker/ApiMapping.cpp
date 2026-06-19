@@ -27,6 +27,9 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.user) {
         body["User"] = *spec.user;
     }
+    if (spec.tty) {
+        body["Tty"] = true;
+    }
     if (!spec.labels.empty()) {
         nlohmann::json labels = nlohmann::json::object();
         for (const auto& [key, value] : spec.labels) {
@@ -239,6 +242,10 @@ ContainerInspect parse_inspect(const std::string& body) {
     ContainerInspect info;
     info.id = json.value("Id", std::string{});
     info.name = json.value("Name", std::string{});
+
+    if (const auto config = json.find("Config"); config != json.end() && config->is_object()) {
+        info.tty = config->value("Tty", false);
+    }
 
     if (const auto state = json.find("State"); state != json.end() && state->is_object()) {
         info.status = state->value("Status", std::string{});

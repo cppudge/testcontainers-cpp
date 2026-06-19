@@ -32,10 +32,18 @@ std::uint16_t Container::get_host_port(ContainerPort port) const {
     return it->second.front().host_port;
 }
 
-ContainerLogs Container::logs() const { return client_.logs(id_); }
+ContainerLogs Container::logs() const {
+    LogOptions opts;
+    opts.tty = tty_; // a TTY container has a raw/unframed log stream (skip demux)
+    return client_.logs(id_, opts);
+}
 
 void Container::follow_logs(const LogConsumer& consumer, const LogOptions& opts) const {
-    client_.follow_logs(id_, opts, consumer);
+    LogOptions effective = opts;
+    // Honor an explicit caller opt-in, and apply the remembered TTY flag so a
+    // TTY container's raw stream is never demuxed.
+    effective.tty = opts.tty || tty_;
+    client_.follow_logs(id_, effective, consumer);
 }
 
 ExecResult Container::exec(const std::vector<std::string>& cmd) const {

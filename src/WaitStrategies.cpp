@@ -43,7 +43,7 @@ std::size_t count_occurrences(const std::string& haystack, const std::string& ne
 /// Poll the container's logs every ~200ms until `text` has appeared `times`
 /// times in the selected stream(s), or the deadline passes (then throw).
 void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMessage& cond,
-                  Clock::time_point deadline) {
+                  Clock::time_point deadline, bool tty) {
     using Source = wait::LogMessage::Source;
 
     LogOptions opts;
@@ -51,6 +51,9 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
     opts.include_stderr = cond.source != Source::Stdout;
     opts.follow = false;
     opts.tail = "all";
+    // A TTY container's log stream is raw/unframed: select the raw decode path so
+    // the polled snapshot is searchable instead of garbled multiplex bytes.
+    opts.tty = tty;
 
     const int needed = cond.times < 1 ? 1 : cond.times;
 
@@ -288,7 +291,8 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
 } // namespace
 
 void wait_until_ready(DockerClient& client, const std::string& id,
-                      const std::vector<WaitFor>& waits, std::chrono::milliseconds timeout) {
+                      const std::vector<WaitFor>& waits, std::chrono::milliseconds timeout,
+                      bool tty) {
     const Clock::time_point deadline = Clock::now() + timeout;
 
     for (const WaitFor& w : waits) {
@@ -298,7 +302,7 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                 if constexpr (std::is_same_v<T, wait::None>) {
                     // nothing to do
                 } else if constexpr (std::is_same_v<T, wait::LogMessage>) {
-                    wait_for_log(client, id, cond, deadline);
+                    wait_for_log(client, id, cond, deadline, tty);
                 } else if constexpr (std::is_same_v<T, wait::Duration>) {
                     // Clamp the sleep to the shared deadline.
                     const Clock::time_point wake = Clock::now() + cond.value;

@@ -316,8 +316,15 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
                           " " + res.body);
     }
 
-    const docker::DemuxedLogs demuxed = docker::demux_all(res.body);
     ContainerLogs out;
+    if (opts.tty) {
+        // A TTY container's log stream is raw/unframed (no 8-byte multiplex
+        // header): route it all to stdout_data verbatim, leaving stderr empty.
+        out.stdout_data = std::move(res.body);
+        return out;
+    }
+
+    const docker::DemuxedLogs demuxed = docker::demux_all(res.body);
     out.stdout_data = std::move(demuxed.stdout_data);
     out.stderr_data = std::move(demuxed.stderr_data);
     return out;
@@ -384,6 +391,14 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
 
         const std::size_t n = buf.size() - parser.get().body().size;
         if (n == 0) {
+            continue;
+        }
+        if (opts.tty) {
+            // Raw, unframed (the container was created with Tty=true): deliver the
+            // bytes verbatim as a single stdout stream, no demux.
+            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
+                stop = true;
+            }
             continue;
         }
         for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {

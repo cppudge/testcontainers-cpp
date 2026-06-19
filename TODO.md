@@ -8,9 +8,15 @@ review are recorded here so they aren't lost between milestones.
   call: O(n) per chunk → O(n²) for many small chunks. Fine for `demux_all` (single
   feed); switch to a consumed-offset / ring buffer when the follow/streaming path
   lands. (`src/docker/LogDemux.cpp`)
-- **TTY containers not handled** — with `Tty=true` Docker returns a raw, unframed
-  log stream; `demux_all` would garble it. We never enable TTY today, but add a raw
-  path when TTY support is introduced. (`src/docker/LogDemux.cpp`)
+- **TTY containers supported (raw log path)** — `GenericImage::with_tty()` sets top-level
+  `Tty=true`; `LogOptions.tty` selects a raw/unframed decode path so `logs()` / `follow_logs()` skip
+  `demux_all` (a TTY stream has no 8-byte frame header and no separate stderr channel). The `Container`
+  handle remembers its TTY-ness (`has_tty()`) and the log-wait honors it (`wait_until_ready(..., tty)`),
+  so `wait_for::log` works on a TTY container. `ContainerInspect.tty` surfaces `Config.Tty`. Known
+  limits: (a) a pseudo-TTY emits `\r\n` line endings (cooked mode) — match substrings, not exact bytes;
+  (b) no interactive attach loop (that's the exec stdin/hijack path); (c) the low-level
+  `DockerClient::logs`/`follow_logs` need `opts.tty` set by the caller — only the high-level `Container`
+  sets it automatically. (`src/docker/DockerClient.cpp`, `include/testcontainers/docker/Logs.hpp`)
 - **follow logs: blocking + cooperative-stop only** — `DockerClient::follow_logs` /
   `Container::follow_logs` stream incrementally (`read_some` + `LogDemuxer`) and stop when
   the consumer returns false, but it is BLOCKING: run it on your own `std::thread` for

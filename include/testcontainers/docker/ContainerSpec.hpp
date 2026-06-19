@@ -30,6 +30,7 @@ struct CreateContainerSpec {
     std::vector<std::string> network_aliases;                ///< DNS aliases on `network` (NetworkingConfig)
     std::optional<std::string> working_dir;                  ///< WorkingDir
     std::optional<std::string> user;                         ///< User
+    bool tty = false;                                        ///< Tty (allocate a pseudo-TTY; raw/unframed log stream)
     bool publish_all_ports = false;                          ///< HostConfig.PublishAllPorts
     bool privileged = false;                                 ///< HostConfig.Privileged
     bool auto_remove = false;                                ///< HostConfig.AutoRemove
@@ -78,6 +79,7 @@ struct ContainerInspect {
     std::string name;
     std::string status;                       ///< State.Status ("running", "exited", …)
     bool running = false;                      ///< State.Running
+    bool tty = false;                          ///< Config.Tty (container created with a pseudo-TTY)
     std::optional<std::int64_t> exit_code;     ///< State.ExitCode (when not running)
     /// State.Health.Status ("starting"/"healthy"/"unhealthy"); absent when the
     /// container has no healthcheck configured.

@@ -20,6 +20,7 @@
 //   ApiMapping.BuildCreateBodyNoHealthcheckByDefault - a spec without a healthcheck emits no Healthcheck field.
 //   ApiMapping.BuildCreateBodyProcessConfig - entrypoint, working dir, and user map to Entrypoint, WorkingDir, and User.
 //   ApiMapping.BuildCreateBodyProcessConfigOmittedByDefault - entrypoint/working dir/user are absent when unset.
+//   ApiMapping.BuildCreateBodyTty - the tty flag maps to a top-level "Tty":true (sibling of Cmd/User, not under HostConfig) and is absent by default.
 //   ApiMapping.BuildCreateBodyPrivileged - the privileged flag maps to HostConfig.Privileged.
 //   ApiMapping.BuildCreateBodyAutoRemove - the auto_remove flag maps to HostConfig.AutoRemove and is absent by default.
 //   ApiMapping.BuildCreateBodyBindMount - a read-only bind mount maps to a HostConfig.Mounts entry with Type/Source/Target/ReadOnly and no TmpfsOptions.
@@ -45,6 +46,7 @@
 //   ApiMapping.BuildExecCreateBodyStdinAttaches - a set stdin_data adds AttachStdin=true (and is absent otherwise).
 //   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
+//   ApiMapping.ParseInspectTty - inspect JSON with Config.Tty=true parses into ContainerInspect.tty (false when absent).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
 //   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
@@ -167,6 +169,24 @@ TEST(ApiMapping, BuildCreateBodyProcessConfigOmittedByDefault) {
     EXPECT_FALSE(body.contains("Entrypoint"));
     EXPECT_FALSE(body.contains("WorkingDir"));
     EXPECT_FALSE(body.contains("User"));
+}
+
+TEST(ApiMapping, BuildCreateBodyTty) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.tty = true;
+
+    const auto body = build_create_body(spec);
+    // Tty is a top-level container Config field (sibling of Cmd/User), NOT under
+    // HostConfig.
+    ASSERT_TRUE(body.contains("Tty"));
+    EXPECT_TRUE(body["Tty"].get<bool>());
+    EXPECT_FALSE(body.contains("HostConfig")); // tty alone adds no HostConfig
+
+    // Absent by default (matches how Privileged / other bools behave).
+    CreateContainerSpec plain;
+    plain.image = "alpine:3.20";
+    EXPECT_FALSE(build_create_body(plain).contains("Tty"));
 }
 
 TEST(ApiMapping, BuildCreateBodyPrivileged) {
@@ -496,6 +516,22 @@ TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {
     EXPECT_EQ(info.ports.at("6379/tcp")[1].host_port, 32769);
     EXPECT_TRUE(info.ports.at("80/tcp").empty()); // null bindings -> empty
     EXPECT_FALSE(info.health_status.has_value());  // no Health section here
+}
+
+TEST(ApiMapping, ParseInspectTty) {
+    const std::string with_tty = R"({
+        "Id": "abc123",
+        "Config": {"Tty": true},
+        "State": {"Status": "running", "Running": true}
+    })";
+    EXPECT_TRUE(parse_inspect(with_tty).tty);
+
+    // Absent Config / Tty defaults to false.
+    const std::string without = R"({
+        "Id": "abc123",
+        "State": {"Status": "running", "Running": true}
+    })";
+    EXPECT_FALSE(parse_inspect(without).tty);
 }
 
 TEST(ApiMapping, ParseInspectHealthStatus) {

@@ -26,16 +26,19 @@ class Container {
 public:
     /// Adopt an already-created, already-started container. Used by
     /// `GenericImage::start()`. With `remove_on_drop == false` the handle is
-    /// persistent: it never removes the container (reusable containers).
-    Container(DockerClient client, std::string id, bool remove_on_drop = true)
-        : client_(std::move(client)), id_(std::move(id)), remove_on_drop_(remove_on_drop) {}
+    /// persistent: it never removes the container (reusable containers). `tty`
+    /// records whether the container was created with Tty=true, so `logs()` /
+    /// `follow_logs()` read its raw/unframed log stream instead of demuxing.
+    Container(DockerClient client, std::string id, bool remove_on_drop = true, bool tty = false)
+        : client_(std::move(client)), id_(std::move(id)), remove_on_drop_(remove_on_drop),
+          tty_(tty) {}
 
     Container(const Container&) = delete;
     Container& operator=(const Container&) = delete;
 
     Container(Container&& other) noexcept
         : client_(std::move(other.client_)), id_(std::move(other.id_)),
-          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_) {
+          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_), tty_(other.tty_) {
         other.dropped_ = true; // the moved-from handle owns nothing
     }
 
@@ -46,6 +49,7 @@ public:
             id_ = std::move(other.id_);
             dropped_ = other.dropped_;
             remove_on_drop_ = other.remove_on_drop_;
+            tty_ = other.tty_;
             other.dropped_ = true;
         }
         return *this;
@@ -61,6 +65,10 @@ public:
     /// True when this is a persistent (reusable) handle that will NOT remove the
     /// container on destruction.
     bool is_persistent() const noexcept { return !remove_on_drop_; }
+
+    /// True when the container was created with a pseudo-TTY (Tty=true), in which
+    /// case its log stream is raw/unframed (no separate stderr channel).
+    bool has_tty() const noexcept { return tty_; }
 
     /// The address a client on this host should connect to ("localhost" for a
     /// unix socket / named pipe, otherwise the daemon hostname).
@@ -132,6 +140,7 @@ private:
     std::string id_;
     bool dropped_ = false;
     bool remove_on_drop_ = true; ///< false for persistent (reusable) handles
+    bool tty_ = false;           ///< container was created with Tty=true (raw log stream)
 };
 
 } // namespace testcontainers

@@ -106,6 +106,19 @@ public:
         return std::move(*this);
     }
 
+    /// Allocate a pseudo-TTY for the container (`Tty=true`). The log stream is
+    /// then raw/unframed (no multiplex header) with no separate stderr channel —
+    /// `Container::logs()` / `follow_logs()` read it without demuxing. Note a TTY
+    /// also rewrites `\n` to `\r\n`.
+    GenericImage& with_tty(bool tty = true) & {
+        tty_ = tty;
+        return *this;
+    }
+    GenericImage&& with_tty(bool tty = true) && {
+        tty_ = tty;
+        return std::move(*this);
+    }
+
     GenericImage& with_mount(Mount mount) & {
         mounts_.push_back(std::move(mount));
         return *this;
@@ -350,6 +363,7 @@ public:
     const std::optional<std::string>& working_dir() const noexcept { return working_dir_; }
     const std::optional<std::string>& user() const noexcept { return user_; }
     bool privileged() const noexcept { return privileged_; }
+    bool tty() const noexcept { return tty_; }
     const std::vector<Mount>& mounts() const noexcept { return mounts_; }
     const std::vector<CopyToContainer>& copy_to_sources() const noexcept {
         return copy_to_sources_;
@@ -393,6 +407,7 @@ private:
     std::optional<std::string> working_dir_;
     std::optional<std::string> user_;
     bool privileged_ = false;
+    bool tty_ = false;
     std::vector<Mount> mounts_;
     std::vector<CopyToContainer> copy_to_sources_;
     std::vector<std::pair<std::string, std::string>> labels_;

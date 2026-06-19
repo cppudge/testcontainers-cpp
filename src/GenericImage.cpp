@@ -38,6 +38,7 @@ Container GenericImage::start() const {
     spec.working_dir = working_dir_;
     spec.user = user_;
     spec.privileged = privileged_;
+    spec.tty = tty_;
     spec.mounts = mounts_;
     spec.memory_bytes = memory_bytes_;
     spec.shm_size_bytes = shm_size_bytes_;
@@ -90,7 +91,7 @@ Container GenericImage::start() const {
         client.start_container(id);
 
         try {
-            detail::wait_until_ready(client, id, waits_, startup_timeout_);
+            detail::wait_until_ready(client, id, waits_, startup_timeout_, tty_);
         } catch (...) {
             // A container that started but never became ready must not leak.
             try {
@@ -100,7 +101,7 @@ Container GenericImage::start() const {
             throw;
         }
 
-        return Container(std::move(client), id, remove_on_drop);
+        return Container(std::move(client), id, remove_on_drop, tty_);
     };
 
     // Reuse is a safety-gated opt-in: it only activates when enabled globally
@@ -128,8 +129,8 @@ Container GenericImage::start() const {
         for (const ContainerSummary& m : matches) {
             if (m.state == "running") {
                 // Adopt it: wait for readiness, return a NON-removing handle.
-                detail::wait_until_ready(client, m.id, waits_, startup_timeout_);
-                return Container(std::move(client), m.id, /*remove_on_drop*/ false);
+                detail::wait_until_ready(client, m.id, waits_, startup_timeout_, tty_);
+                return Container(std::move(client), m.id, /*remove_on_drop*/ false, tty_);
             }
         }
         // No match: create a NEW reuse container (persistent, not reaped).

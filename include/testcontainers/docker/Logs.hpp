@@ -17,6 +17,9 @@ struct LogOptions {
     bool follow = false;        ///< stream until the container exits (vs. snapshot)
     std::string tail = "all";   ///< number of trailing lines, or "all"
     bool timestamps = false;    ///< prefix each line with an RFC3339 timestamp
+    /// The container was created with Tty=true → its log stream is raw/unframed;
+    /// skip demux. Not a query param: it only selects the decode path.
+    bool tty = false;
 };
 
 /// Combined stdout / stderr text retrieved from a container.
