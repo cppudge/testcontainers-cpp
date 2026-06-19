@@ -59,9 +59,21 @@ review are recorded here so they aren't lost between milestones.
   non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release` errors for OpenSSL/zlib because Conan
   installs Release-only; the Release build and tests still succeed. The default `ninja` preset is
   unaffected. (Install both configs, or filter the message, if it becomes annoying.)
-- **exec is buffered & unidirectional** — `Container::exec` reads the whole multiplexed output into
-  memory and has no stdin/TTY (fine for run-command-capture-output); a streaming/interactive exec
-  needs the hijacked-connection path.
+- **exec: options + streaming + stdin (half-close-gated)** — `exec` now takes `ExecOptions`
+  (env / working_dir / user / privileged / tty / stdin_data) and has a streaming overload
+  (`exec(cmd, opts, LogConsumer)`, incremental `read_some` + `LogDemuxer`, consumer returns false to
+  stop; the result's stdout/stderr are empty — output went to the consumer). `tty=true` reads the raw
+  unframed stream into `stdout_data` (stderr empty). Known limits / one-line notes:
+  (a) **stdin only works on a half-closable transport** — feeding `stdin_data` writes the bytes onto
+  the hijacked connection then calls `ITransport::shutdown_send()` so the in-container reader sees EOF;
+  TCP and unix sockets implement it, but the Windows **named pipe** and **TLS** transports cannot
+  half-close (their `shutdown_send()` is a documented no-op), so a reader like `cat` blocks forever
+  there — `Exec.FeedsStdin` SKIPS on those transports (so it's unproven on this named-pipe host,
+  though the create-body + write path is unit-tested);
+  (b) no exec **TTY resize** (`POST /exec/{id}/resize`) / window size;
+  (c) still one fresh connection per exec, and the streaming overload has the same blocking +
+  cooperative-stop-only nature as `follow_logs` (no socket-level cancellation).
+  (`src/docker/DockerClient.cpp`, `include/testcontainers/ExecOptions.hpp`, `src/docker/Transport.cpp`)
 - **richer networks: builder + aliases + connect-existing, with limits** — `Network::builder()`
   exposes driver / internal / attachable / EnableIPv6 / IPAM subnet+gateway / driver options /
   labels (`build_network_create_body` in `src/docker/ApiMapping.cpp`); `GenericImage::with_network_alias`

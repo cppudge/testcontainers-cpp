@@ -42,6 +42,15 @@ ExecResult Container::exec(const std::vector<std::string>& cmd) const {
     return client_.exec(id_, cmd);
 }
 
+ExecResult Container::exec(const std::vector<std::string>& cmd, const ExecOptions& opts) const {
+    return client_.exec(id_, cmd, opts);
+}
+
+ExecResult Container::exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
+                           const LogConsumer& consumer) const {
+    return client_.exec(id_, cmd, opts, consumer);
+}
+
 void Container::copy_to(const CopyToContainer& source) const {
     client_.copy_to_container(id_, source);
 }

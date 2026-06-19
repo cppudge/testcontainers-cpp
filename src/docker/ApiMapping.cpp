@@ -310,11 +310,30 @@ std::vector<ContainerSummary> parse_container_list(const std::string& body) {
     return out;
 }
 
-nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd) {
+nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
+                                      const ExecOptions& opts) {
     nlohmann::json body;
     body["Cmd"] = cmd;
     body["AttachStdout"] = true;
     body["AttachStderr"] = true;
+    // Only attach stdin when there is input to feed; otherwise a reader inside the
+    // container could block waiting on a stream that never closes.
+    if (opts.stdin_data) {
+        body["AttachStdin"] = true;
+    }
+    body["Tty"] = opts.tty;
+    if (!opts.env.empty()) {
+        body["Env"] = opts.env;
+    }
+    if (opts.working_dir) {
+        body["WorkingDir"] = *opts.working_dir;
+    }
+    if (opts.user) {
+        body["User"] = *opts.user;
+    }
+    if (opts.privileged) {
+        body["Privileged"] = true;
+    }
     return body;
 }
 

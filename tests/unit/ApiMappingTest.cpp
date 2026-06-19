@@ -8,6 +8,7 @@
 
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/Ulimit.hpp"
@@ -39,6 +40,9 @@
 //   ApiMapping.BuildCreateQueryNameAndPlatform - a spec with both name and platform joins them with '&'.
 //   ApiMapping.ParseServerOs - GET /version JSON parses the Os field ("windows"/"linux"), defaulting to "" when absent.
 //   ApiMapping.BuildExecCreateBody - the exec-create body carries Cmd and AttachStdout/AttachStderr set true.
+//   ApiMapping.BuildExecCreateBodyDefaultsOmitOptions - with default ExecOptions the body sets Tty=false and omits AttachStdin/Env/WorkingDir/User/Privileged.
+//   ApiMapping.BuildExecCreateBodyWithOptions - env/working_dir/user/privileged/tty map to Env/WorkingDir/User/Privileged/Tty.
+//   ApiMapping.BuildExecCreateBodyStdinAttaches - a set stdin_data adds AttachStdin=true (and is absent otherwise).
 //   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
@@ -416,6 +420,48 @@ TEST(ApiMapping, BuildExecCreateBody) {
     EXPECT_EQ(body["Cmd"], nlohmann::json({"echo", "hello-exec"}));
     EXPECT_TRUE(body["AttachStdout"].get<bool>());
     EXPECT_TRUE(body["AttachStderr"].get<bool>());
+}
+
+TEST(ApiMapping, BuildExecCreateBodyDefaultsOmitOptions) {
+    // A default-constructed ExecOptions sets Tty=false and omits every optional
+    // field (no AttachStdin / Env / WorkingDir / User / Privileged).
+    const auto body = build_exec_create_body({"echo", "hi"}, ExecOptions{});
+    EXPECT_FALSE(body["Tty"].get<bool>());
+    EXPECT_FALSE(body.contains("AttachStdin"));
+    EXPECT_FALSE(body.contains("Env"));
+    EXPECT_FALSE(body.contains("WorkingDir"));
+    EXPECT_FALSE(body.contains("User"));
+    EXPECT_FALSE(body.contains("Privileged"));
+}
+
+TEST(ApiMapping, BuildExecCreateBodyWithOptions) {
+    ExecOptions opts;
+    opts.env = {"FOO=bar", "BAZ=qux"};
+    opts.working_dir = "/work";
+    opts.user = "1000:1000";
+    opts.privileged = true;
+    opts.tty = true;
+
+    const auto body = build_exec_create_body({"env"}, opts);
+    EXPECT_EQ(body["Env"], nlohmann::json({"FOO=bar", "BAZ=qux"}));
+    EXPECT_EQ(body["WorkingDir"], "/work");
+    EXPECT_EQ(body["User"], "1000:1000");
+    EXPECT_TRUE(body["Privileged"].get<bool>());
+    EXPECT_TRUE(body["Tty"].get<bool>());
+    // stdin not requested -> no AttachStdin.
+    EXPECT_FALSE(body.contains("AttachStdin"));
+}
+
+TEST(ApiMapping, BuildExecCreateBodyStdinAttaches) {
+    ExecOptions opts;
+    opts.stdin_data = "ping\n";
+
+    const auto body = build_exec_create_body({"cat"}, opts);
+    ASSERT_TRUE(body.contains("AttachStdin"));
+    EXPECT_TRUE(body["AttachStdin"].get<bool>());
+
+    // Absent stdin_data emits no AttachStdin field.
+    EXPECT_FALSE(build_exec_create_body({"cat"}, ExecOptions{}).contains("AttachStdin"));
 }
 
 TEST(ApiMapping, ParseExecExitCode) {

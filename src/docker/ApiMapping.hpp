@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 
@@ -39,9 +40,13 @@ ContainerInspect parse_inspect(const std::string& body);
 /// Parse the JSON array from `GET /containers/json` into ContainerSummary list.
 std::vector<ContainerSummary> parse_container_list(const std::string& body);
 
-/// Build the JSON body for `POST /containers/{id}/exec` (the exec-create call).
-/// Always attaches stdout and stderr so the output can be captured.
-nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd);
+/// Build the JSON body for `POST /containers/{id}/exec` (the exec-create call)
+/// from `cmd` and `opts`. Always attaches stdout and stderr so the output can be
+/// captured. Emits AttachStdin (only when `opts.stdin_data` is set), Tty, Env
+/// (omitted when empty), WorkingDir / User (omitted when nullopt), and Privileged
+/// (omitted when false).
+nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
+                                      const ExecOptions& opts = {});
 
 /// Parse the `ExitCode` (integer) from a `GET /exec/{id}/json` response body.
 std::int64_t parse_exec_exit_code(const std::string& body);

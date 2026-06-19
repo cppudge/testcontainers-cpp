@@ -2,17 +2,29 @@
 
 #include <exception>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "testcontainers/Container.hpp"
+#include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
+#include "testcontainers/docker/DockerHost.hpp"
+#include "testcontainers/docker/Logs.hpp"
 
 #include "EngineGuard.hpp"
 
 // Tests in this file (integration; require a Docker daemon):
 //   Exec.CapturesStdoutAndZeroExit - exec'ing `echo` in a running container captures the stdout text and reports exit code 0.
 //   Exec.PropagatesNonZeroExit - exec'ing a command that exits 5 reports exit code 5.
+//   Exec.PassesEnv - ExecOptions.env entries are visible to the command (echo $FOO -> "bar").
+//   Exec.UsesWorkingDir - ExecOptions.working_dir sets the command's cwd (pwd -> "/tmp").
+//   Exec.RunsAsUser - ExecOptions.user runs the command as that uid (id -u -> "0").
+//   Exec.TtyCapturesRawStdout - tty=true returns raw output in stdout_data with stderr_data empty.
+//   Exec.StreamsOutputIncrementally - the streaming overload delivers chunks to the consumer and reports the exit code.
+//   Exec.StreamingStopsWhenConsumerReturnsFalse - returning false from the consumer stops the stream early.
+//   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); skipped on the named-pipe/TLS transport (no half-close, so the reader never sees EOF).
 
 using namespace testcontainers;
 
@@ -42,4 +54,110 @@ TEST_F(Exec, PropagatesNonZeroExit) {
 
     const ExecResult res = c.exec({"sh", "-c", "exit 5"});
     EXPECT_EQ(res.exit_code, 5);
+}
+
+TEST_F(Exec, PassesEnv) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    ExecOptions opts;
+    opts.env = {"FOO=bar"};
+    const ExecResult res = c.exec({"sh", "-c", "echo $FOO"}, opts);
+    EXPECT_NE(res.stdout_data.find("bar"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+    EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, UsesWorkingDir) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    ExecOptions opts;
+    opts.working_dir = "/tmp";
+    const ExecResult res = c.exec({"pwd"}, opts);
+    EXPECT_NE(res.stdout_data.find("/tmp"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+    EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, RunsAsUser) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    ExecOptions opts;
+    opts.user = "0"; // root
+    const ExecResult res = c.exec({"id", "-u"}, opts);
+    EXPECT_NE(res.stdout_data.find("0"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+    EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, TtyCapturesRawStdout) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    ExecOptions opts;
+    opts.tty = true;
+    const ExecResult res = c.exec({"echo", "tty-hello"}, opts);
+    // A TTY stream is raw/unframed: the text lands in stdout_data verbatim and
+    // stderr_data is never populated (there is no separate stderr channel).
+    EXPECT_NE(res.stdout_data.find("tty-hello"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+    EXPECT_TRUE(res.stderr_data.empty());
+    EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, StreamsOutputIncrementally) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    std::string collected;
+    const ExecResult res = c.exec({"echo", "stream-me"}, ExecOptions{},
+                                  [&](LogSource, std::string_view data) {
+                                      collected.append(data);
+                                      return true; // keep receiving
+                                  });
+    EXPECT_NE(collected.find("stream-me"), std::string::npos) << "collected: " << collected;
+    EXPECT_EQ(res.exit_code, 0);
+    // The streaming overload delivers output to the consumer, not the result.
+    EXPECT_TRUE(res.stdout_data.empty());
+    EXPECT_TRUE(res.stderr_data.empty());
+}
+
+TEST_F(Exec, StreamingStopsWhenConsumerReturnsFalse) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // Emit several lines; the consumer returns false after the first chunk, which
+    // stops the stream early (the connection is closed). We should not hang.
+    int chunks = 0;
+    const ExecResult res =
+        c.exec({"sh", "-c", "for i in 1 2 3 4 5; do echo line$i; sleep 0.2; done"},
+               ExecOptions{}, [&](LogSource, std::string_view) {
+                   ++chunks;
+                   return false; // stop immediately
+               });
+    EXPECT_GE(chunks, 1);
+    // Exit code is still read from the exec inspect (it may be 0 or non-zero
+    // depending on how far the command got before we closed the stream); the key
+    // assertion is that returning false stopped streaming without hanging.
+    (void)res;
+}
+
+TEST_F(Exec, FeedsStdin) {
+    // Feeding stdin relies on half-closing the send side so the in-container
+    // reader sees EOF. Only the unix-socket and TCP transports implement a real
+    // half-close; the Windows named pipe and TLS transports cannot (their
+    // shutdown_send() is a documented no-op), so `cat` would block forever there.
+    // Skip on those transports rather than hang.
+    const DockerScheme scheme = DockerClient::from_environment().host().scheme();
+    if (scheme == DockerScheme::NamedPipe || scheme == DockerScheme::Https) {
+        GTEST_SKIP() << "exec-stdin needs a half-closable transport (unix socket / TCP); "
+                        "the named-pipe / TLS transport cannot signal EOF";
+    }
+
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // `cat` echoes stdin to stdout and exits on EOF. The half-close after writing
+    // the input is what lets cat see EOF and terminate.
+    ExecOptions opts;
+    opts.stdin_data = "ping\n";
+    const ExecResult res = c.exec({"cat"}, opts);
+    EXPECT_NE(res.stdout_data.find("ping"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+    EXPECT_EQ(res.exit_code, 0);
 }

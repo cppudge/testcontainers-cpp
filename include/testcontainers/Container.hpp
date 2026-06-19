@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -80,6 +81,18 @@ public:
     /// Run a command inside the running container, capturing its stdout / stderr
     /// and exit code.
     ExecResult exec(const std::vector<std::string>& cmd) const;
+
+    /// Run a command inside the running container with `opts` (env / working dir /
+    /// user / privileged / tty / stdin), capturing its output and exit code. See
+    /// DockerClient::exec for the tty/stdin semantics.
+    ExecResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts) const;
+
+    /// Streaming variant: run `cmd` with `opts`, delivering output to `consumer`
+    /// incrementally and returning an ExecResult with the exit code set (the
+    /// stdout/stderr fields are left empty — the output went to `consumer`). See
+    /// DockerClient::exec.
+    ExecResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
+                    const LogConsumer& consumer) const;
 
     /// Copy a host file or in-memory bytes into this already-running container
     /// (`PUT /containers/{id}/archive`). The target's parent directory must

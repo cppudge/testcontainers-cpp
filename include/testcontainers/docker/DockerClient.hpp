@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "testcontainers/CopyToContainer.hpp"
+#include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
@@ -117,10 +118,36 @@ public:
     void follow_logs(const std::string& id, const LogOptions& opts, const LogConsumer& consumer);
 
     /// Run `cmd` inside the running container and capture its output and exit
-    /// code. Creates the exec (`POST /containers/{id}/exec`), starts it without a
-    /// TTY (`POST /exec/{exec_id}/start`) — demultiplexing the returned stream —
-    /// and reads the exit code (`GET /exec/{exec_id}/json`).
+    /// code, using default options. Equivalent to the `opts` overload with a
+    /// default-constructed `ExecOptions`.
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd);
+
+    /// Run `cmd` inside the running container with `opts` (env / working dir /
+    /// user / privileged / tty / stdin) and capture its output and exit code.
+    /// Creates the exec (`POST /containers/{id}/exec`), starts it
+    /// (`POST /exec/{exec_id}/start`) and reads the exit code
+    /// (`GET /exec/{exec_id}/json`).
+    ///
+    /// With `opts.tty == false` the returned stream is the multiplexed frame
+    /// format and is demuxed into `stdout_data` / `stderr_data`. With
+    /// `opts.tty == true` the stream is raw and unframed: all of it goes to
+    /// `stdout_data` and `stderr_data` is left empty. When `opts.stdin_data` is
+    /// set those bytes are written to the exec's stdin and the send side is then
+    /// half-closed so a reader (e.g. `cat`) sees EOF.
+    ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
+                    const ExecOptions& opts);
+
+    /// Streaming variant of `exec`: starts `cmd` with `opts` and delivers output
+    /// to `consumer` incrementally as the daemon flushes it (blocking until the
+    /// command finishes or `consumer` returns false). With `opts.tty == false` the
+    /// stream is demuxed and each chunk is reported with its `LogSource`; with
+    /// `opts.tty == true` the raw stream is reported as `LogSource::Stdout`.
+    ///
+    /// Returns an `ExecResult` whose `exit_code` is read from the exec inspect;
+    /// `stdout_data` / `stderr_data` are left empty (the output was delivered to
+    /// `consumer`).
+    ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
+                    const ExecOptions& opts, const LogConsumer& consumer);
 
     /// `PUT /containers/{id}/archive?path=/` — copy a host file or in-memory
     /// bytes into the container by extracting a single-entry tar at the root.

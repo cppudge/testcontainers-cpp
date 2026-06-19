@@ -409,41 +409,212 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     transport->close();
 }
 
-ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd) {
+namespace {
+
+/// Create an exec instance (`POST /containers/{id}/exec`) and return its id.
+/// `create_body` is the JSON from build_exec_create_body.
+std::string exec_create(DockerClient& client, const std::string& id,
+                        const std::string& create_body) {
     const std::vector<std::pair<std::string, std::string>> json_headers = {
         {"Content-Type", "application/json"}};
-
-    // 1) Create the exec instance.
-    const std::string create_body = docker::build_exec_create_body(cmd).dump();
-    const Response create_res =
-        request("POST", "/containers/" + id + "/exec", create_body, json_headers);
-    if (create_res.status_code != 201) {
+    const Response res = client.request("POST", "/containers/" + id + "/exec", create_body,
+                                        json_headers);
+    if (res.status_code != 201) {
         throw DockerError("exec create on container " + id + " failed: HTTP " +
-                          std::to_string(create_res.status_code) + " " + create_res.body);
+                          std::to_string(res.status_code) + " " + res.body);
     }
+    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+}
+
+/// Open the exec start stream on an already-connected `stream`: write
+/// `POST /exec/{exec_id}/start` and, when `opts.stdin_data` is set, feed those
+/// bytes then half-close the send side so an in-container reader (e.g. `cat`)
+/// sees EOF. On a write error, closes `transport` and throws DockerError. The
+/// caller then reads the (multiplexed or, with tty, raw) response off `stream`.
+void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
+                const DockerHost& host, const std::string& exec_id, const ExecOptions& opts) {
+    const std::string start_target = "/exec/" + exec_id + "/start";
+    const std::string start_body =
+        std::string(R"({"Detach":false,"Tty":)") + (opts.tty ? "true" : "false") + "}";
+
+    http::request<http::string_body> req{http::verb::post, start_target, /*HTTP*/ 11};
+    req.set(http::field::host, host.http_host());
+    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
+    req.set(http::field::content_type, "application/json");
+    req.keep_alive(false);
+    req.body() = start_body;
+    req.prepare_payload();
+
+    boost::system::error_code ec;
+    http::write(stream, req, ec);
+    if (ec) {
+        transport.close();
+        throw DockerError("exec start " + exec_id + " failed to send request: " + ec.message());
+    }
+
+    // Feed stdin (if any) onto the same hijacked stream, then half-close the send
+    // side so the in-container reader terminates on EOF.
+    if (opts.stdin_data) {
+        const std::string& in = *opts.stdin_data;
+        std::size_t sent = 0;
+        while (sent < in.size() && !ec) {
+            sent += stream.write_some(
+                boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
+        }
+        if (ec) {
+            transport.close();
+            throw DockerError("exec start " + exec_id + " failed to send stdin: " + ec.message());
+        }
+        transport.shutdown_send(); // signal end-of-input (EOF) to the container
+    }
+}
+
+} // namespace
+
+ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd) {
+    return exec(id, cmd, ExecOptions{});
+}
+
+ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
+                              const ExecOptions& opts) {
+    // 1) Create the exec instance (carrying env / workdir / user / privileged /
+    //    tty / attach-stdin from opts).
     const std::string exec_id =
-        nlohmann::json::parse(create_res.body).at("Id").get<std::string>();
+        exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
 
-    // 2) Start the exec; with Tty=false the body is the multiplexed stream.
-    const std::string start_body = R"({"Detach":false,"Tty":false})";
-    const Response start_res =
-        request("POST", "/exec/" + exec_id + "/start", start_body, json_headers);
-    if (start_res.status_code != 200) {
-        throw DockerError("exec start " + exec_id + " failed: HTTP " +
-                          std::to_string(start_res.status_code) + " " + start_res.body);
+    // 2) Start the exec over a raw transport stream so we can (when requested)
+    //    hijack stdin (see exec_start).
+    auto transport = docker::connect(host_);
+    docker::TransportStream stream{*transport};
+    exec_start(*transport, stream, host_, exec_id, opts);
+
+    // 3) Read the whole start response. With Tty=false this is the multiplexed
+    //    frame stream (demux it); with Tty=true it is raw, unframed bytes.
+    boost::system::error_code ec;
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::string_body> parser;
+    parser.body_limit(boost::none);
+    http::read(stream, buffer, parser, ec);
+    if (ec && ec != http::error::end_of_stream) {
+        transport->close();
+        throw DockerError("exec start " + exec_id + " failed to read response: " + ec.message());
     }
-    const docker::DemuxedLogs demuxed = docker::demux_all(start_res.body);
+    if (parser.get().result_int() != 200) {
+        const int status = static_cast<int>(parser.get().result_int());
+        transport->close();
+        throw DockerError("exec start " + exec_id + " failed: HTTP " + std::to_string(status));
+    }
+    std::string body = std::move(parser.get().body());
+    transport->close();
 
-    // 3) Inspect the exec for the exit code.
+    ExecResult out;
+    if (opts.tty) {
+        // Raw, unframed single stream: route it all to stdout_data unchanged.
+        out.stdout_data = std::move(body);
+    } else {
+        const docker::DemuxedLogs demuxed = docker::demux_all(body);
+        out.stdout_data = std::move(demuxed.stdout_data);
+        out.stderr_data = std::move(demuxed.stderr_data);
+    }
+
+    // 4) Inspect the exec for the exit code.
     const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
     if (inspect_res.status_code != 200) {
         throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
                           std::to_string(inspect_res.status_code) + " " + inspect_res.body);
     }
+    out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
+    return out;
+}
 
+ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
+                              const ExecOptions& opts, const LogConsumer& consumer) {
+    // 1) Create the exec instance.
+    const std::string exec_id =
+        exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
+
+    // 2) Start the exec over a raw stream so output can be consumed incrementally
+    //    (and stdin hijacked) — see exec_start.
+    auto transport = docker::connect(host_);
+    docker::TransportStream stream{*transport};
+    exec_start(*transport, stream, host_, exec_id, opts);
+
+    // 3) Read the response incrementally, delivering chunks to consumer as they
+    //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
+    //    deliver the raw bytes as a single stdout stream.
+    boost::system::error_code ec;
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::buffer_body> parser;
+    parser.body_limit(boost::none);
+
+    http::read_header(stream, buffer, parser, ec);
+    if (ec && ec != http::error::end_of_stream) {
+        transport->close();
+        throw DockerError("exec start " + exec_id + " failed to read response: " + ec.message());
+    }
+    if (parser.get().result_int() != 200) {
+        const int status = static_cast<int>(parser.get().result_int());
+        transport->close();
+        throw DockerError("exec start " + exec_id + " failed: HTTP " + std::to_string(status));
+    }
+
+    docker::LogDemuxer demuxer;
+    std::array<char, 8192> buf{};
+    bool stop = false;
+    while (!stop && !parser.is_done()) {
+        parser.get().body().data = buf.data();
+        parser.get().body().size = buf.size();
+
+        http::read_some(stream, buffer, parser, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {}; // the buffer filled up: keep reading
+        }
+        if (ec == http::error::end_of_stream) {
+            break; // the exec output stream ended (command finished)
+        }
+        if (ec) {
+            break; // the stream was reset/closed by the daemon; treat as end
+        }
+
+        const std::size_t n = buf.size() - parser.get().body().size;
+        if (n == 0) {
+            continue;
+        }
+        if (opts.tty) {
+            // Raw, unframed: deliver verbatim as stdout.
+            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
+                stop = true;
+            }
+            continue;
+        }
+        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
+            LogSource source = LogSource::Stdout;
+            switch (frame.stream) {
+            case docker::LogStreamKind::StdIn:
+                continue; // never present in exec output
+            case docker::LogStreamKind::StdOut:
+                source = LogSource::Stdout;
+                break;
+            case docker::LogStreamKind::StdErr:
+                source = LogSource::Stderr;
+                break;
+            }
+            if (!consumer(source, frame.data)) {
+                stop = true; // consumer asked to stop; close the connection below
+                break;
+            }
+        }
+    }
+    transport->close();
+
+    // 4) Inspect the exec for the exit code; the output went to consumer, so
+    //    stdout_data / stderr_data are left empty.
+    const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
+    if (inspect_res.status_code != 200) {
+        throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
+                          std::to_string(inspect_res.status_code) + " " + inspect_res.body);
+    }
     ExecResult out;
-    out.stdout_data = std::move(demuxed.stdout_data);
-    out.stderr_data = std::move(demuxed.stderr_data);
     out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
     return out;
 }

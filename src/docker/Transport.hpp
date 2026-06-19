@@ -22,6 +22,12 @@ public:
                                   boost::system::error_code& ec) = 0;
     virtual std::size_t write_some(const void* data, std::size_t size,
                                    boost::system::error_code& ec) = 0;
+    /// Half-close the send side so the peer sees EOF on its read while we keep
+    /// reading the response (used by exec-stdin: after writing the input bytes we
+    /// signal end-of-input so a reader like `cat`/`wc` terminates). Best-effort:
+    /// SSL and Windows named pipes have no clean half-close, so those override it
+    /// as a no-op (see the transport implementations).
+    virtual void shutdown_send() = 0;
     virtual void close() = 0;
 };
 
