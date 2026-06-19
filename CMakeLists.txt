@@ -133,6 +133,7 @@ if(BUILD_TESTING)
         tests/unit/TarTest.cpp
         tests/unit/DockerComposeContainerTest.cpp
         tests/unit/ComposeCommandTest.cpp
+        tests/unit/TlsConfigTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers
@@ -163,6 +164,7 @@ if(BUILD_TESTING)
         tests/integration/AuthTest.cpp
         tests/integration/WindowsContainerTest.cpp
         tests/integration/ComposeTest.cpp
+        tests/integration/TlsTransportTest.cpp
     )
     target_link_libraries(tc_integration_tests PRIVATE
         testcontainers::testcontainers
@@ -171,6 +173,10 @@ if(BUILD_TESTING)
         boost::boost
         # ReaperTest parses raw inspect JSON to read back a container's labels.
         nlohmann_json::nlohmann_json
+        # TlsTransportTest runs an in-process Boost.Asio TLS echo server and
+        # generates a self-signed cert/key via the OpenSSL C API.
+        OpenSSL::SSL
+        OpenSSL::Crypto
         GTest::gtest
         GTest::gtest_main
     )
