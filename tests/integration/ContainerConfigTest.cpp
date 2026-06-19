@@ -17,6 +17,8 @@
 //   ContainerConfig.TmpfsMount - a tmpfs mount appears as a tmpfs filesystem at its target in /proc/mounts.
 //   ContainerConfig.UlimitApplied - a ulimit is applied so the soft nofile limit reported inside the container matches.
 //   ContainerConfig.ExtraHostApplied - an extra host (via the typed setter) resolves to its mapped IP inside the container.
+//   ContainerConfig.CustomSubstitutorRewritesImage - a custom image-name substitutor rewrites a bogus reference to a runnable one used at create.
+//   ContainerConfig.AlwaysPullPolicyStarts - ImagePullPolicy::Always pulls before create and the container still starts and runs.
 
 using namespace testcontainers;
 
@@ -97,5 +99,34 @@ TEST_F(ContainerConfig, ExtraHostApplied) {
     EXPECT_NE(logs.stdout_data.find("1.2.3.4"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
     EXPECT_NE(logs.stdout_data.find("myhost"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, CustomSubstitutorRewritesImage) {
+    // The original reference is bogus; the substitutor must be what reaches create
+    // (otherwise the bogus image would fail to pull). Proves the rewrite flows in.
+    Container c = GenericImage("nonexistent-image-name", "v0")
+                      .with_image_name_substitutor(
+                          [](const std::string&) { return std::string("alpine:3.20"); })
+                      .with_cmd({"sh", "-c", "echo substituted"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("substituted"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, AlwaysPullPolicyStarts) {
+    // Exercises the always-pull-before-create path; alpine:3.20 is public so the
+    // pull succeeds and the container still runs.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_image_pull_policy(ImagePullPolicy::Always)
+                      .with_cmd({"sh", "-c", "echo ok"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("ok"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
 }

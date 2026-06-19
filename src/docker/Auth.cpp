@@ -230,4 +230,34 @@ std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image) {
     return auth_from_docker_config(config, registry);
 }
 
+std::string apply_hub_image_prefix(const std::string& image, const std::string& prefix) {
+    if (prefix.empty()) {
+        return image; // no prefix configured
+    }
+    // Only Docker Hub images are prefixed; anything already qualified with a
+    // registry host (ghcr.io/..., localhost:5000/..., my.reg:5000/...) is left
+    // alone, matching testcontainers' PrefixingImageNameSubstitutor.
+    if (resolve_registry(image) != kDockerHub) {
+        return image;
+    }
+    // Don't double the prefix if the image already carries it.
+    if (image.rfind(prefix, 0) == 0) {
+        return image;
+    }
+    // The prefix is prepended verbatim (it usually already ends with '/'); add a
+    // separating '/' only when it is missing.
+    if (prefix.back() == '/') {
+        return prefix + image;
+    }
+    return prefix + "/" + image;
+}
+
+std::string substitute_image_name(const std::string& image) {
+    std::string prefix;
+    if (const char* p = std::getenv("TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX"); p && *p) {
+        prefix = p;
+    }
+    return apply_hub_image_prefix(image, prefix);
+}
+
 } // namespace testcontainers::docker

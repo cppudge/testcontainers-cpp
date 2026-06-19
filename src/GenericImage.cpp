@@ -6,6 +6,7 @@
 #include "Reaper.hpp"
 #include "WaitStrategies.hpp"
 #include "docker/ApiMapping.hpp"
+#include "docker/Auth.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -25,7 +26,12 @@ Container GenericImage::start() const {
     DockerClient client = DockerClient::from_environment();
 
     CreateContainerSpec spec;
-    spec.image = image_ + ":" + tag_;
+    // Resolve the effective image reference: a custom substitutor overrides the
+    // default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX).
+    const std::string raw_ref = image_ + ":" + tag_;
+    const std::string effective =
+        substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
+    spec.image = effective;
     spec.cmd = cmd_;
     spec.entrypoint = entrypoint_;
     spec.working_dir = working_dir_;
@@ -56,6 +62,12 @@ Container GenericImage::start() const {
     spec.network = network_;
     spec.name = container_name_;
     spec.platform = platform_;
+
+    // ImagePullPolicy::Always pulls before create even when the image is present
+    // locally; Default relies on create's lazy pull-on-404 path.
+    if (pull_policy_ == ImagePullPolicy::Always) {
+        client.pull_image(effective, registry_auth_);
+    }
 
     const std::string id = client.create_container(spec, registry_auth_);
 

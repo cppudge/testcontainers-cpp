@@ -53,4 +53,16 @@ std::string encode_x_registry_auth(const RegistryAuth& auth);
 /// auth_from_docker_config(...). Returns nullopt when no credentials apply.
 std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image);
 
+/// Apply a Docker-Hub image-name prefix (e.g. a corporate registry mirror). The
+/// prefix is prepended ONLY to Docker Hub images (resolve_registry(image) ==
+/// "index.docker.io"); images already qualified with a registry host
+/// (ghcr.io/..., localhost:5000/..., my.reg:5000/...) are returned unchanged, as
+/// are images that already start with `prefix`. An empty prefix is a no-op.
+/// Mirrors testcontainers' PrefixingImageNameSubstitutor.
+std::string apply_hub_image_prefix(const std::string& image, const std::string& prefix);
+
+/// Read TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX and apply it via apply_hub_image_prefix.
+/// (The env read is the only impurity; keep apply_hub_image_prefix pure.)
+std::string substitute_image_name(const std::string& image);
+
 } // namespace testcontainers::docker

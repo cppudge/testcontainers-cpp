@@ -25,8 +25,16 @@
 //   Auth.AuthFromConfigInvalidJson - malformed config JSON yields nullopt rather than throwing.
 //   Auth.EncodeXRegistryAuthBasic - encode_x_registry_auth base64-encodes JSON with username/password/serveraddress.
 //   Auth.EncodeXRegistryAuthIdentityToken - encode_x_registry_auth emits identitytoken/serveraddress (no user/pass) when a token is set.
+//   Auth.ApplyHubImagePrefixHubImage - a Docker Hub image gets the corporate-mirror prefix prepended.
+//   Auth.ApplyHubImagePrefixAddsSeparator - a prefix without a trailing slash gets a '/' inserted before the image.
+//   Auth.ApplyHubImagePrefixLeavesQualifiedHost - an image already qualified with a registry host (ghcr.io/...) is unchanged.
+//   Auth.ApplyHubImagePrefixLeavesLocalhost - a localhost/registry-with-port image is unchanged.
+//   Auth.ApplyHubImagePrefixNotDoubled - an image already starting with the prefix is not prefixed again.
+//   Auth.ApplyHubImagePrefixEmptyIsNoOp - an empty prefix returns the image unchanged.
+//   Auth.ApplyHubImagePrefixNamespacedHub - a namespaced Hub image (library/redis) still gets the prefix.
 
 using testcontainers::RegistryAuth;
+using testcontainers::docker::apply_hub_image_prefix;
 using testcontainers::docker::auth_from_docker_config;
 using testcontainers::docker::base64_decode;
 using testcontainers::docker::base64_encode;
@@ -188,4 +196,36 @@ TEST(Auth, EncodeXRegistryAuthIdentityToken) {
     EXPECT_EQ(json.at("serveraddress"), "ghcr.io");
     EXPECT_FALSE(json.contains("username"));
     EXPECT_FALSE(json.contains("password"));
+}
+
+TEST(Auth, ApplyHubImagePrefixHubImage) {
+    EXPECT_EQ(apply_hub_image_prefix("redis:7.2", "mirror.corp/"), "mirror.corp/redis:7.2");
+}
+
+TEST(Auth, ApplyHubImagePrefixAddsSeparator) {
+    // A prefix without a trailing '/' still produces a well-formed reference.
+    EXPECT_EQ(apply_hub_image_prefix("redis:7.2", "mirror.corp"), "mirror.corp/redis:7.2");
+}
+
+TEST(Auth, ApplyHubImagePrefixLeavesQualifiedHost) {
+    EXPECT_EQ(apply_hub_image_prefix("ghcr.io/o/i:1", "mirror.corp/"), "ghcr.io/o/i:1");
+}
+
+TEST(Auth, ApplyHubImagePrefixLeavesLocalhost) {
+    EXPECT_EQ(apply_hub_image_prefix("localhost:5000/x", "mirror.corp/"), "localhost:5000/x");
+}
+
+TEST(Auth, ApplyHubImagePrefixNotDoubled) {
+    EXPECT_EQ(apply_hub_image_prefix("mirror.corp/redis:7.2", "mirror.corp/"),
+              "mirror.corp/redis:7.2");
+}
+
+TEST(Auth, ApplyHubImagePrefixEmptyIsNoOp) {
+    EXPECT_EQ(apply_hub_image_prefix("redis:7.2", ""), "redis:7.2");
+}
+
+TEST(Auth, ApplyHubImagePrefixNamespacedHub) {
+    // "library/redis" has no dot/port in its first segment, so it is a Hub image.
+    EXPECT_EQ(apply_hub_image_prefix("library/redis", "mirror.corp/"),
+              "mirror.corp/library/redis");
 }

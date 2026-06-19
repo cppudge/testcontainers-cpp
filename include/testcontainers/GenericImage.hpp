@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -17,6 +18,12 @@
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
+
+/// When to pull the image before creating the container.
+enum class ImagePullPolicy {
+    Default, ///< pull only if missing locally (lazy, on create 404) — today's behavior
+    Always,  ///< always pull before create (even if present locally)
+};
 
 /// A reusable, copyable description of a container to run: image reference,
 /// exposed ports, environment, command, labels, and readiness conditions.
@@ -275,6 +282,32 @@ public:
         return std::move(*this);
     }
 
+    /// Control whether the image is pulled before create. `Default` keeps the
+    /// lazy behavior (pull only on a create 404); `Always` pulls before create
+    /// even when the image is already present locally.
+    GenericImage& with_image_pull_policy(ImagePullPolicy policy) & {
+        pull_policy_ = policy;
+        return *this;
+    }
+    GenericImage&& with_image_pull_policy(ImagePullPolicy policy) && {
+        pull_policy_ = policy;
+        return std::move(*this);
+    }
+
+    /// Override how the image reference is rewritten before create. When set this
+    /// REPLACES the default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX);
+    /// the function receives "name:tag" and returns the reference to actually use.
+    GenericImage& with_image_name_substitutor(
+        std::function<std::string(const std::string&)> fn) & {
+        substitutor_ = std::move(fn);
+        return *this;
+    }
+    GenericImage&& with_image_name_substitutor(
+        std::function<std::string(const std::string&)> fn) && {
+        substitutor_ = std::move(fn);
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -307,6 +340,10 @@ public:
     const std::vector<std::string>& cap_drop() const noexcept { return cap_drop_; }
     const std::vector<std::string>& extra_hosts() const noexcept { return extra_hosts_; }
     const std::string& create_body_patch() const noexcept { return create_body_patch_; }
+    ImagePullPolicy image_pull_policy() const noexcept { return pull_policy_; }
+    const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
+        return substitutor_;
+    }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -340,6 +377,8 @@ private:
     std::vector<std::string> cap_drop_;
     std::vector<std::string> extra_hosts_;
     std::string create_body_patch_;
+    ImagePullPolicy pull_policy_ = ImagePullPolicy::Default;
+    std::function<std::string(const std::string&)> substitutor_;
 };
 
 } // namespace testcontainers

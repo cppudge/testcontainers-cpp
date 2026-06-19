@@ -90,6 +90,16 @@ review are recorded here so they aren't lost between milestones.
   command-wait). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100).
   A real Windows Ryuk (named-pipe mount + Windows reaper image) is unexplored — see `docs/04`.
 
+- **image pull policy + name substitution: minimal** — `GenericImage` supports
+  `with_image_pull_policy(ImagePullPolicy::Always|Default)` and
+  `with_image_name_substitutor(fn)`. Known limits / one-line notes:
+  (a) only the Hub-prefix env substitutor (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX`,
+  via `docker::substitute_image_name`/`apply_hub_image_prefix`) plus a custom hook
+  are provided — there is NO "pull if older than N" / time-based pull policy;
+  (b) substitution is applied at the `GenericImage` layer only —
+  `ImageFromDockerfile` / Compose / raw `DockerClient` calls are NOT substituted;
+  (c) `ImagePullPolicy::Always` re-pulls on every `start()` (no pull-pause / dedup).
+  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/docker/Auth.cpp`)
 - **Docker Compose: three client modes (rust parity), published-ports-only** —
   `DockerComposeContainer` now has THREE client modes (`ComposeClientKind`): Local (DEFAULT —
   shells out to the host `docker compose` CLI; the documented compose-only exception to the
