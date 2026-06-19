@@ -84,16 +84,29 @@ review are recorded here so they aren't lost between milestones.
   command-wait). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100).
   A real Windows Ryuk (named-pipe mount + Windows reaper image) is unexplored — see `docs/04`.
 
-- **Docker Compose: ambassador-based, published-ports-only MVP** — `DockerComposeContainer`
-  runs the `docker/compose` image in a one-shot container with the host docker socket
-  bind-mounted (like Ryuk) and discovers service containers by the
-  `com.docker.compose.project` label. Known limits: (a) only PUBLISHED service ports are
-  reachable — there is no socat ambassador for unpublished ports; (b) the ambassador
-  receives only the compose file, so build contexts / host-relative volumes / `.env` are
-  unsupported; (c) the compose stack is NOT Ryuk-reaped (compose-created containers carry no
-  session-id label) — cleanup is the explicit `down -v` + a project-label sweep + RAII only;
-  (d) a single compose file only (no multi-file `-f` stacking, no per-service log streaming).
-  (`src/DockerComposeContainer.cpp`)
+- **Docker Compose: three client modes (rust parity), published-ports-only** —
+  `DockerComposeContainer` now has THREE client modes (`ComposeClientKind`): Local (DEFAULT —
+  shells out to the host `docker compose` CLI; the documented compose-only exception to the
+  "no docker CLI" rule), Containerised (a long-lived `docker:26.1-cli` container with the host
+  docker socket bind-mounted; `up`/`down` are `exec`'d in, files copied to
+  `/docker-compose-<i>.yml`), and Auto (probe `docker compose version`, else fall back to
+  Containerised). Readiness uses compose v2 `--wait --wait-timeout` (default 60s) PLUS the
+  per-`with_exposed_service` TCP probe. Multi-file `-f`, `with_env`/`with_env_vars`,
+  `with_build`/`with_pull`, `with_remove_volumes`/`with_remove_images` are supported. Discovery
+  is still by the `com.docker.compose.project` label; teardown is `down` + a project-label sweep
+  + RAII. Internal split: pure arg-builders in `src/compose/ComposeCommand.*` (unit-tested), a
+  popen-based subprocess helper in `src/compose/Process.*`, and the client implementations +
+  factory in `src/compose/ComposeClients.*`. Known limits / one-line notes:
+  (a) Local mode shells out to the host `docker compose` (the documented compose-only exception
+  to "no docker CLI" — strictly inside `LocalComposeClient`);
+  (b) local-mode env vars are set on the CHILD PROCESS only (saved/restored around the run via
+  `_putenv_s`/`setenv`), not on the daemon or this process persistently; containerised mode
+  passes them via a `/bin/sh -c "KEY=VALUE ... docker compose ..."` exec wrapper;
+  (c) still unsupported: `--profile`, service scaling (`--scale`), per-service log streaming,
+  socat ambassador for UNPUBLISHED ports, build contexts / host-relative volumes / `.env`
+  beyond what `--project-directory` (parent of the first file, local mode) covers, and the
+  compose stack is still NOT Ryuk-reaped (compose containers carry no session-id label).
+  (`src/DockerComposeContainer.cpp`, `src/compose/*`)
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

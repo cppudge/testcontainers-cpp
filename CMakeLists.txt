@@ -66,6 +66,9 @@ add_library(testcontainers
     src/Network.cpp
     src/Reaper.cpp
     src/DockerComposeContainer.cpp
+    src/compose/ComposeCommand.cpp
+    src/compose/Process.cpp
+    src/compose/ComposeClients.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 
@@ -126,6 +129,7 @@ if(BUILD_TESTING)
         tests/unit/ReaperTest.cpp
         tests/unit/TarTest.cpp
         tests/unit/DockerComposeContainerTest.cpp
+        tests/unit/ComposeCommandTest.cpp
     )
     target_link_libraries(tc_unit_tests PRIVATE
         testcontainers::testcontainers

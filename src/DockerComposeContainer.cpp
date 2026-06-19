@@ -1,8 +1,9 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
-#include "testcontainers/CopyToContainer.hpp"
+#include "compose/ComposeClients.hpp"
+#include "compose/ComposeCommand.hpp"
+
 #include "testcontainers/Error.hpp"
-#include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -11,11 +12,12 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <random>
-#include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -26,18 +28,12 @@ namespace {
 namespace asio = boost::asio;
 using asio::ip::tcp;
 
-/// The ambassador image. Its entrypoint is `docker-compose`, so the container
-/// command is just the compose arguments. Pinned to a known-good tag.
-constexpr const char* kComposeImage = "docker/compose:1.29.2";
+/// The default containerised ambassador image: a long-lived `docker:cli`
+/// container drives `docker compose` (v2) via exec. (Was `docker/compose:1.29.2`
+/// in the one-shot MVP.)
+constexpr const char* kComposeImage = "docker:26.1-cli";
 
-/// Where the single compose file is copied inside the ambassador container.
-constexpr const char* kComposeFilePath = "/compose.yml";
-
-constexpr const char* kManagedByLabel = "org.testcontainers.managed-by";
-
-/// The label compose stamps on every container it creates for a project.
 constexpr const char* kComposeProjectLabel = "com.docker.compose.project";
-/// The label compose stamps with each container's service name.
 constexpr const char* kComposeServiceLabel = "com.docker.compose.service";
 
 /// Generate a random lowercase-hex id (a valid compose project name fragment),
@@ -52,17 +48,6 @@ std::string random_hex(std::size_t chars) {
         out.push_back(hex[dist(rd)]);
     }
     return out;
-}
-
-/// Read the whole host file or throw (the compose file is read at construction).
-std::string read_file_or_throw(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw DockerError("DockerComposeContainer: cannot read compose file '" + path + "'");
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
 }
 
 /// Resolve the published host port for `key` (e.g. "6379/tcp") in an inspect,
@@ -83,83 +68,96 @@ std::uint16_t published_host_port(const ContainerInspect& info, const std::strin
     return host_port;
 }
 
-/// Result of one ambassador run: its exit code and captured (stdout+stderr) logs.
-struct ComposeRun {
-    std::int64_t exit_code = 0;
-    std::string logs;
-};
-
-/// Run the ambassador (`docker/compose` image) once with `args`, copying the
-/// compose file in, and return its exit code + logs. The container is removed
-/// before returning. Throws DockerError only on a Docker API failure (a non-zero
-/// compose exit is reported via the returned exit code, not thrown).
-ComposeRun run_compose(DockerClient& client, const std::string& image,
-                       const std::string& compose_yaml,
-                       const std::vector<std::string>& args) {
-    CreateContainerSpec spec;
-    spec.image = image;
-    spec.cmd = args;
-    // Compose talks to the daemon over the Linux docker socket — even on Windows
-    // Docker Desktop the source is this in-VM path (NOT the named pipe), exactly
-    // like the Ryuk reaper.
-    spec.mounts = {Mount::bind("/var/run/docker.sock", "/var/run/docker.sock")};
-    spec.working_dir = "/";
-    // Mark it ours; do NOT auto-remove (we read the exit code and logs first).
-    spec.labels = {{kManagedByLabel, "testcontainers"}};
-    spec.auto_remove = false;
-
-    const std::string id = client.create_container(spec);
-    try {
-        client.copy_to_container(id, CopyToContainer::content(compose_yaml, kComposeFilePath));
-        client.start_container(id);
-
-        // Poll until the ambassador exits (compose `up -d` / `down` are short).
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
-        ContainerInspect info = client.inspect_container(id);
-        while (info.running && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            info = client.inspect_container(id);
-        }
-        if (info.running) {
-            throw DockerError("Compose ambassador did not exit within 120s");
-        }
-
-        ComposeRun run;
-        run.exit_code = info.exit_code.value_or(-1);
-        const ContainerLogs captured = client.logs(id);
-        run.logs = captured.stdout_data + captured.stderr_data;
-
-        client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
-        return run;
-    } catch (...) {
-        try {
-            client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
-        } catch (...) {
-        }
-        throw;
+/// Map the public client kind to the internal compose-client kind.
+compose::ClientKind to_internal_kind(ComposeClientKind kind) {
+    switch (kind) {
+    case ComposeClientKind::Local:
+        return compose::ClientKind::Local;
+    case ComposeClientKind::Containerised:
+        return compose::ClientKind::Containerised;
+    case ComposeClientKind::Auto:
+        return compose::ClientKind::Auto;
     }
+    return compose::ClientKind::Local;
+}
+
+/// Absolutize a host path (compose `-f` and `--project-directory` want absolute
+/// paths so they work regardless of the child process's working dir).
+std::string absolute_path(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::path abs = std::filesystem::absolute(path, ec);
+    if (ec) {
+        return path;
+    }
+    return abs.string();
 }
 
 } // namespace
 
-DockerComposeContainer::DockerComposeContainer(const std::string& compose_file_path)
-    : compose_yaml_(read_file_or_throw(compose_file_path)), project_("tc" + random_hex(8)),
-      compose_image_(kComposeImage) {}
+DockerComposeContainer::DockerComposeContainer(std::vector<std::string> files)
+    : project_("tc" + random_hex(8)), compose_image_(kComposeImage) {
+    compose_files_.reserve(files.size());
+    for (std::string& f : files) {
+        compose_files_.push_back(absolute_path(f));
+    }
+}
+
+DockerComposeContainer::DockerComposeContainer(const std::string& compose_file)
+    : DockerComposeContainer(std::vector<std::string>{compose_file}) {}
+
+DockerComposeContainer
+DockerComposeContainer::with_local_client(std::vector<std::string> compose_files) {
+    DockerComposeContainer c(std::move(compose_files));
+    c.client_kind_ = ComposeClientKind::Local;
+    return c;
+}
+
+DockerComposeContainer
+DockerComposeContainer::with_containerised_client(std::vector<std::string> compose_files) {
+    DockerComposeContainer c(std::move(compose_files));
+    c.client_kind_ = ComposeClientKind::Containerised;
+    return c;
+}
+
+DockerComposeContainer
+DockerComposeContainer::with_auto_client(std::vector<std::string> compose_files) {
+    DockerComposeContainer c(std::move(compose_files));
+    c.client_kind_ = ComposeClientKind::Auto;
+    return c;
+}
 
 DockerComposeContainer DockerComposeContainer::from_yaml(std::string compose_yaml) {
     DockerComposeContainer c;
-    c.compose_yaml_ = std::move(compose_yaml);
     c.project_ = "tc" + random_hex(8);
     c.compose_image_ = kComposeImage;
+    c.client_kind_ = ComposeClientKind::Local;
+
+    // Write the inline YAML to a temp `.yml` so the (default) local client has a
+    // real file. Recorded for deletion in the destructor.
+    const std::filesystem::path temp =
+        std::filesystem::temp_directory_path() / ("tc-compose-" + random_hex(12) + ".yml");
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            throw DockerError("DockerComposeContainer::from_yaml: cannot create temp file '" +
+                              temp.string() + "'");
+        }
+        out << compose_yaml;
+    }
+    c.temp_file_ = temp.string();
+    c.compose_files_ = {c.temp_file_};
     return c;
 }
 
 DockerComposeContainer::DockerComposeContainer(DockerComposeContainer&& other) noexcept
-    : compose_yaml_(std::move(other.compose_yaml_)), project_(std::move(other.project_)),
-      compose_image_(std::move(other.compose_image_)),
-      exposed_services_(std::move(other.exposed_services_)),
-      service_to_id_(std::move(other.service_to_id_)), started_(other.started_),
-      stopped_(other.stopped_) {
+    : compose_files_(std::move(other.compose_files_)), project_(std::move(other.project_)),
+      compose_image_(std::move(other.compose_image_)), client_kind_(other.client_kind_),
+      env_(std::move(other.env_)), build_(other.build_), pull_(other.pull_), wait_(other.wait_),
+      wait_timeout_(other.wait_timeout_), remove_volumes_(other.remove_volumes_),
+      remove_images_(other.remove_images_), exposed_services_(std::move(other.exposed_services_)),
+      service_to_id_(std::move(other.service_to_id_)), temp_file_(std::move(other.temp_file_)),
+      client_(std::move(other.client_)), started_(other.started_), stopped_(other.stopped_) {
+    other.temp_file_.clear(); // the moved-from handle owns no temp file
     other.started_ = false;
     other.stopped_ = true; // the moved-from handle owns nothing — never tear down
 }
@@ -167,13 +165,24 @@ DockerComposeContainer::DockerComposeContainer(DockerComposeContainer&& other) n
 DockerComposeContainer& DockerComposeContainer::operator=(DockerComposeContainer&& other) noexcept {
     if (this != &other) {
         drop();
-        compose_yaml_ = std::move(other.compose_yaml_);
+        compose_files_ = std::move(other.compose_files_);
         project_ = std::move(other.project_);
         compose_image_ = std::move(other.compose_image_);
+        client_kind_ = other.client_kind_;
+        env_ = std::move(other.env_);
+        build_ = other.build_;
+        pull_ = other.pull_;
+        wait_ = other.wait_;
+        wait_timeout_ = other.wait_timeout_;
+        remove_volumes_ = other.remove_volumes_;
+        remove_images_ = other.remove_images_;
         exposed_services_ = std::move(other.exposed_services_);
         service_to_id_ = std::move(other.service_to_id_);
+        temp_file_ = std::move(other.temp_file_);
+        client_ = std::move(other.client_);
         started_ = other.started_;
         stopped_ = other.stopped_;
+        other.temp_file_.clear();
         other.started_ = false;
         other.stopped_ = true;
     }
@@ -181,6 +190,15 @@ DockerComposeContainer& DockerComposeContainer::operator=(DockerComposeContainer
 }
 
 DockerComposeContainer::~DockerComposeContainer() { drop(); }
+
+DockerComposeContainer& DockerComposeContainer::with_client(ComposeClientKind kind) & {
+    client_kind_ = kind;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_client(ComposeClientKind kind) && {
+    client_kind_ = kind;
+    return std::move(*this);
+}
 
 DockerComposeContainer& DockerComposeContainer::with_exposed_service(std::string service,
                                                                      ContainerPort port) & {
@@ -211,21 +229,108 @@ DockerComposeContainer&& DockerComposeContainer::with_compose_image(std::string 
     return std::move(*this);
 }
 
-void DockerComposeContainer::start() {
-    DockerClient client = DockerClient::from_environment();
+DockerComposeContainer& DockerComposeContainer::with_env(std::string key, std::string value) & {
+    env_[std::move(key)] = std::move(value);
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_env(std::string key, std::string value) && {
+    env_[std::move(key)] = std::move(value);
+    return std::move(*this);
+}
 
-    // 1) Bring the stack up via the ambassador.
-    const ComposeRun up =
-        run_compose(client, compose_image_, compose_yaml_,
-                    {"-f", kComposeFilePath, "-p", project_, "up", "-d"});
-    if (up.exit_code != 0) {
-        throw DockerError("Compose 'up' failed (exit " + std::to_string(up.exit_code) +
-                          ") for project '" + project_ + "':\n" + up.logs);
+DockerComposeContainer&
+DockerComposeContainer::with_env_vars(std::map<std::string, std::string> env) & {
+    for (auto& [key, value] : env) {
+        env_[key] = std::move(value);
     }
+    return *this;
+}
+DockerComposeContainer&&
+DockerComposeContainer::with_env_vars(std::map<std::string, std::string> env) && {
+    for (auto& [key, value] : env) {
+        env_[key] = std::move(value);
+    }
+    return std::move(*this);
+}
 
-    // 2) Discover the service containers by the compose project label.
+DockerComposeContainer& DockerComposeContainer::with_build(bool build) & {
+    build_ = build;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_build(bool build) && {
+    build_ = build;
+    return std::move(*this);
+}
+
+DockerComposeContainer& DockerComposeContainer::with_pull(bool pull) & {
+    pull_ = pull;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_pull(bool pull) && {
+    pull_ = pull;
+    return std::move(*this);
+}
+
+DockerComposeContainer& DockerComposeContainer::with_wait(bool wait) & {
+    wait_ = wait;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_wait(bool wait) && {
+    wait_ = wait;
+    return std::move(*this);
+}
+
+DockerComposeContainer& DockerComposeContainer::with_wait_timeout(std::chrono::seconds timeout) & {
+    wait_timeout_ = timeout;
+    return *this;
+}
+DockerComposeContainer&&
+DockerComposeContainer::with_wait_timeout(std::chrono::seconds timeout) && {
+    wait_timeout_ = timeout;
+    return std::move(*this);
+}
+
+DockerComposeContainer& DockerComposeContainer::with_remove_volumes(bool remove) & {
+    remove_volumes_ = remove;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_remove_volumes(bool remove) && {
+    remove_volumes_ = remove;
+    return std::move(*this);
+}
+
+DockerComposeContainer& DockerComposeContainer::with_remove_images(bool remove) & {
+    remove_images_ = remove;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_remove_images(bool remove) && {
+    remove_images_ = remove;
+    return std::move(*this);
+}
+
+void DockerComposeContainer::start() {
+    // 1) Resolve the client (Local / Containerised / Auto). The containerised
+    //    client starts its long-lived cli container here; keep it for teardown.
+    client_ = compose::make_compose_client(to_internal_kind(client_kind_), compose_files_,
+                                           compose_image_);
+
+    // 2) Build and run the compose `up` command.
+    compose::ComposeUpCommand up;
+    up.project_name = project_;
+    up.files = compose_files_; // the client overrides with its own paths
+    for (const auto& [key, value] : env_) {
+        up.env.emplace_back(key, value);
+    }
+    up.wait_timeout_secs = wait_timeout_.count();
+    up.build = build_;
+    up.pull = pull_;
+    up.wait = wait_;
+    client_->up(up); // throws DockerError (with output) on non-zero exit
+
+    // 3) Discover the service containers by the compose project label.
+    DockerClient docker = DockerClient::from_environment();
     service_to_id_.clear();
-    const std::vector<ContainerSummary> summaries = client.list_containers(
+    const std::vector<ContainerSummary> summaries = docker.list_containers(
         {{"label", std::string(kComposeProjectLabel) + "=" + project_}}, /*all*/ true);
     for (const ContainerSummary& summary : summaries) {
         const auto it = summary.labels.find(kComposeServiceLabel);
@@ -237,8 +342,10 @@ void DockerComposeContainer::start() {
 
     started_ = true;
 
-    // 3) Wait for each exposed service's published host port to accept a TCP
-    //    connection (mirrors the Reaper connect-retry loop).
+    // 4) Extra guarantee on top of compose's `--wait`: wait for each exposed
+    //    service's published host port to accept a TCP connection (mirrors the
+    //    Reaper connect-retry loop). This confirms the port is actually open
+    //    even for services without a healthcheck.
     for (const auto& [service, port] : exposed_services_) {
         const std::uint16_t host_port = get_service_port(service, port);
         const std::string host = get_service_host(service);
@@ -294,24 +401,39 @@ std::string DockerComposeContainer::get_service_container_id(const std::string& 
 void DockerComposeContainer::stop() { drop(); }
 
 void DockerComposeContainer::drop() noexcept {
+    // Always remove a temp `.yml` (from_yaml) regardless of started state.
+    const auto delete_temp = [this]() noexcept {
+        if (!temp_file_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(temp_file_, ec);
+            temp_file_.clear();
+        }
+    };
+
     if (stopped_ || !started_) {
         stopped_ = true;
+        client_.reset(); // releases the containerised cli container if any
+        delete_temp();
         return;
     }
     stopped_ = true;
     try {
-        DockerClient client = DockerClient::from_environment();
-
-        // Best-effort: ask compose to tear the project down (incl. its volumes).
-        try {
-            run_compose(client, compose_image_, compose_yaml_,
-                        {"-f", kComposeFilePath, "-p", project_, "down", "-v"});
-        } catch (...) {
+        // Best-effort: ask compose to tear the project down via the same client.
+        if (client_) {
+            try {
+                compose::ComposeDownCommand down;
+                down.project_name = project_;
+                down.volumes = remove_volumes_;
+                down.remove_images = remove_images_;
+                client_->down(down);
+            } catch (...) {
+            }
         }
 
-        // Best-effort: force-remove any container still carrying the project label
-        // (e.g. if compose down missed one).
+        // Best-effort: force-remove any container still carrying the project
+        // label (e.g. if compose down missed one).
         try {
+            DockerClient client = DockerClient::from_environment();
             const std::vector<ContainerSummary> leftovers = client.list_containers(
                 {{"label", std::string(kComposeProjectLabel) + "=" + project_}}, /*all*/ true);
             for (const ContainerSummary& summary : leftovers) {
@@ -325,6 +447,11 @@ void DockerComposeContainer::drop() noexcept {
     } catch (...) {
         // A teardown failure must never propagate (esp. from the destructor).
     }
+
+    // Release the client (force-removes the containerised cli container) AFTER
+    // `down`, then delete any temp file.
+    client_.reset();
+    delete_temp();
 }
 
 } // namespace testcontainers

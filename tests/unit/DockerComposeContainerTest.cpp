@@ -1,15 +1,24 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/DockerComposeContainer.hpp"
 
 // Tests in this file (daemon-free; nothing here calls start()):
 //   DockerComposeContainer.DefaultProjectName - a fresh handle has a non-empty project name starting with "tc".
-//   DockerComposeContainer.FromYamlStoresYaml - from_yaml stores the compose YAML verbatim and defaults the ambassador image.
+//   DockerComposeContainer.DefaultClientIsLocal - the default client kind is Local (matches rust's default).
+//   DockerComposeContainer.DefaultComposeImage - the default containerised ambassador image is docker:26.1-cli.
+//   DockerComposeContainer.FromYamlYieldsOneFileAndLocal - from_yaml writes one temp compose file and defaults to Local.
+//   DockerComposeContainer.FactoriesSetKindAndFiles - the with_*_client factories set the right kind and carry the files.
+//   DockerComposeContainer.WithClientOverridesKind - with_client overrides the kind on an existing instance.
 //   DockerComposeContainer.WithProjectName - with_project_name overrides the project name.
 //   DockerComposeContainer.WithComposeImage - with_compose_image overrides the ambassador image.
+//   DockerComposeContainer.EnvGetters - with_env / with_env_vars reflect in env().
+//   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws.
 
 using namespace testcontainers;
@@ -20,12 +29,46 @@ TEST(DockerComposeContainer, DefaultProjectName) {
     EXPECT_EQ(compose.project_name().substr(0, 2), "tc");
 }
 
-TEST(DockerComposeContainer, FromYamlStoresYaml) {
-    const std::string yaml = "services:\n  redis:\n    image: redis:7.2\n";
-    const DockerComposeContainer compose = DockerComposeContainer::from_yaml(yaml);
-    EXPECT_EQ(compose.compose_yaml(), yaml);
-    // Default ambassador image (its entrypoint is docker-compose).
-    EXPECT_EQ(compose.compose_image(), "docker/compose:1.29.2");
+TEST(DockerComposeContainer, DefaultClientIsLocal) {
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+    EXPECT_EQ(compose.client_kind(), ComposeClientKind::Local);
+}
+
+TEST(DockerComposeContainer, DefaultComposeImage) {
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+    // Containerised ambassador image is a long-lived docker:cli (compose v2).
+    EXPECT_EQ(compose.compose_image(), "docker:26.1-cli");
+}
+
+TEST(DockerComposeContainer, FromYamlYieldsOneFileAndLocal) {
+    const DockerComposeContainer compose =
+        DockerComposeContainer::from_yaml("services:\n  redis:\n    image: redis:7.2\n");
+    ASSERT_EQ(compose.compose_files().size(), 1u);
+    EXPECT_FALSE(compose.compose_files().front().empty());
+    EXPECT_EQ(compose.client_kind(), ComposeClientKind::Local);
+}
+
+TEST(DockerComposeContainer, FactoriesSetKindAndFiles) {
+    const std::vector<std::string> files = {"a.yml", "b.yml"};
+
+    const DockerComposeContainer local = DockerComposeContainer::with_local_client(files);
+    EXPECT_EQ(local.client_kind(), ComposeClientKind::Local);
+    EXPECT_EQ(local.compose_files().size(), 2u);
+
+    const DockerComposeContainer cont = DockerComposeContainer::with_containerised_client(files);
+    EXPECT_EQ(cont.client_kind(), ComposeClientKind::Containerised);
+    EXPECT_EQ(cont.compose_files().size(), 2u);
+
+    const DockerComposeContainer auto_c = DockerComposeContainer::with_auto_client(files);
+    EXPECT_EQ(auto_c.client_kind(), ComposeClientKind::Auto);
+    EXPECT_EQ(auto_c.compose_files().size(), 2u);
+}
+
+TEST(DockerComposeContainer, WithClientOverridesKind) {
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+    EXPECT_EQ(compose.client_kind(), ComposeClientKind::Local);
+    compose.with_client(ComposeClientKind::Containerised);
+    EXPECT_EQ(compose.client_kind(), ComposeClientKind::Containerised);
 }
 
 TEST(DockerComposeContainer, WithProjectName) {
@@ -36,8 +79,42 @@ TEST(DockerComposeContainer, WithProjectName) {
 
 TEST(DockerComposeContainer, WithComposeImage) {
     DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
-    compose.with_compose_image("docker/compose:2.0.0");
-    EXPECT_EQ(compose.compose_image(), "docker/compose:2.0.0");
+    compose.with_compose_image("docker:27-cli");
+    EXPECT_EQ(compose.compose_image(), "docker:27-cli");
+}
+
+TEST(DockerComposeContainer, EnvGetters) {
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+    compose.with_env("FOO", "bar");
+    compose.with_env_vars(std::map<std::string, std::string>{{"BAZ", "qux"}, {"FOO", "override"}});
+
+    const auto& env = compose.env();
+    ASSERT_EQ(env.count("FOO"), 1u);
+    ASSERT_EQ(env.count("BAZ"), 1u);
+    EXPECT_EQ(env.at("FOO"), "override"); // with_env_vars merges over with_env
+    EXPECT_EQ(env.at("BAZ"), "qux");
+}
+
+TEST(DockerComposeContainer, FlagGetters) {
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+
+    // Defaults: build off, pull off, wait on (60s), remove_volumes on, remove_images off.
+    EXPECT_FALSE(compose.build());
+    EXPECT_FALSE(compose.pull());
+    EXPECT_TRUE(compose.wait());
+    EXPECT_EQ(compose.wait_timeout(), std::chrono::seconds(60));
+    EXPECT_TRUE(compose.remove_volumes());
+    EXPECT_FALSE(compose.remove_images());
+
+    compose.with_build().with_pull().with_wait(false).with_wait_timeout(std::chrono::seconds(120));
+    compose.with_remove_volumes(false).with_remove_images(true);
+
+    EXPECT_TRUE(compose.build());
+    EXPECT_TRUE(compose.pull());
+    EXPECT_FALSE(compose.wait());
+    EXPECT_EQ(compose.wait_timeout(), std::chrono::seconds(120));
+    EXPECT_FALSE(compose.remove_volumes());
+    EXPECT_TRUE(compose.remove_images());
 }
 
 TEST(DockerComposeContainer, UnknownServiceThrows) {

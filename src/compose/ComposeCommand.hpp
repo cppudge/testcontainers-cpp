@@ -1,0 +1,51 @@
+#pragma once
+
+#include <string>
+#include <utility>
+#include <vector>
+
+// Pure, daemon-free compose command model + argv builders.
+//
+// These structs describe a `docker compose up` / `down` invocation in the
+// abstract; the builders turn them into the argv that follows `docker compose`
+// (i.e. starting at `--project-name`). They contain NO Boost / DockerClient /
+// filesystem dependency so the unit tests can assert on the produced argv
+// without a daemon. Both the local and the containerised clients build their
+// command lines through these helpers (the only difference is the `files` they
+// pass — host paths vs in-container `/docker-compose-<i>.yml` paths).
+
+namespace testcontainers::compose {
+
+/// A `docker compose ... up -d` invocation, described abstractly.
+struct ComposeUpCommand {
+    std::string project_name;             ///< --project-name <p>
+    std::vector<std::string> files;       ///< each emitted as `-f <file>`
+    /// Environment passed to the child process (local) / exec (containerised).
+    /// Not part of the argv — recorded here so the clients can read it.
+    std::vector<std::pair<std::string, std::string>> env;
+    long long wait_timeout_secs = 60;     ///< --wait-timeout <secs> (when wait)
+    bool build = false;                   ///< --build
+    bool pull = false;                    ///< --pull always
+    bool wait = true;                     ///< --wait --wait-timeout <secs>
+};
+
+/// A `docker compose ... down` invocation, described abstractly.
+struct ComposeDownCommand {
+    std::string project_name; ///< --project-name <p>
+    bool volumes = true;      ///< --volumes
+    bool remove_images = false; ///< --rmi all
+};
+
+/// Build the argv following `docker compose` for an `up` command, i.e. starting
+/// at `--project-name`. Order: `--project-name <p>`, every `-f <file>`, `up`,
+/// `-d`, then the conditional flags (`--build`, `--pull always`, `--wait
+/// --wait-timeout <n>`). The env is NOT part of the argv.
+std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command);
+
+/// Build the argv following `docker compose` for a `down` command: `--project-name
+/// <p>`, `down`, then the conditional `--volumes` / `--rmi all`. We pass `--rmi
+/// all` (compose v2 requires an argument; rust pushes a bare `--rmi`, which is a
+/// v1-ism — we deviate for correctness).
+std::vector<std::string> build_compose_down_args(const ComposeDownCommand& command);
+
+} // namespace testcontainers::compose
