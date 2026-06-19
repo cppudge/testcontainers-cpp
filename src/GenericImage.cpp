@@ -69,31 +69,51 @@ Container GenericImage::start() const {
     }
 
     // The shared create→copy→start→wait tail, returning a handle. `remove_on_drop`
-    // is false for reusable containers (they must persist across runs).
+    // is false for reusable containers (they must persist across runs). A throwing
+    // created/starting/started hook is treated like any other failure here: it is
+    // inside the try so the partial container is best-effort removed before the
+    // exception propagates (no leak at any of the three points).
     const auto create_start_wait = [&](const CreateContainerSpec& s,
                                        bool remove_on_drop) -> Container {
         const std::string id = client.create_container(s, registry_auth_);
 
-        // Copy files/data in after create, before start (the create→copy→start
-        // order). A copy failure must not leak the partially-created container.
+        // Everything from here until the container is constructed must, on any
+        // throw, best-effort remove the partially-created container so it never
+        // leaks — including a throwing created/starting/started hook.
         try {
+            // created hooks: container exists (id assigned), before copy-to/start.
+            for (const LifecycleHook& hook : created_hooks_) {
+                if (hook) {
+                    hook(client, id);
+                }
+            }
+
+            // Copy files/data in after create, before start (the create→copy→start
+            // order).
             for (const CopyToContainer& source : copy_to_sources_) {
                 client.copy_to_container(id, source);
             }
-        } catch (...) {
-            try {
-                client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
-            } catch (...) {
+
+            // starting hooks: after copy-to, immediately before start.
+            for (const LifecycleHook& hook : starting_hooks_) {
+                if (hook) {
+                    hook(client, id);
+                }
             }
-            throw;
-        }
 
-        client.start_container(id);
+            client.start_container(id);
 
-        try {
             detail::wait_until_ready(client, id, waits_, startup_timeout_, tty_);
+
+            // started hooks: after wait-until-ready, before constructing the handle.
+            for (const LifecycleHook& hook : started_hooks_) {
+                if (hook) {
+                    hook(client, id);
+                }
+            }
         } catch (...) {
-            // A container that started but never became ready must not leak.
+            // A container that was created but failed to come up (copy, start,
+            // readiness, or a throwing created/starting/started hook) must not leak.
             try {
                 client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
             } catch (...) {
@@ -101,7 +121,30 @@ Container GenericImage::start() const {
             throw;
         }
 
-        return Container(std::move(client), id, remove_on_drop, tty_);
+        // The handle gets its own client copy so the captured `client` stays
+        // usable across startup-attempt retries (DockerClient is a stateless host
+        // config — opening a fresh connection per call).
+        Container c(client, id, remove_on_drop, tty_);
+        c.set_stopping_hooks(stopping_hooks_);
+        return c;
+    };
+
+    // Run an attempt-producing factory up to startup_attempts_ times: on a thrown
+    // failure, if attempts remain, swallow and retry (each retry builds a brand-new
+    // container via the factory); after the final attempt, rethrow the last error.
+    const auto with_retry = [&](const auto& attempt) -> Container {
+        const int attempts = startup_attempts_ < 1 ? 1 : startup_attempts_;
+        for (int i = 0;; ++i) {
+            try {
+                return attempt();
+            } catch (...) {
+                if (i + 1 >= attempts) {
+                    throw; // final attempt failed: propagate the last error
+                }
+                // attempts remain: create_start_wait already removed the partial
+                // container before throwing, so just retry with a fresh one.
+            }
+        }
     };
 
     // Reuse is a safety-gated opt-in: it only activates when enabled globally
@@ -128,21 +171,27 @@ Container GenericImage::start() const {
             {{"label", std::string(detail::reuse_hash_label()) + "=" + hash}}, /*all*/ false);
         for (const ContainerSummary& m : matches) {
             if (m.state == "running") {
-                // Adopt it: wait for readiness, return a NON-removing handle.
+                // Adopt it: wait for readiness, return a NON-removing handle. This
+                // path is NOT retried — it adopts an already-running match rather
+                // than creating anything.
                 detail::wait_until_ready(client, m.id, waits_, startup_timeout_, tty_);
-                return Container(std::move(client), m.id, /*remove_on_drop*/ false, tty_);
+                Container c(std::move(client), m.id, /*remove_on_drop*/ false, tty_);
+                c.set_stopping_hooks(stopping_hooks_);
+                return c;
             }
         }
-        // No match: create a NEW reuse container (persistent, not reaped).
-        return create_start_wait(spec, /*remove_on_drop*/ false);
+        // No match: create a NEW reuse container (persistent, not reaped). This
+        // creates, so it IS subject to startup-attempt retry.
+        return with_retry([&] { return create_start_wait(spec, /*remove_on_drop*/ false); });
     }
 
     // Normal path: tag the container so Ryuk (and tooling) can find it
-    // (managed-by + session), and auto-remove the handle on drop.
+    // (managed-by + session), and auto-remove the handle on drop. Subject to
+    // startup-attempt retry (each retry creates a brand-new container).
     for (const auto& label : detail::testcontainers_labels()) {
         spec.labels.push_back(label);
     }
-    return create_start_wait(spec, /*remove_on_drop*/ true);
+    return with_retry([&] { return create_start_wait(spec, /*remove_on_drop*/ true); });
 }
 
 } // namespace testcontainers

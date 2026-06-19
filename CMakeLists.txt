@@ -151,6 +151,7 @@ if(BUILD_TESTING)
     # Integration tests — require a reachable Docker daemon (skipped otherwise).
     add_executable(tc_integration_tests
         tests/integration/ContainerLifecycleTest.cpp
+        tests/integration/LifecycleTest.cpp
         tests/integration/ContainerLogsTest.cpp
         tests/integration/ContainerConfigTest.cpp
         tests/integration/RedisMvpTest.cpp

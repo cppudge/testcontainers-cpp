@@ -17,6 +17,17 @@ review are recorded here so they aren't lost between milestones.
   (b) no interactive attach loop (that's the exec stdin/hijack path); (c) the low-level
   `DockerClient::logs`/`follow_logs` need `opts.tty` set by the caller — only the high-level `Container`
   sets it automatically. (`src/docker/DockerClient.cpp`, `include/testcontainers/docker/Logs.hpp`)
+- **lifecycle hooks + startup retry** — `GenericImage` has `with_created_hook`/`with_starting_hook`/
+  `with_started_hook`/`with_stopping_hook` (`LifecycleHook = std::function<void(DockerClient&, const
+  std::string&)>`, so a hook gets the full low-level client + id) and `with_startup_attempts(n)`
+  (retries the whole create→start→wait, removing each failed partial; the reuse-ADOPT path is not
+  retried). created/starting/started fire inside `start()`'s try (a throwing hook cleans up the partial
+  container); stopping fires once from `Container` on `stop()`/auto-removing `drop()` (never on a
+  persistent/reusable handle), swallowing exceptions in the noexcept teardown. Known limits / one-line
+  notes: (a) no distinct `containerIsStopped` (only "stopping"), and stopping does NOT fire for a
+  reused/persistent handle's drop; (b) no inter-attempt backoff/delay (immediate retry); (c) hooks get
+  `(DockerClient&, id)` — there is no richer per-container facade (use the client's exec/copy/inspect by
+  id). (`include/testcontainers/Lifecycle.hpp`, `src/GenericImage.cpp`, `src/Container.cpp`)
 - **follow logs: blocking + cooperative-stop only** — `DockerClient::follow_logs` /
   `Container::follow_logs` stream incrementally (`read_some` + `LogDemuxer`) and stop when
   the consumer returns false, but it is BLOCKING: run it on your own `std::thread` for

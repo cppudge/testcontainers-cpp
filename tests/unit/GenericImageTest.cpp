@@ -21,6 +21,10 @@
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
 //   GenericImage.ReusableAfterWith - a named image survives a with_* call and reflects both early and later settings (no use-after-move).
 //   GenericImage.FromReference - from_reference splits "name[:tag]" into image and tag, defaulting to "latest" and handling a registry host:port.
+//   GenericImage.LifecycleHookDefaults - a freshly constructed image has no created/starting/started/stopping hooks and a single startup attempt.
+//   GenericImage.LifecycleHooksGrowVectors - each with_*_hook builder appends to the matching hook vector (in order across repeated calls).
+//   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
+//   GenericImage.LifecycleBuildersChainOnRvalue - the hook/attempts builders chain on a temporary rvalue.
 
 using namespace testcontainers;
 
@@ -203,4 +207,53 @@ TEST(GenericImage, FromReference) {
     const GenericImage with_registry = GenericImage::from_reference("host:5000/repo:1.2");
     EXPECT_EQ(with_registry.image(), "host:5000/repo");
     EXPECT_EQ(with_registry.tag(), "1.2");
+}
+
+TEST(GenericImage, LifecycleHookDefaults) {
+    const GenericImage img("alpine", "3.20");
+    EXPECT_TRUE(img.created_hooks().empty());
+    EXPECT_TRUE(img.starting_hooks().empty());
+    EXPECT_TRUE(img.started_hooks().empty());
+    EXPECT_TRUE(img.stopping_hooks().empty());
+    EXPECT_EQ(img.startup_attempts(), 1); // a single attempt, no retry, by default
+}
+
+TEST(GenericImage, LifecycleHooksGrowVectors) {
+    const LifecycleHook noop = [](DockerClient&, const std::string&) {};
+
+    GenericImage img("alpine", "3.20");
+    img.with_created_hook(noop)
+        .with_created_hook(noop) // appends, does not replace
+        .with_starting_hook(noop)
+        .with_started_hook(noop)
+        .with_stopping_hook(noop);
+
+    EXPECT_EQ(img.created_hooks().size(), 2u);
+    EXPECT_EQ(img.starting_hooks().size(), 1u);
+    EXPECT_EQ(img.started_hooks().size(), 1u);
+    EXPECT_EQ(img.stopping_hooks().size(), 1u);
+}
+
+TEST(GenericImage, StartupAttemptsBuilder) {
+    GenericImage img("alpine", "3.20");
+    EXPECT_EQ(img.with_startup_attempts(3).startup_attempts(), 3);
+
+    // Values < 1 clamp to a single attempt (no retry).
+    EXPECT_EQ(img.with_startup_attempts(0).startup_attempts(), 1);
+    EXPECT_EQ(img.with_startup_attempts(-5).startup_attempts(), 1);
+}
+
+TEST(GenericImage, LifecycleBuildersChainOnRvalue) {
+    const LifecycleHook noop = [](DockerClient&, const std::string&) {};
+    const GenericImage img = GenericImage("alpine", "3.20")
+                                 .with_created_hook(noop)
+                                 .with_starting_hook(noop)
+                                 .with_started_hook(noop)
+                                 .with_stopping_hook(noop)
+                                 .with_startup_attempts(2);
+    EXPECT_EQ(img.created_hooks().size(), 1u);
+    EXPECT_EQ(img.starting_hooks().size(), 1u);
+    EXPECT_EQ(img.started_hooks().size(), 1u);
+    EXPECT_EQ(img.stopping_hooks().size(), 1u);
+    EXPECT_EQ(img.startup_attempts(), 2);
 }

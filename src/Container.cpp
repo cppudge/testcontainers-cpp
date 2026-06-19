@@ -112,11 +112,38 @@ void Container::copy_file_from(const std::string& container_path,
     }
 }
 
-void Container::stop() { client_.stop_container(id_); }
+void Container::stop() {
+    // Explicit stop is a teardown point: fire the stopping hooks (once) before
+    // the container is stopped.
+    fire_stopping();
+    client_.stop_container(id_);
+}
 
 bool Container::is_running() const { return client_.inspect_container(id_).running; }
 
 void Container::remove() { drop(); }
+
+void Container::set_stopping_hooks(std::vector<LifecycleHook> hooks) {
+    stopping_hooks_ = std::move(hooks);
+}
+
+void Container::fire_stopping() noexcept {
+    if (stopping_fired_) {
+        return;
+    }
+    stopping_fired_ = true;
+    for (const LifecycleHook& hook : stopping_hooks_) {
+        if (!hook) {
+            continue;
+        }
+        try {
+            hook(client_, id_);
+        } catch (...) {
+            // Best-effort: a stopping hook must never propagate (esp. from the
+            // destructor's drop() path).
+        }
+    }
+}
 
 void Container::drop() noexcept {
     if (dropped_) {
@@ -125,9 +152,13 @@ void Container::drop() noexcept {
     dropped_ = true;
     if (!remove_on_drop_) {
         // A persistent (reusable) handle leaves the container running so a later
-        // run can adopt it; the caller is responsible for removing it.
+        // run can adopt it; the caller is responsible for removing it. Do NOT
+        // fire the stopping hooks — the container is intentionally left running.
         return;
     }
+    // We are about to remove the container: this is a teardown point, so fire
+    // the stopping hooks (once) before removal.
+    fire_stopping();
     try {
         client_.remove_container(id_, /*force*/ true, /*remove_volumes*/ true);
     } catch (...) {

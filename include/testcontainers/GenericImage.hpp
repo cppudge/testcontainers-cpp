@@ -12,6 +12,7 @@
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Healthcheck.hpp"
+#include "testcontainers/Lifecycle.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/Ulimit.hpp"
@@ -352,6 +353,72 @@ public:
         return std::move(*this);
     }
 
+    /// Register a hook fired right after the container is created (id assigned),
+    /// before any copy-to and before start. A throwing created hook aborts
+    /// start() and the partial container is cleaned up. Add several to run them
+    /// in registration order. The hook receives the public DockerClient and the
+    /// container id, so it can inspect/exec/copy via the existing API.
+    GenericImage& with_created_hook(LifecycleHook hook) & {
+        created_hooks_.push_back(std::move(hook));
+        return *this;
+    }
+    GenericImage&& with_created_hook(LifecycleHook hook) && {
+        created_hooks_.push_back(std::move(hook));
+        return std::move(*this);
+    }
+
+    /// Register a hook fired after copy-to and immediately before the container
+    /// is started. A throwing starting hook aborts start() and the partial
+    /// container is cleaned up. Add several to run them in registration order.
+    GenericImage& with_starting_hook(LifecycleHook hook) & {
+        starting_hooks_.push_back(std::move(hook));
+        return *this;
+    }
+    GenericImage&& with_starting_hook(LifecycleHook hook) && {
+        starting_hooks_.push_back(std::move(hook));
+        return std::move(*this);
+    }
+
+    /// Register a hook fired after the container is started AND has become ready
+    /// (wait strategies satisfied), before the handle is returned. A throwing
+    /// started hook aborts start() and the container is cleaned up. Add several
+    /// to run them in registration order.
+    GenericImage& with_started_hook(LifecycleHook hook) & {
+        started_hooks_.push_back(std::move(hook));
+        return *this;
+    }
+    GenericImage&& with_started_hook(LifecycleHook hook) && {
+        started_hooks_.push_back(std::move(hook));
+        return std::move(*this);
+    }
+
+    /// Register a hook fired by the Container when it is being torn down: on an
+    /// explicit stop()/remove(), or on destruction of an auto-removing handle,
+    /// before the container is removed. Fired exactly once and never on a
+    /// persistent (reusable) handle's drop. A throwing stopping hook is swallowed
+    /// (teardown is best-effort). Add several to run them in registration order.
+    GenericImage& with_stopping_hook(LifecycleHook hook) & {
+        stopping_hooks_.push_back(std::move(hook));
+        return *this;
+    }
+    GenericImage&& with_stopping_hook(LifecycleHook hook) && {
+        stopping_hooks_.push_back(std::move(hook));
+        return std::move(*this);
+    }
+
+    /// Retry the whole create→start→wait sequence up to `n` times if an attempt
+    /// fails (each retry creates a brand-new container). Values < 1 are treated
+    /// as 1 (a single attempt, no retry). Mirrors testcontainers
+    /// `withStartupAttempts`.
+    GenericImage& with_startup_attempts(int n) & {
+        startup_attempts_ = n < 1 ? 1 : n;
+        return *this;
+    }
+    GenericImage&& with_startup_attempts(int n) && {
+        startup_attempts_ = n < 1 ? 1 : n;
+        return std::move(*this);
+    }
+
     // --- Getters ---
 
     const std::string& image() const noexcept { return image_; }
@@ -391,6 +458,11 @@ public:
     const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
         return substitutor_;
     }
+    const std::vector<LifecycleHook>& created_hooks() const noexcept { return created_hooks_; }
+    const std::vector<LifecycleHook>& starting_hooks() const noexcept { return starting_hooks_; }
+    const std::vector<LifecycleHook>& started_hooks() const noexcept { return started_hooks_; }
+    const std::vector<LifecycleHook>& stopping_hooks() const noexcept { return stopping_hooks_; }
+    int startup_attempts() const noexcept { return startup_attempts_; }
 
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
@@ -429,6 +501,11 @@ private:
     ImagePullPolicy pull_policy_ = ImagePullPolicy::Default;
     std::function<std::string(const std::string&)> substitutor_;
     bool reuse_ = false;
+    std::vector<LifecycleHook> created_hooks_;  ///< fired after create, before copy/start
+    std::vector<LifecycleHook> starting_hooks_; ///< fired after copy, before start
+    std::vector<LifecycleHook> started_hooks_;  ///< fired after wait-until-ready
+    std::vector<LifecycleHook> stopping_hooks_; ///< fired by the Container on teardown
+    int startup_attempts_ = 1;                  ///< create→start→wait retry count (>=1)
 };
 
 } // namespace testcontainers

@@ -8,6 +8,7 @@
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
+#include "testcontainers/Lifecycle.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
@@ -38,8 +39,11 @@ public:
 
     Container(Container&& other) noexcept
         : client_(std::move(other.client_)), id_(std::move(other.id_)),
-          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_), tty_(other.tty_) {
-        other.dropped_ = true; // the moved-from handle owns nothing
+          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_), tty_(other.tty_),
+          stopping_hooks_(std::move(other.stopping_hooks_)),
+          stopping_fired_(other.stopping_fired_) {
+        other.dropped_ = true;         // the moved-from handle owns nothing
+        other.stopping_fired_ = true;  // ...and must never fire the stopping hooks
     }
 
     Container& operator=(Container&& other) noexcept {
@@ -50,7 +54,10 @@ public:
             dropped_ = other.dropped_;
             remove_on_drop_ = other.remove_on_drop_;
             tty_ = other.tty_;
+            stopping_hooks_ = std::move(other.stopping_hooks_);
+            stopping_fired_ = other.stopping_fired_;
             other.dropped_ = true;
+            other.stopping_fired_ = true;
         }
         return *this;
     }
@@ -128,9 +135,19 @@ public:
     /// after this the destructor does nothing.
     void remove();
 
+    /// Attach the stopping (teardown) lifecycle hooks. Called by
+    /// `GenericImage::start()` on the live handle it returns. The hooks fire once
+    /// at teardown: on stop()/remove(), or on destruction of an auto-removing
+    /// handle (never on a persistent/reusable handle's drop).
+    void set_stopping_hooks(std::vector<LifecycleHook> hooks);
+
 private:
     /// Best-effort force-remove, swallowing any error. Marks the handle dropped.
     void drop() noexcept;
+
+    /// Fire the stopping hooks exactly once, swallowing any exception (teardown
+    /// is best-effort and must never propagate, especially from the destructor).
+    void fire_stopping() noexcept;
 
     // Mutable: the client is just a stateless host config that opens a fresh
     // connection per call, so issuing requests through it is logically const
@@ -141,6 +158,8 @@ private:
     bool dropped_ = false;
     bool remove_on_drop_ = true; ///< false for persistent (reusable) handles
     bool tty_ = false;           ///< container was created with Tty=true (raw log stream)
+    std::vector<LifecycleHook> stopping_hooks_; ///< fired once at teardown
+    bool stopping_fired_ = false;               ///< guard: stopping hooks fired exactly once
 };
 
 } // namespace testcontainers
