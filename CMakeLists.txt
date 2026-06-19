@@ -66,8 +66,8 @@ add_library(testcontainers
     src/Network.cpp
     src/Reaper.cpp
     src/DockerComposeContainer.cpp
+    src/Process.cpp
     src/compose/ComposeCommand.cpp
-    src/compose/Process.cpp
     src/compose/ComposeClients.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)

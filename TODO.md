@@ -57,11 +57,16 @@ review are recorded here so they aren't lost between milestones.
   resource types (named volumes, images) must also be tagged to be reaped. The global `Reaper` has
   no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is
   `AutoRemove`d on exit. Image pinned to `testcontainers/ryuk:0.11.0`.
-- **Registry credential helpers unsupported** — `auth_from_docker_config` reads only plain `auths`
-  (base64) + `identitytoken`; `credsStore`/`credHelpers` (the default on Docker Desktop) return
-  nullopt (no subprocess to `docker-credential-*`). The Docker auth config is also re-read from disk
-  on every pull (no caching). End-to-end private-registry pull isn't integration-tested (needs a
-  reachable authenticated registry; flaky on Docker Desktop).
+- **Registry credential helpers: get-only, uncached** — `resolve_auth_for_image` now resolves
+  `credsStore` (global) / `credHelpers` (per-registry) by shelling out to `docker-credential-<helper>
+  get` (the default on Docker Desktop), with plaintext `auths` still taking precedence
+  (`select_credential_helper` / `parse_credential_helper_output` / `auth_from_credential_helper` in
+  `src/docker/Auth.cpp`, via the moved `src/Process.*` with stdin-redirect support). Known limits /
+  one-line notes: (a) the helper output is NOT cached — it is re-invoked on every pull, alongside the
+  existing per-pull config re-read from disk; (b) only the `get` verb is used (no `store`/`erase`/`list`);
+  (c) end-to-end private-registry pull via a helper still isn't integration-tested against a real
+  private registry (needs a reachable authenticated registry; flaky on Docker Desktop). The smoke test
+  only proves the subprocess+parse path runs without throwing.
 - **copy-to-container: USTAR + one PUT per source** — `build_tar` uses USTAR, which caps entry path
   length (100 chars, 255 with prefix); very long container paths would need the pax format. Each
   `with_copy_to` source is a separate tar + `PUT .../archive` (not batched into one). The target's
@@ -111,8 +116,9 @@ review are recorded here so they aren't lost between milestones.
   `with_build`/`with_pull`, `with_remove_volumes`/`with_remove_images` are supported. Discovery
   is still by the `com.docker.compose.project` label; teardown is `down` + a project-label sweep
   + RAII. Internal split: pure arg-builders in `src/compose/ComposeCommand.*` (unit-tested), a
-  popen-based subprocess helper in `src/compose/Process.*`, and the client implementations +
-  factory in `src/compose/ComposeClients.*`. Known limits / one-line notes:
+  popen-based subprocess helper in `src/Process.*` (`testcontainers::detail`, shared with the
+  credential-helper path), and the client implementations + factory in `src/compose/ComposeClients.*`.
+  Known limits / one-line notes:
   (a) Local mode shells out to the host `docker compose` (the documented compose-only exception
   to "no docker CLI" — strictly inside `LocalComposeClient`);
   (b) local-mode env vars are set on the CHILD PROCESS only (saved/restored around the run via

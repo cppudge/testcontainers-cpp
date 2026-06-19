@@ -1,8 +1,11 @@
-#include "compose/Process.hpp"
+#include "Process.hpp"
 
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <random>
 #include <string>
 
 #include "testcontainers/Error.hpp"
@@ -18,7 +21,7 @@
 #define TC_PCLOSE pclose
 #endif
 
-namespace testcontainers::compose {
+namespace testcontainers::detail {
 
 namespace {
 
@@ -46,7 +49,8 @@ std::string quote_arg(const std::string& arg) {
 }
 
 /// Build the full command line: each argv element quoted and space-joined, an
-/// optional `cd "<dir>" &&` prefix, and a trailing `2>&1` to capture stderr.
+/// optional `cd "<dir>" &&` prefix, an optional `< "<stdin-file>"` redirection,
+/// and a trailing `2>&1` to capture stderr.
 ///
 /// On Windows, `_popen` runs `cmd.exe /c <line>`. cmd has a notorious rule: when
 /// the line begins with a quote, it strips the FIRST and LAST quote of the whole
@@ -54,7 +58,8 @@ std::string quote_arg(const std::string& arg) {
 /// (`cmd /?`) is to wrap the ENTIRE line in one more pair of quotes, so cmd's
 /// strip removes that outer pair and leaves our real, per-arg quoting intact.
 std::string build_command_line(const std::vector<std::string>& argv,
-                               const std::optional<std::string>& working_dir) {
+                               const std::optional<std::string>& working_dir,
+                               const std::optional<std::string>& stdin_file) {
     std::string cmd;
     if (working_dir.has_value()) {
         cmd += "cd ";
@@ -67,12 +72,32 @@ std::string build_command_line(const std::vector<std::string>& argv,
         }
         cmd += quote_arg(argv[i]);
     }
+    if (stdin_file.has_value()) {
+        // Redirect stdin from the temp file. cmd/sh both accept `< "path"`; this
+        // must come before `2>&1` and is a plain redirection (not an argv token).
+        cmd += " < ";
+        cmd += quote_arg(*stdin_file);
+    }
     cmd += " 2>&1";
 #if defined(_WIN32)
     // Wrap the whole line so cmd's first/last-quote stripping is a no-op on it.
     cmd = "\"" + cmd + "\"";
 #endif
     return cmd;
+}
+
+/// Generate a random lowercase-hex id, mirroring the random_device + hex idiom
+/// used elsewhere in the repo (Reaper.cpp, Network.cpp).
+std::string random_hex(std::size_t chars) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::random_device rd;
+    std::uniform_int_distribution<int> dist(0, 15);
+    std::string out;
+    out.reserve(chars);
+    for (std::size_t i = 0; i < chars; ++i) {
+        out.push_back(hex[dist(rd)]);
+    }
+    return out;
 }
 
 /// Read an environment variable, returning nullopt when unset. (On Windows
@@ -116,7 +141,20 @@ void set_env(const std::string& name, const std::optional<std::string>& value) {
 
 ProcessResult run_process(const std::vector<std::string>& argv,
                           const std::optional<std::string>& working_dir,
-                          const std::vector<std::pair<std::string, std::string>>& env) {
+                          const std::vector<std::pair<std::string, std::string>>& env,
+                          const std::optional<std::string>& stdin_data) {
+    // When stdin is requested, stage it in a temp file we redirect from (popen is
+    // unidirectional, so we cannot write to the child's stdin over the pipe).
+    std::optional<std::string> stdin_file;
+    if (stdin_data.has_value()) {
+        const std::filesystem::path path =
+            std::filesystem::temp_directory_path() / ("tc-stdin-" + random_hex(16) + ".tmp");
+        std::ofstream out(path, std::ios::binary);
+        out.write(stdin_data->data(), static_cast<std::streamsize>(stdin_data->size()));
+        out.close();
+        stdin_file = path.string();
+    }
+
     // Save prior values, apply the requested env, run, then restore.
     std::vector<std::pair<std::string, std::optional<std::string>>> saved;
     saved.reserve(env.size());
@@ -125,15 +163,19 @@ ProcessResult run_process(const std::vector<std::string>& argv,
         set_env(key, value);
     }
 
-    const std::string command = build_command_line(argv, working_dir);
+    const std::string command = build_command_line(argv, working_dir, stdin_file);
 
     ProcessResult result;
     std::string output;
     FILE* pipe = TC_POPEN(command.c_str(), "r");
     if (pipe == nullptr) {
-        // Restore env before throwing.
+        // Restore env and drop the temp file before throwing.
         for (const auto& [key, prior] : saved) {
             set_env(key, prior);
+        }
+        if (stdin_file.has_value()) {
+            std::error_code ec;
+            std::filesystem::remove(*stdin_file, ec);
         }
         throw DockerError("run_process: failed to start '" + command + "'");
     }
@@ -151,6 +193,12 @@ ProcessResult run_process(const std::vector<std::string>& argv,
         set_env(key, prior);
     }
 
+    // Best-effort cleanup of the staged stdin file.
+    if (stdin_file.has_value()) {
+        std::error_code ec;
+        std::filesystem::remove(*stdin_file, ec);
+    }
+
 #if defined(_WIN32)
     result.exit_code = status; // _pclose returns the child's exit code directly
 #else
@@ -160,4 +208,4 @@ ProcessResult run_process(const std::vector<std::string>& argv,
     return result;
 }
 
-} // namespace testcontainers::compose
+} // namespace testcontainers::detail

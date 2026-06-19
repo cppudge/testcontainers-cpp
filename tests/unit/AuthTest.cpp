@@ -23,6 +23,14 @@
 //   Auth.AuthFromConfigMissingEntry - a registry absent from "auths" yields nullopt.
 //   Auth.AuthFromConfigHelperOnly - a config with only credsStore/credHelpers (no usable auths entry) yields nullopt.
 //   Auth.AuthFromConfigInvalidJson - malformed config JSON yields nullopt rather than throwing.
+//   Auth.SelectCredentialHelperPerRegistryWins - a credHelpers[<registry>] entry overrides the global credsStore.
+//   Auth.SelectCredentialHelperFallsBackToStore - credsStore is used when no per-registry credHelpers entry matches.
+//   Auth.SelectCredentialHelperHubAlias - the legacy https://index.docker.io/v1/ credHelpers key matches the Hub registry.
+//   Auth.SelectCredentialHelperNoneConfigured - a config with neither credHelpers nor credsStore yields nullopt.
+//   Auth.ParseCredentialHelperOutputBasic - a {"ServerURL","Username","Secret"} payload yields username/password/server.
+//   Auth.ParseCredentialHelperOutputIdentityToken - a "<token>" username yields an identity token (no user/pass).
+//   Auth.ParseCredentialHelperOutputEmpty - empty/blank-credential helper output yields nullopt.
+//   Auth.ParseCredentialHelperOutputInvalidJson - malformed helper JSON yields nullopt rather than throwing.
 //   Auth.EncodeXRegistryAuthBasic - encode_x_registry_auth base64-encodes JSON with username/password/serveraddress.
 //   Auth.EncodeXRegistryAuthIdentityToken - encode_x_registry_auth emits identitytoken/serveraddress (no user/pass) when a token is set.
 //   Auth.ApplyHubImagePrefixHubImage - a Docker Hub image gets the corporate-mirror prefix prepended.
@@ -39,7 +47,9 @@ using testcontainers::docker::auth_from_docker_config;
 using testcontainers::docker::base64_decode;
 using testcontainers::docker::base64_encode;
 using testcontainers::docker::encode_x_registry_auth;
+using testcontainers::docker::parse_credential_helper_output;
 using testcontainers::docker::resolve_registry;
+using testcontainers::docker::select_credential_helper;
 
 TEST(Auth, Base64EncodeKnownVectors) {
     // RFC 4648 §10 test vectors.
@@ -169,6 +179,73 @@ TEST(Auth, AuthFromConfigHelperOnly) {
 
 TEST(Auth, AuthFromConfigInvalidJson) {
     EXPECT_FALSE(auth_from_docker_config("not json {", "ghcr.io").has_value());
+}
+
+TEST(Auth, SelectCredentialHelperPerRegistryWins) {
+    // A per-registry credHelpers entry beats the global credsStore.
+    const std::string config = R"({
+        "credsStore": "global",
+        "credHelpers": { "ghcr.io": "ghcr-helper" }
+    })";
+    const auto helper = select_credential_helper(config, "ghcr.io");
+    ASSERT_TRUE(helper.has_value());
+    EXPECT_EQ(*helper, "ghcr-helper");
+}
+
+TEST(Auth, SelectCredentialHelperFallsBackToStore) {
+    // No per-registry helper for quay.io, so the global credsStore is used.
+    const std::string config = R"({
+        "credsStore": "global",
+        "credHelpers": { "ghcr.io": "ghcr-helper" }
+    })";
+    const auto helper = select_credential_helper(config, "quay.io");
+    ASSERT_TRUE(helper.has_value());
+    EXPECT_EQ(*helper, "global");
+}
+
+TEST(Auth, SelectCredentialHelperHubAlias) {
+    // The Hub registry matches the legacy https://index.docker.io/v1/ key.
+    const std::string config = R"({
+        "credHelpers": { "https://index.docker.io/v1/": "hub-helper" }
+    })";
+    const auto helper = select_credential_helper(config, "index.docker.io");
+    ASSERT_TRUE(helper.has_value());
+    EXPECT_EQ(*helper, "hub-helper");
+}
+
+TEST(Auth, SelectCredentialHelperNoneConfigured) {
+    EXPECT_FALSE(select_credential_helper(R"({"auths":{}})", "ghcr.io").has_value());
+}
+
+TEST(Auth, ParseCredentialHelperOutputBasic) {
+    const std::string out = R"({"ServerURL":"ghcr.io","Username":"me","Secret":"pw"})";
+    const auto auth = parse_credential_helper_output(out, "ghcr.io");
+    ASSERT_TRUE(auth.has_value());
+    EXPECT_EQ(auth->username, "me");
+    EXPECT_EQ(auth->password, "pw");
+    EXPECT_EQ(auth->server, "ghcr.io");
+    EXPECT_TRUE(auth->identity_token.empty());
+}
+
+TEST(Auth, ParseCredentialHelperOutputIdentityToken) {
+    // A "<token>" username means Secret is an identity token, not a password.
+    const std::string out = R"({"ServerURL":"index.docker.io","Username":"<token>","Secret":"tok"})";
+    const auto auth = parse_credential_helper_output(out, "index.docker.io");
+    ASSERT_TRUE(auth.has_value());
+    EXPECT_EQ(auth->identity_token, "tok");
+    EXPECT_TRUE(auth->username.empty());
+    EXPECT_TRUE(auth->password.empty());
+    EXPECT_EQ(auth->server, "index.docker.io");
+}
+
+TEST(Auth, ParseCredentialHelperOutputEmpty) {
+    EXPECT_FALSE(parse_credential_helper_output("", "ghcr.io").has_value());
+    EXPECT_FALSE(
+        parse_credential_helper_output(R"({"Username":"","Secret":""})", "ghcr.io").has_value());
+}
+
+TEST(Auth, ParseCredentialHelperOutputInvalidJson) {
+    EXPECT_FALSE(parse_credential_helper_output("not json {", "ghcr.io").has_value());
 }
 
 TEST(Auth, EncodeXRegistryAuthBasic) {

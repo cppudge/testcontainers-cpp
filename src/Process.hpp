@@ -5,11 +5,12 @@
 #include <utility>
 #include <vector>
 
-// A small cross-platform subprocess helper used ONLY by the local compose
-// client (the documented compose-only exception to the library's "no docker
-// CLI" rule). No Boost here — just the C runtime's popen/pclose.
+// A small cross-platform subprocess helper. Originally written for the local
+// compose client (the documented compose-only exception to the library's "no
+// docker CLI" rule), it is also used to drive Docker credential helpers. No
+// Boost here — just the C runtime's popen/pclose.
 
-namespace testcontainers::compose {
+namespace testcontainers::detail {
 
 /// The outcome of running a child process: its exit code and combined output.
 struct ProcessResult {
@@ -34,8 +35,15 @@ struct ProcessResult {
 /// `setenv` immediately before the run and RESTORED to their prior values (or
 /// unset if previously absent) immediately after, so the parent environment is
 /// left untouched.
+///
+/// `stdin_data`, when set, is fed to the child on its stdin. Since popen is
+/// unidirectional, we write the data to a temp file and append an (unquoted)
+/// `< "<tempfile>"` redirection to the command line; the temp file is deleted
+/// (best-effort) after the child exits. When nullopt the child inherits the
+/// parent's stdin (the original behaviour).
 ProcessResult run_process(const std::vector<std::string>& argv,
                           const std::optional<std::string>& working_dir = std::nullopt,
-                          const std::vector<std::pair<std::string, std::string>>& env = {});
+                          const std::vector<std::pair<std::string, std::string>>& env = {},
+                          const std::optional<std::string>& stdin_data = std::nullopt);
 
-} // namespace testcontainers::compose
+} // namespace testcontainers::detail

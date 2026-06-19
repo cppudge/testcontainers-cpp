@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Process.hpp"
+
 namespace testcontainers::docker {
 
 namespace {
@@ -139,10 +141,9 @@ std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_js
 
     const auto auths = root.find("auths");
     if (auths == root.end() || !auths->is_object()) {
-        // Credential helpers (credsStore / credHelpers) are out of scope — we do
-        // not shell out to them, so without an "auths" entry there is nothing to
-        // return. TODO(reviewer): support credsStore/credHelpers via the helper
-        // protocol if private images behind a helper are needed.
+        // No plaintext "auths" map — there is nothing for THIS pure lookup to
+        // return. A credential helper (credsStore / credHelpers), if configured,
+        // is resolved by select_credential_helper / auth_from_credential_helper.
         return std::nullopt;
     }
 
@@ -186,6 +187,102 @@ std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_js
     return auth;
 }
 
+std::optional<std::string> select_credential_helper(const std::string& config_json,
+                                                    const std::string& registry) {
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(config_json);
+    } catch (const nlohmann::json::parse_error&) {
+        return std::nullopt;
+    }
+    if (!root.is_object()) {
+        return std::nullopt;
+    }
+
+    // A per-registry credHelpers entry wins over the global credsStore. For
+    // Docker Hub also try the legacy "https://index.docker.io/v1/" key.
+    if (const auto helpers = root.find("credHelpers");
+        helpers != root.end() && helpers->is_object()) {
+        auto entry = helpers->find(registry);
+        if (entry == helpers->end() && registry == kDockerHub) {
+            entry = helpers->find(kDockerHubAuthKey);
+        }
+        if (entry != helpers->end() && entry->is_string() && !entry->get<std::string>().empty()) {
+            return entry->get<std::string>();
+        }
+    }
+
+    if (const auto store = root.find("credsStore");
+        store != root.end() && store->is_string() && !store->get<std::string>().empty()) {
+        return store->get<std::string>();
+    }
+
+    return std::nullopt;
+}
+
+std::optional<RegistryAuth> parse_credential_helper_output(const std::string& helper_json,
+                                                           const std::string& registry) {
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(helper_json);
+    } catch (const nlohmann::json::parse_error&) {
+        return std::nullopt;
+    }
+    if (!root.is_object()) {
+        return std::nullopt;
+    }
+
+    std::string username;
+    std::string secret;
+    std::string server_url;
+    if (const auto user = root.find("Username"); user != root.end() && user->is_string()) {
+        username = user->get<std::string>();
+    }
+    if (const auto sec = root.find("Secret"); sec != root.end() && sec->is_string()) {
+        secret = sec->get<std::string>();
+    }
+    if (const auto url = root.find("ServerURL"); url != root.end() && url->is_string()) {
+        server_url = url->get<std::string>();
+    }
+
+    if (username.empty() && secret.empty()) {
+        return std::nullopt; // helper returned nothing usable
+    }
+
+    RegistryAuth auth;
+    auth.server = server_url.empty() ? registry : server_url;
+    // A "<token>" username signals that Secret is an identity token, not a
+    // password (the documented credential-helper convention).
+    if (username == "<token>") {
+        auth.identity_token = secret;
+    } else {
+        auth.username = username;
+        auth.password = secret;
+    }
+    return auth;
+}
+
+std::optional<RegistryAuth> auth_from_credential_helper(const std::string& helper,
+                                                        const std::string& registry) {
+    // The server URL written to the helper's stdin: Docker Hub uses the legacy
+    // index URL, everything else uses the registry host verbatim.
+    const std::string server_url = (registry == kDockerHub) ? kDockerHubAuthKey : registry;
+    try {
+        const detail::ProcessResult result = detail::run_process(
+            {"docker-credential-" + helper, "get"}, std::nullopt, {}, server_url);
+        if (result.exit_code != 0) {
+            // Non-zero exit means "credentials not found" (or a missing binary) —
+            // not an error, just no creds for this registry.
+            return std::nullopt;
+        }
+        return parse_credential_helper_output(result.output, registry);
+    } catch (...) {
+        // A failure to start the helper / odd output must never propagate; it
+        // simply means we fall back to an anonymous pull.
+        return std::nullopt;
+    }
+}
+
 std::string read_docker_auth_config() {
     if (const char* inline_cfg = std::getenv("DOCKER_AUTH_CONFIG");
         inline_cfg && *inline_cfg) {
@@ -227,7 +324,13 @@ std::string encode_x_registry_auth(const RegistryAuth& auth) {
 std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image) {
     const std::string registry = resolve_registry(image);
     const std::string config = read_docker_auth_config();
-    return auth_from_docker_config(config, registry);
+    if (auto plain = auth_from_docker_config(config, registry)) {
+        return plain; // a plaintext "auths" entry wins
+    }
+    if (auto helper = select_credential_helper(config, registry)) {
+        return auth_from_credential_helper(*helper, registry);
+    }
+    return std::nullopt;
 }
 
 std::string apply_hub_image_prefix(const std::string& image, const std::string& prefix) {

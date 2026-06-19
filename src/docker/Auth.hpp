@@ -31,10 +31,33 @@ std::string resolve_registry(const std::string& image);
 /// Reads `auths[<registry>]` (also trying the Docker Hub alias
 /// "https://index.docker.io/v1/" when registry == "index.docker.io"); decodes a
 /// base64 `auth` field into username:password, or uses an `identitytoken`.
-/// Returns nullopt when there is no matching entry (or only a credential helper,
-/// which is out of scope — see read_docker_auth_config). Sets `server`=registry.
+/// Returns nullopt when there is no matching plaintext entry (a credential
+/// helper, if configured, is resolved separately — see
+/// select_credential_helper / auth_from_credential_helper). Sets
+/// `server`=registry.
 std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_json,
                                                     const std::string& registry);
+
+/// Pick the credential helper for `registry` from a parsed Docker config: a
+/// per-registry `credHelpers[<registry>]` wins, else the global `credsStore`.
+/// Returns the helper NAME (e.g. "desktop") or nullopt. Pure (no subprocess).
+/// For the Hub registry ("index.docker.io") also matches the
+/// "https://index.docker.io/v1/" credHelpers key.
+std::optional<std::string> select_credential_helper(const std::string& config_json,
+                                                    const std::string& registry);
+
+/// Parse a `docker-credential-<helper> get` stdout JSON
+/// ({"ServerURL","Username","Secret"}) into a RegistryAuth. Username "<token>"
+/// means Secret is an identity token. Returns nullopt if the JSON is missing
+/// creds. Pure.
+std::optional<RegistryAuth> parse_credential_helper_output(const std::string& helper_json,
+                                                           const std::string& registry);
+
+/// Run `docker-credential-<helper> get` with the registry server URL on stdin
+/// and parse the result. Hub uses "https://index.docker.io/v1/" as the URL.
+/// Returns nullopt on a non-zero exit / "not found" / unparseable output.
+std::optional<RegistryAuth> auth_from_credential_helper(const std::string& helper,
+                                                        const std::string& registry);
 
 /// Return the Docker auth config JSON per precedence:
 ///   1. DOCKER_AUTH_CONFIG env (used directly as the JSON)
@@ -49,8 +72,11 @@ std::string read_docker_auth_config();
 /// "serveraddress":...}.
 std::string encode_x_registry_auth(const RegistryAuth& auth);
 
-/// Convenience: resolve_registry(image) + read_docker_auth_config() +
-/// auth_from_docker_config(...). Returns nullopt when no credentials apply.
+/// Convenience: resolve_registry(image) + read_docker_auth_config(), then a
+/// plaintext `auths` lookup (auth_from_docker_config), falling back to a
+/// credential helper (select_credential_helper + auth_from_credential_helper)
+/// when one is configured. Returns nullopt when no credentials apply. Never
+/// throws — a missing/odd helper just yields nullopt (anonymous pull).
 std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image);
 
 /// Apply a Docker-Hub image-name prefix (e.g. a corporate registry mirror). The

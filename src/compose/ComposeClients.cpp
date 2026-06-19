@@ -1,6 +1,6 @@
 #include "compose/ComposeClients.hpp"
 
-#include "compose/Process.hpp"
+#include "Process.hpp"
 
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Error.hpp"
@@ -54,8 +54,8 @@ public:
         const std::vector<std::string> up_args = build_compose_up_args(local);
         argv.insert(argv.end(), up_args.begin(), up_args.end());
 
-        const ProcessResult result =
-            run_process(argv, /*working_dir*/ std::nullopt, command.env);
+        const detail::ProcessResult result =
+            detail::run_process(argv, /*working_dir*/ std::nullopt, command.env);
         if (result.exit_code != 0) {
             throw DockerError("docker compose up exited with status " +
                               std::to_string(result.exit_code) + ":\n" + result.output);
@@ -74,7 +74,7 @@ public:
         const std::vector<std::string> down_args = build_compose_down_args(command);
         argv.insert(argv.end(), down_args.begin(), down_args.end());
 
-        const ProcessResult result = run_process(argv);
+        const detail::ProcessResult result = detail::run_process(argv);
         if (result.exit_code != 0) {
             throw DockerError("docker compose down exited with status " +
                               std::to_string(result.exit_code) + ":\n" + result.output);
@@ -241,7 +241,7 @@ private:
 /// `docker compose version` exiting 0 means we can use the local client.
 bool host_docker_compose_available() {
     try {
-        const ProcessResult result = run_process({"docker", "compose", "version"});
+        const detail::ProcessResult result = detail::run_process({"docker", "compose", "version"});
         return result.exit_code == 0;
     } catch (...) {
         return false;
