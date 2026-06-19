@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "docker/Ports.hpp"
 #include "docker/Tar.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -15,22 +16,56 @@ namespace testcontainers {
 std::uint16_t Container::get_host_port(ContainerPort port) const {
     const ContainerInspect info = client_.inspect_container(id_);
     const std::string key = to_string(port); // e.g. "6379/tcp"
-
-    const auto it = info.ports.find(key);
-    if (it == info.ports.end() || it->second.empty()) {
+    const auto host_port =
+        docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    if (!host_port) {
         throw DockerError("Container " + id_ + " has no published host port for " + key);
     }
-    // Docker may publish different host ports for the IPv4 (0.0.0.0) and IPv6
-    // (::) bindings of the same container port. Prefer the IPv4 binding so a
-    // connection to a "localhost" that resolves to 127.0.0.1 reaches the right
-    // port; fall back to the first binding if only IPv6 is published.
-    for (const PortBinding& binding : it->second) {
-        if (binding.host_ip.find(':') == std::string::npos) { // IPv4 (or empty host IP)
-            return binding.host_port;
-        }
-    }
-    return it->second.front().host_port;
+    return *host_port;
 }
+
+std::uint16_t Container::get_host_port_ipv4(ContainerPort port) const {
+    const ContainerInspect info = client_.inspect_container(id_);
+    const std::string key = to_string(port);
+    const auto host_port =
+        docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv4);
+    if (!host_port) {
+        throw DockerError("Container " + id_ + " has no IPv4-published host port for " + key);
+    }
+    return *host_port;
+}
+
+std::uint16_t Container::get_host_port_ipv6(ContainerPort port) const {
+    const ContainerInspect info = client_.inspect_container(id_);
+    const std::string key = to_string(port);
+    const auto host_port =
+        docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv6);
+    if (!host_port) {
+        throw DockerError("Container " + id_ + " has no IPv6-published host port for " + key);
+    }
+    return *host_port;
+}
+
+std::uint16_t Container::first_mapped_port() const {
+    // When we know the exposed-port order (set by GenericImage::start), the FIRST
+    // declared port is the natural "the" port — resolve it directly.
+    if (!exposed_ports_.empty()) {
+        return get_host_port(exposed_ports_.front());
+    }
+    // Otherwise (an adopted / manually-constructed handle) fall back to the
+    // lowest-numbered published container port.
+    const ContainerInspect info = client_.inspect_container(id_);
+    const auto host_port =
+        docker::lowest_published_host_port(info.ports, docker::HostPortFamily::Any);
+    if (!host_port) {
+        throw DockerError("Container " + id_ + " publishes no ports");
+    }
+    return *host_port;
+}
+
+ContainerInspect Container::inspect() const { return client_.inspect_container(id_); }
+
+std::string Container::inspect_raw() const { return client_.inspect_container_raw(id_); }
 
 ContainerLogs Container::logs() const {
     LogOptions opts;
@@ -125,6 +160,10 @@ void Container::remove() { drop(); }
 
 void Container::set_stopping_hooks(std::vector<LifecycleHook> hooks) {
     stopping_hooks_ = std::move(hooks);
+}
+
+void Container::set_exposed_ports(std::vector<ContainerPort> ports) {
+    exposed_ports_ = std::move(ports);
 }
 
 void Container::fire_stopping() noexcept {

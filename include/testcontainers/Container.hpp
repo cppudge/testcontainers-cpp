@@ -40,6 +40,7 @@ public:
     Container(Container&& other) noexcept
         : client_(std::move(other.client_)), id_(std::move(other.id_)),
           dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_), tty_(other.tty_),
+          exposed_ports_(std::move(other.exposed_ports_)),
           stopping_hooks_(std::move(other.stopping_hooks_)),
           stopping_fired_(other.stopping_fired_) {
         other.dropped_ = true;         // the moved-from handle owns nothing
@@ -54,6 +55,7 @@ public:
             dropped_ = other.dropped_;
             remove_on_drop_ = other.remove_on_drop_;
             tty_ = other.tty_;
+            exposed_ports_ = std::move(other.exposed_ports_);
             stopping_hooks_ = std::move(other.stopping_hooks_);
             stopping_fired_ = other.stopping_fired_;
             other.dropped_ = true;
@@ -81,9 +83,34 @@ public:
     /// unix socket / named pipe, otherwise the daemon hostname).
     std::string host() const { return client_.host().http_host(); }
 
-    /// The host port Docker published for the given container port. Throws
+    /// The host port Docker published for the given container port. Prefers the
+    /// IPv4 binding, falling back to the first (e.g. IPv6-only) binding. Throws
     /// DockerError if the port is not exposed/published.
     std::uint16_t get_host_port(ContainerPort port) const;
+
+    /// The host port Docker published on an IPv4 address (host_ip "0.0.0.0" or
+    /// empty) for `port`. Throws DockerError if there is no IPv4 binding.
+    std::uint16_t get_host_port_ipv4(ContainerPort port) const;
+
+    /// The host port Docker published on an IPv6 address (host_ip contains ':')
+    /// for `port`. Throws DockerError if there is no IPv6 binding.
+    std::uint16_t get_host_port_ipv6(ContainerPort port) const;
+
+    /// The mapped host port of the container's FIRST exposed port (the order
+    /// passed to `GenericImage::with_exposed_port`); convenience for the common
+    /// single-port container. IPv4 binding preferred. When the exposed-port order
+    /// is unknown (e.g. an adopted / manually-constructed handle) this falls back
+    /// to the lowest-numbered published container port. Throws DockerError if the
+    /// container publishes no ports.
+    std::uint16_t first_mapped_port() const;
+
+    /// A structured snapshot of the container (`GET /containers/{id}/json`).
+    ContainerInspect inspect() const;
+
+    /// The RAW inspect JSON body (`GET /containers/{id}/json`), so callers can
+    /// read any field `ContainerInspect` does not model. Throws DockerError if the
+    /// container is gone.
+    std::string inspect_raw() const;
 
     /// A snapshot of the container's stdout / stderr logs.
     ContainerLogs logs() const;
@@ -141,6 +168,13 @@ public:
     /// handle (never on a persistent/reusable handle's drop).
     void set_stopping_hooks(std::vector<LifecycleHook> hooks);
 
+    /// Record the ports the user exposed, in the order they were declared (via
+    /// `GenericImage::with_exposed_port`). Called by `GenericImage::start()` on
+    /// the live handle it returns. Purely informational — it lets
+    /// `first_mapped_port()` resolve the FIRST exposed port rather than guessing
+    /// the lowest-numbered published port.
+    void set_exposed_ports(std::vector<ContainerPort> ports);
+
 private:
     /// Best-effort force-remove, swallowing any error. Marks the handle dropped.
     void drop() noexcept;
@@ -158,6 +192,7 @@ private:
     bool dropped_ = false;
     bool remove_on_drop_ = true; ///< false for persistent (reusable) handles
     bool tty_ = false;           ///< container was created with Tty=true (raw log stream)
+    std::vector<ContainerPort> exposed_ports_;  ///< exposed ports in declared order (for first_mapped_port)
     std::vector<LifecycleHook> stopping_hooks_; ///< fired once at teardown
     bool stopping_fired_ = false;               ///< guard: stopping hooks fired exactly once
 };

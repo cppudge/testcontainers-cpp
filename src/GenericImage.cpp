@@ -126,6 +126,7 @@ Container GenericImage::start() const {
         // config — opening a fresh connection per call).
         Container c(client, id, remove_on_drop, tty_);
         c.set_stopping_hooks(stopping_hooks_);
+        c.set_exposed_ports(exposed_ports_);
         return c;
     };
 
@@ -177,6 +178,7 @@ Container GenericImage::start() const {
                 detail::wait_until_ready(client, m.id, waits_, startup_timeout_, tty_);
                 Container c(std::move(client), m.id, /*remove_on_drop*/ false, tty_);
                 c.set_stopping_hooks(stopping_hooks_);
+                c.set_exposed_ports(exposed_ports_);
                 return c;
             }
         }

@@ -236,7 +236,7 @@ void DockerClient::start_container(const std::string& id) {
     }
 }
 
-ContainerInspect DockerClient::inspect_container(const std::string& id) {
+std::string DockerClient::inspect_container_raw(const std::string& id) {
     const Response res = request("GET", "/containers/" + id + "/json");
     if (res.status_code == 404) {
         throw DockerError("Container not found: " + id);
@@ -245,7 +245,11 @@ ContainerInspect DockerClient::inspect_container(const std::string& id) {
         throw DockerError("inspect_container(" + id + ") failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
-    return docker::parse_inspect(res.body);
+    return res.body;
+}
+
+ContainerInspect DockerClient::inspect_container(const std::string& id) {
+    return docker::parse_inspect(inspect_container_raw(id));
 }
 
 std::vector<ContainerSummary> DockerClient::list_containers(

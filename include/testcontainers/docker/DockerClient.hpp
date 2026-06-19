@@ -94,6 +94,11 @@ public:
     /// `GET /containers/{id}/json` — throws DockerError if the container is gone.
     ContainerInspect inspect_container(const std::string& id);
 
+    /// `GET /containers/{id}/json` — the RAW response body (the full inspect JSON),
+    /// so callers can read any field `ContainerInspect` does not model. Throws
+    /// DockerError if the container is gone (404) or the daemon returns a non-200.
+    std::string inspect_container_raw(const std::string& id);
+
     /// `GET /containers/json` filtered by label equality. `all` includes stopped
     /// containers. `label_filters` become Docker's filters={"label":["k=v",...]}.
     std::vector<ContainerSummary> list_containers(

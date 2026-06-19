@@ -125,6 +125,7 @@ if(BUILD_TESTING)
         tests/unit/AuthTest.cpp
         tests/unit/LogDemuxTest.cpp
         tests/unit/ContainerPortTest.cpp
+        tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp
         tests/unit/HealthcheckTest.cpp
         tests/unit/MountTest.cpp
@@ -155,6 +156,7 @@ if(BUILD_TESTING)
         tests/integration/LifecycleTest.cpp
         tests/integration/ContainerLogsTest.cpp
         tests/integration/ContainerConfigTest.cpp
+        tests/integration/PortGettersTest.cpp
         tests/integration/RedisMvpTest.cpp
         tests/integration/WaitStrategiesTest.cpp
         tests/integration/ExecTest.cpp

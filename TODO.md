@@ -56,10 +56,17 @@ review are recorded here so they aren't lost between milestones.
   (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
 - **One connection per request** — `request()` opens/closes a transport each call
   (no keep-alive / pooling).
-- **`get_host_port` IPv4/IPv6** — now prefers the IPv4 binding, but there are no
-  explicit `get_host_port_ipv4/ipv6` accessors (cf. Rust's ipv4/ipv6 maps), and it
-  re-inspects the container on every call (no caching of the published ports).
-  (`src/Container.cpp`)
+- **port + inspect getters (done, uncached)** — `Container` now has `get_host_port` (IPv4-preferred),
+  explicit `get_host_port_ipv4`/`get_host_port_ipv6` (throw if that family isn't published),
+  `first_mapped_port()` (the FIRST exposed port via the order recorded by `start()`, else the
+  lowest-numbered published port), `inspect()` (structured `ContainerInspect`) and `inspect_raw()` (the
+  full inspect JSON string for fields we don't model). The binding-selection logic is a pure, unit-tested
+  helper (`src/docker/Ports.hpp`: `select_host_port`/`lowest_published_host_port`). Known limits:
+  (a) every getter re-inspects the container (no caching of the published ports); (b) `WaitStrategies.cpp`
+  `mapped_host_port` still re-implements the IPv4-preference instead of reusing `docker::select_host_port`
+  — fold it onto the shared helper; (c) `first_mapped_port`'s exposed-order is only known for handles
+  returned by `start()` (adopted/manual handles fall back to lowest-numbered).
+  (`src/Container.cpp`, `src/docker/Ports.hpp`)
 - **Log-wait polling cost** — the log wait re-fetches the full `tail=all` snapshot
   every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
   item above). (`src/WaitStrategies.cpp`)
