@@ -180,6 +180,21 @@ public:
     /// `DELETE /networks/{id}` — remove a network (204 expected).
     void remove_network(const std::string& id);
 
+    // --- Volume operations ---
+
+    /// `POST /volumes/create` — create a named volume (201 expected), returning
+    /// the daemon's `Name` for it. `spec.labels` are emitted as the volume's
+    /// `Labels` map (e.g. for Ryuk reaping). Throws DockerError otherwise.
+    std::string create_volume(const VolumeCreateSpec& spec);
+
+    /// `GET /volumes/{name}` — inspect a volume (200 expected). Throws DockerError
+    /// on any non-200 (in particular 404 when the volume does not exist).
+    VolumeInspect inspect_volume(const std::string& name);
+
+    /// `DELETE /volumes/{name}?force=<bool>` — remove a volume (204 expected).
+    /// Throws DockerError on any non-204 (404 if absent, 409 if still in use).
+    void remove_volume(const std::string& name, bool force = false);
+
 private:
     DockerHost host_;
 };

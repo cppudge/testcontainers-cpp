@@ -212,6 +212,54 @@ nlohmann::json build_network_create_body(const NetworkCreateSpec& spec) {
     return body;
 }
 
+nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec) {
+    nlohmann::json body;
+    body["Name"] = spec.name;
+
+    if (spec.driver) {
+        body["Driver"] = *spec.driver;
+    }
+    if (!spec.driver_opts.empty()) {
+        nlohmann::json opts = nlohmann::json::object();
+        for (const auto& [key, value] : spec.driver_opts) {
+            opts[key] = value;
+        }
+        body["DriverOpts"] = std::move(opts);
+    }
+    if (!spec.labels.empty()) {
+        nlohmann::json labels = nlohmann::json::object();
+        for (const auto& [key, value] : spec.labels) {
+            labels[key] = value;
+        }
+        body["Labels"] = std::move(labels);
+    }
+
+    return body;
+}
+
+VolumeInspect parse_volume_inspect(const std::string& body) {
+    const nlohmann::json json = nlohmann::json::parse(body);
+
+    VolumeInspect info;
+    info.name = json.value("Name", std::string{});
+    info.driver = json.value("Driver", std::string{});
+    info.mountpoint = json.value("Mountpoint", std::string{});
+    info.scope = json.value("Scope", std::string{});
+
+    if (const auto labels = json.find("Labels"); labels != json.end() && labels->is_object()) {
+        for (const auto& [key, value] : labels->items()) {
+            info.labels.emplace(key, value.get<std::string>());
+        }
+    }
+    if (const auto options = json.find("Options"); options != json.end() && options->is_object()) {
+        for (const auto& [key, value] : options->items()) {
+            info.options.emplace(key, value.get<std::string>());
+        }
+    }
+
+    return info;
+}
+
 std::string parse_server_os(const std::string& version_json) {
     const nlohmann::json json = nlohmann::json::parse(version_json);
     return json.value("Os", std::string{});

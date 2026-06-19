@@ -730,4 +730,38 @@ void DockerClient::remove_network(const std::string& id) {
     }
 }
 
+std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
+    const std::string body = docker::build_volume_create_body(spec).dump();
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+
+    const Response res = request("POST", "/volumes/create", body, headers);
+    if (res.status_code != 201) {
+        throw DockerError("create_volume('" + spec.name + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    return nlohmann::json::parse(res.body).at("Name").get<std::string>();
+}
+
+VolumeInspect DockerClient::inspect_volume(const std::string& name) {
+    const Response res = request("GET", "/volumes/" + url_encode(name));
+    if (res.status_code != 200) {
+        // 404 here means "no such volume" — surfaced to callers as a DockerError.
+        throw DockerError("inspect_volume('" + name + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+    return docker::parse_volume_inspect(res.body);
+}
+
+void DockerClient::remove_volume(const std::string& name, bool force) {
+    const std::string target =
+        "/volumes/" + url_encode(name) + "?force=" + (force ? "true" : "false");
+    const Response res = request("DELETE", target);
+    if (res.status_code != 204) {
+        // 404 (absent) or 409 (still in use) both arrive here.
+        throw DockerError("remove_volume('" + name + "') failed: HTTP " +
+                          std::to_string(res.status_code) + " " + res.body);
+    }
+}
+
 } // namespace testcontainers

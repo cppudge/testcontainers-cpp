@@ -33,6 +33,10 @@
 //   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
 //   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
 //   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
+//   ApiMapping.BuildVolumeCreateBody - a full VolumeCreateSpec maps to Name, Driver, DriverOpts, and Labels.
+//   ApiMapping.BuildVolumeCreateBodyMinimal - a VolumeCreateSpec with only a name emits just Name and no Driver/DriverOpts/Labels.
+//   ApiMapping.ParseVolumeInspect - GET /volumes/{name} JSON parses Name/Driver/Mountpoint/Scope and the Labels/Options maps.
+//   ApiMapping.ParseVolumeInspectNullMaps - null Labels/Options parse into empty maps.
 //   ApiMapping.BuildCreateBodyPatchDeepMerges - create_body_patch deep-merges into the body, keeping existing fields while adding nested and top-level ones.
 //   ApiMapping.BuildCreateBodyPatchInvalidThrows - an invalid-JSON create_body_patch makes build_create_body throw DockerError.
 //   ApiMapping.BuildCreateQueryEmptyByDefault - a spec with neither name nor platform yields an empty create query.
@@ -65,6 +69,8 @@ using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
 using testcontainers::docker::build_network_create_body;
+using testcontainers::docker::build_volume_create_body;
+using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::BuildOptions;
 using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
@@ -376,6 +382,70 @@ TEST(ApiMapping, BuildNetworkCreateBodyMinimal) {
     EXPECT_FALSE(body.contains("IPAM"));
     EXPECT_FALSE(body.contains("Options"));
     EXPECT_FALSE(body.contains("Labels"));
+}
+
+TEST(ApiMapping, BuildVolumeCreateBody) {
+    VolumeCreateSpec spec;
+    spec.name = "my-vol";
+    spec.driver = "local";
+    spec.driver_opts = {{"type", "tmpfs"}, {"device", "tmpfs"}};
+    spec.labels = {{"k", "v"}};
+
+    const auto body = build_volume_create_body(spec);
+    EXPECT_EQ(body["Name"], "my-vol");
+    EXPECT_EQ(body["Driver"], "local");
+    EXPECT_EQ(body["DriverOpts"]["type"], "tmpfs");
+    EXPECT_EQ(body["DriverOpts"]["device"], "tmpfs");
+    EXPECT_EQ(body["Labels"]["k"], "v");
+}
+
+TEST(ApiMapping, BuildVolumeCreateBodyMinimal) {
+    VolumeCreateSpec spec;
+    spec.name = "bare-vol";
+
+    const auto body = build_volume_create_body(spec);
+    EXPECT_EQ(body["Name"], "bare-vol");
+    EXPECT_FALSE(body.contains("Driver"));
+    EXPECT_FALSE(body.contains("DriverOpts"));
+    EXPECT_FALSE(body.contains("Labels"));
+}
+
+TEST(ApiMapping, ParseVolumeInspect) {
+    const std::string body = R"({
+        "Name": "my-vol",
+        "Driver": "local",
+        "Mountpoint": "/var/lib/docker/volumes/my-vol/_data",
+        "Scope": "local",
+        "Labels": {"org.testcontainers.managed-by": "testcontainers"},
+        "Options": {"type": "tmpfs"}
+    })";
+
+    const auto info = parse_volume_inspect(body);
+    EXPECT_EQ(info.name, "my-vol");
+    EXPECT_EQ(info.driver, "local");
+    EXPECT_EQ(info.mountpoint, "/var/lib/docker/volumes/my-vol/_data");
+    EXPECT_EQ(info.scope, "local");
+    ASSERT_EQ(info.labels.count("org.testcontainers.managed-by"), 1u);
+    EXPECT_EQ(info.labels.at("org.testcontainers.managed-by"), "testcontainers");
+    ASSERT_EQ(info.options.count("type"), 1u);
+    EXPECT_EQ(info.options.at("type"), "tmpfs");
+}
+
+TEST(ApiMapping, ParseVolumeInspectNullMaps) {
+    // The daemon returns null (not {}) for an unlabelled volume with no options.
+    const std::string body = R"({
+        "Name": "plain-vol",
+        "Driver": "local",
+        "Mountpoint": "/var/lib/docker/volumes/plain-vol/_data",
+        "Scope": "local",
+        "Labels": null,
+        "Options": null
+    })";
+
+    const auto info = parse_volume_inspect(body);
+    EXPECT_EQ(info.name, "plain-vol");
+    EXPECT_TRUE(info.labels.empty());
+    EXPECT_TRUE(info.options.empty());
 }
 
 TEST(ApiMapping, BuildCreateBodyPatchDeepMerges) {

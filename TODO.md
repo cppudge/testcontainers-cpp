@@ -101,8 +101,9 @@ review are recorded here so they aren't lost between milestones.
   pools / IPRange / aux addresses); (c) `Network` still has no process-wide dedup — each `create()`
   (and each `builder().create()`) makes a brand-new network.
   (`include/testcontainers/Network.hpp`, `src/Network.cpp`, `src/docker/DockerClient.cpp`)
-- **Ryuk coverage & lifecycle** — only containers + networks get the session-id label, so future
-  resource types (named volumes, images) must also be tagged to be reaped. The global `Reaper` has
+- **Ryuk coverage & lifecycle** — containers, networks, and named volumes (incl. the transient
+  volume-seed helper container) now get the session-id label; **images** still don't, so future
+  image resources must also be tagged to be reaped. The global `Reaper` has
   no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is
   `AutoRemove`d on exit. Image pinned to `testcontainers/ryuk:0.11.0`.
 - **Registry credential helpers: get-only, uncached** — `resolve_auth_for_image` now resolves
@@ -203,6 +204,22 @@ review are recorded here so they aren't lost between milestones.
   no hard SSH dependency. Interim workaround that already works today: a container can reach the host via
   `GenericImage(...).with_extra_host("host.docker.internal", "host-gateway")` (Docker Desktop, or Linux
   20.10+ with host-gateway) — but that exposes the whole host and has no per-port control.
+
+- **named volumes (create/inspect/remove + seed), with limits** — `Volume` move-only RAII (mirrors
+  `Network`): `Volume::create()`/`create(name)` (generated `tc-<hex>`) + a `Builder`
+  (driver/driver_opt/label), best-effort remove on drop, session-labeled for Ryuk. Low-level
+  `DockerClient::create_volume`/`inspect_volume`/`remove_volume` + `build_volume_create_body`/
+  `parse_volume_inspect`. `Volume::populate(sources, mount_path="/__tc_seed", helper_image="alpine:3.20")`
+  seeds data by mounting the volume into a throwaway helper container and copying the (rebased,
+  volume-relative) sources through; the helper is started before the archive PUT (portable: not every
+  daemon materializes the write on the mountpoint of a created-only container) and always force-removed.
+  Known limits / one-line notes: (a) NO `list_volumes` / prune, and no anonymous-volume management;
+  (b) `populate` spins up + tears down a real helper container per call (no batching), pulls
+  `alpine:3.20` if absent, and host-file sources hash/copy by path at call time; (c) `inspect_volume`
+  surfaces only Name/Driver/Mountpoint/Scope/Labels/Options (no UsageData / status);
+  (d) the volume's own RAII drop fails (409) if a container still has it mounted — tear down mounting
+  containers first (the high-level handles already drop in reverse-declaration order).
+  (`include/testcontainers/Volume.hpp`, `src/Volume.cpp`, `src/docker/DockerClient.cpp`)
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,

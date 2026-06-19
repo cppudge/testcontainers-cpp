@@ -64,6 +64,7 @@ add_library(testcontainers
     src/ImageFromDockerfile.cpp
     src/Container.cpp
     src/Network.cpp
+    src/Volume.cpp
     src/Reaper.cpp
     src/Reuse.cpp
     src/DockerComposeContainer.cpp
@@ -161,6 +162,7 @@ if(BUILD_TESTING)
         tests/integration/CopyTest.cpp
         tests/integration/BuildImageTest.cpp
         tests/integration/NetworkTest.cpp
+        tests/integration/VolumeTest.cpp
         tests/integration/ReaperTest.cpp
         tests/integration/ReuseTest.cpp
         tests/integration/AuthTest.cpp

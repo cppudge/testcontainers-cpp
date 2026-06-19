@@ -22,6 +22,14 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec);
 /// Build the JSON body for `POST /networks/create` from a NetworkCreateSpec.
 nlohmann::json build_network_create_body(const NetworkCreateSpec& spec);
 
+/// Build the JSON body for `POST /volumes/create` from a VolumeCreateSpec. Always
+/// emits Name; emits Driver/DriverOpts/Labels only when set/non-empty.
+nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec);
+
+/// Parse the response of `GET /volumes/{name}` into VolumeInspect. Tolerates a
+/// null Labels/Options object (both become empty maps).
+VolumeInspect parse_volume_inspect(const std::string& body);
+
 /// Parse the `Os` field from a `GET /version` response body (e.g. "linux" /
 /// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
 /// the engine-OS detection in DockerClient can be unit-tested.

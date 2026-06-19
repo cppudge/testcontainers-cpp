@@ -58,6 +58,24 @@ struct NetworkCreateSpec {
     std::vector<std::pair<std::string, std::string>> labels;  ///< network Labels
 };
 
+/// Options for `POST /volumes/create`.
+struct VolumeCreateSpec {
+    std::string name;                                            ///< volume name (we always set it)
+    std::optional<std::string> driver;                           ///< Driver (default "local" when unset)
+    std::vector<std::pair<std::string, std::string>> driver_opts; ///< DriverOpts
+    std::vector<std::pair<std::string, std::string>> labels;     ///< Labels
+};
+
+/// The subset of `GET /volumes/{name}` we care about.
+struct VolumeInspect {
+    std::string name;                          ///< Name
+    std::string driver;                        ///< Driver
+    std::string mountpoint;                    ///< Mountpoint (host path on the daemon)
+    std::string scope;                         ///< Scope ("local" / "global")
+    std::map<std::string, std::string> labels; ///< Labels (null -> empty)
+    std::map<std::string, std::string> options; ///< Options (null -> empty)
+};
+
 /// A single published port binding from a container inspect.
 struct PortBinding {
     std::string host_ip;          ///< "0.0.0.0" / "::"
