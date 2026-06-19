@@ -164,6 +164,16 @@ review are recorded here so they aren't lost between milestones.
   the exact-config hash (any config difference yields a different hash → a fresh container).
   (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/Reuse.cpp`,
   `include/testcontainers/Container.hpp`)
+- **expose-host-ports NOT implemented (Tier 2.8, deferred by decision)** — there is no
+  `Testcontainers::expose_host_ports(...)` yet (letting a container reach a service on the HOST at
+  `host.testcontainers.internal:<port>`). The intended implementation mirrors testcontainers: an
+  `testcontainers/sshd` sidecar container + an SSH **reverse tunnel** (`-R <port>:localhost:<port>`)
+  established from this process via **libssh2** (ConanCenter), with `host.testcontainers.internal`
+  resolving to the sshd container. **libssh2 should be an OPTIONAL dependency** — the feature compiles/
+  links only when it's available (e.g. a CMake option / `find_package` guard), so the core library keeps
+  no hard SSH dependency. Interim workaround that already works today: a container can reach the host via
+  `GenericImage(...).with_extra_host("host.docker.internal", "host-gateway")` (Docker Desktop, or Linux
+  20.10+ with host-gateway) — but that exposes the whole host and has no per-port control.
 
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
