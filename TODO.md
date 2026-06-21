@@ -36,11 +36,12 @@ review are recorded here so they aren't lost between milestones.
 - **log-wait still polls snapshots** — the log wait in `src/WaitStrategies.cpp` re-fetches the
   full `tail=all` snapshot every 200ms; it could now be reimplemented on `follow_logs` (scan
   chunks, return false from the consumer once the substring count is reached).
-- **TLS (https) transport not implemented** — `connect()` throws for the Https
-  scheme. Needs `ssl::stream` + cert handling (`DOCKER_CERT_PATH`: ca/cert/key).
-  (`src/docker/Transport.cpp`)
-- **No registry auth** — `pull_image` sends no `X-Registry-Auth`; private images
-  won't pull. (`src/docker/DockerClient.cpp`)
+- **TLS (https) transport implemented** — `connect()` returns a `TlsTransport` (Asio
+  `ssl::stream`) for the `https://` / `tcp+tls` scheme; TLS materials (ca/cert/key) resolve from
+  `DOCKER_CERT_PATH` (falling back to `~/.docker` when `DOCKER_TLS_VERIFY` is set) via the pure
+  `TlsConfig` helpers. The cert-resolution logic is unit-tested (`TlsConfigTest`); the end-to-end
+  `TlsTransportTest` needs a reachable remote TLS daemon (skipped otherwise), so it is not exercised
+  in CI. (`src/docker/Transport.cpp`, `src/docker/TlsConfig.hpp`)
 - **Docker host resolution: full order, endpoint-only** — `DockerHost::resolve` now does the
   testcontainers order (first hit wins): `DOCKER_HOST` → `docker.host` in
   `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT`/`currentContext`/`default`,
@@ -52,7 +53,8 @@ review are recorded here so they aren't lost between milestones.
   (a) docker-context TLS materials (the context can carry ca/cert/key paths) are NOT consumed — only
   the `Host` endpoint;
   (b) `~/.testcontainers.properties` — only `docker.host` is read (not `tc.host` or other props);
-  (c) no `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` handling yet (that's the TLS-transport item).
+  (c) `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` ARE handled now — by the TLS transport
+  (`src/docker/TlsConfig.hpp`, see the TLS item), not by host resolution itself.
   (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
 - **One connection per request** — `request()` opens/closes a transport each call
   (no keep-alive / pooling).
@@ -131,13 +133,16 @@ review are recorded here so they aren't lost between milestones.
   the low-level `copy_from_container` + `docker::extract_tar`) cover a single regular file. Directory-tree
   extraction from `copy_from_container` is not exposed via a high-level helper yet; use `extract_tar`
   directly on the raw tar bytes for trees.
-- **build-from-Dockerfile: no .dockerignore, buffered output, unreaped images** —
-  `ImageFromDockerfile::from_path` packs the whole directory tree (no `.dockerignore`
-  filtering). `DockerClient::build_image` buffers the entire build-output stream (no live
-  build-log streaming/consumer — could reuse the `follow_logs` chunked-read approach). Built
-  images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
-  are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets,
-  ssh, cache-from, squash, and platform on build are not. (`src/ImageFromDockerfile.cpp`)
+- **build-from-Dockerfile (`GenericBuildableImage`): no .dockerignore, buffered output, unreaped
+  images** — `GenericBuildableImage(name, tag)` builds from a Dockerfile + a build context of
+  `CopyToContainer` entries: `with_dockerfile`(host path) / `with_dockerfile_string`(inline) for the
+  Dockerfile, `with_file`(host file/dir, walked recursively — no `.dockerignore` filtering) and
+  `with_data`(in-memory bytes) for context; `build()` builds the image tagged `<name>:<tag>` and
+  returns a runnable `GenericImage`. `DockerClient::build_image` buffers the entire build-output
+  stream (no live build-log streaming/consumer — could reuse the `follow_logs` chunked-read approach).
+  Built images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
+  are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets, ssh,
+  cache-from, squash, and platform on build are not. (`src/GenericBuildableImage.cpp`)
 - **HostConfig: typed subset + escape hatch** — `GenericImage` has typed setters for memory, shm_size,
   ulimits, cap_add/cap_drop, extra_hosts; everything else goes through `with_create_body_patch` (a raw
   `/containers/create` JSON fragment deep-merged via RFC-7386 AFTER our fields, so it overrides them; nest
@@ -158,7 +163,7 @@ review are recorded here so they aren't lost between milestones.
   via `docker::substitute_image_name`/`apply_hub_image_prefix`) plus a custom hook
   are provided — there is NO "pull if older than N" / time-based pull policy;
   (b) substitution is applied at the `GenericImage` layer only —
-  `ImageFromDockerfile` / Compose / raw `DockerClient` calls are NOT substituted;
+  `GenericBuildableImage` / Compose / raw `DockerClient` calls are NOT substituted;
   (c) `ImagePullPolicy::Always` re-pulls on every `start()` (no pull-pause / dedup).
   (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/docker/Auth.cpp`)
 - **Docker Compose: three client modes (rust parity), published-ports-only** —
@@ -248,12 +253,16 @@ review are recorded here so they aren't lost between milestones.
   module that needs run-level tweaks or polymorphic heterogeneity. (`src/GenericImage.cpp`; a future
   `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
 
-## Next milestones
-- Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
-  working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.
-- `Mount` value type (bind / volume / tmpfs).
+## Open / not yet built
+- **`ContainerRequest` + `Runner` split of `start()`** — responsibility + testability; not a
+  blocker. See the tech-debt item above.
+- **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an
+  optional libssh2 dependency). See the tech-debt item above.
+- **Connection pooling / keep-alive** — `request()` opens one connection per call. See the
+  "One connection per request" item above.
+- **TLS end-to-end verification in CI** — the transport is implemented but unproven against a real
+  remote TLS daemon. See the TLS item above.
 
-## Later
-- Cleanup: RAII container + Ryuk reaper (crash-safe).
-- Networks, mounts/volumes, copy-to/from (tar via libarchive), exec.
-- Docker Compose support.
+> The earlier roadmap milestones (richer container config, `Mount`, RAII + Ryuk reaper, networks,
+> mounts/volumes, copy-to/from, exec, Docker Compose) are all implemented — their current state and
+> known limits live in the tech-debt list above.
