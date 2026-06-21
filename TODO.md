@@ -228,6 +228,26 @@ review are recorded here so they aren't lost between milestones.
   containers first (the high-level handles already drop in reverse-declaration order).
   (`include/testcontainers/Volume.hpp`, `src/Volume.cpp`, `src/docker/DockerClient.cpp`)
 
+- **`start()` orchestration welded to `GenericImage` (planned split — responsibility + testability,
+  not a blocker)** — the whole container lifecycle (reaper bootstrap → reuse lookup → startup-attempt
+  retry → create → copy-to → created/starting hooks → start → wait-until-ready → started hooks → handle
+  construction) lives inside the private `GenericImage::start()`, reading every input off `*this`. PLAN:
+  split it in two, mirroring testcontainers-rs (`Image`/`ContainerRequest` + `Runner`): (1) a
+  `ContainerRequest` value type — the "what to run": the `CreateContainerSpec` plus the run-time fields
+  `start()` currently reads from the builder (waits, startup_timeout, registry_auth, copy_to_sources,
+  the four lifecycle-hook vectors, reuse, pull_policy, startup_attempts, declared `exposed_ports`); and
+  (2) a `Runner` / free `Container run(const ContainerRequest&)` holding the orchestration (Reaper /
+  Reuse / WaitStrategies stay internal `src/` helpers). `GenericImage::start()` then becomes a thin
+  `return run(to_request());` — its public API is unchanged. MOTIVATION is ONLY separation of
+  responsibility + unit-testability of the orchestration (drive `run()` against a fake/mock
+  `DockerClient` without constructing a `GenericImage`); there is **no functional blocker** today, so
+  this is a cleanliness/testing refactor, not urgent. Explicitly **NOT for modules**: future ecosystem
+  modules (Postgres/Redis/…) are to be built by COMPOSITION over `GenericImage` + a typed handle
+  wrapping `Container` (e.g. `PostgresContainer::connection_string()`), which already works on the
+  current code and needs none of this split; `to_request()`/`run()` would only become an *option* for a
+  module that needs run-level tweaks or polymorphic heterogeneity. (`src/GenericImage.cpp`; a future
+  `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
+
 ## Next milestones
 - Richer container config on `GenericImage` / `CreateContainerSpec`: entrypoint,
   working dir, user, privileged, mounts, networks, ulimits, host_config_modifier.
