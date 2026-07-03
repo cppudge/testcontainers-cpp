@@ -49,7 +49,6 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
     LogOptions opts;
     opts.include_stdout = cond.source != Source::Stderr;
     opts.include_stderr = cond.source != Source::Stdout;
-    opts.follow = false;
     opts.tail = "all";
     // A TTY container's log stream is raw/unframed: select the raw decode path so
     // the polled snapshot is searchable instead of garbled multiplex bytes.

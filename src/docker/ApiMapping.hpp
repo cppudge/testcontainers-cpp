@@ -59,6 +59,13 @@ nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
 /// Parse the `ExitCode` (integer) from a `GET /exec/{id}/json` response body.
 std::int64_t parse_exec_exit_code(const std::string& body);
 
+/// Extract a top-level string `field` from a JSON response `body`, wrapping any
+/// parse / missing-field / wrong-type failure in a DockerError (prefixed with
+/// `context`) so callers see one uniform error type instead of raw nlohmann
+/// exceptions. Used for the create-endpoint "Id"/"Name" extraction.
+std::string expect_string_field(const std::string& body, const char* field,
+                                const std::string& context);
+
 /// Scan a `POST /images/create` progress stream (newline-delimited JSON) and
 /// throw DockerError if it reports an error (Docker returns HTTP 200 even then).
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image);

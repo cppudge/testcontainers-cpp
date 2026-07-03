@@ -8,6 +8,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/version.hpp"
 
+#include <boost/asio/error.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/optional.hpp>
@@ -223,8 +224,7 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
                           std::to_string(res.status_code) + " " + res.body);
     }
 
-    const auto json = nlohmann::json::parse(res.body);
-    return json.at("Id").get<std::string>();
+    return docker::expect_string_field(res.body, "Id", "create_container('" + spec.image + "')");
 }
 
 void DockerClient::start_container(const std::string& id) {
@@ -301,8 +301,8 @@ void DockerClient::remove_container(const std::string& id, bool force, bool remo
 namespace {
 
 /// Build the `GET /containers/{id}/logs` query target. `follow` is passed
-/// explicitly so the snapshot path can use `opts.follow` while the streaming
-/// path forces it on.
+/// explicitly (never taken from `opts`): the snapshot path forces it off, the
+/// streaming path forces it on.
 std::string build_logs_target(const std::string& id, const LogOptions& opts, bool follow) {
     return "/containers/" + id + "/logs?stdout=" + (opts.include_stdout ? "1" : "0") +
            "&stderr=" + (opts.include_stderr ? "1" : "0") + "&follow=" + (follow ? "1" : "0") +
@@ -312,7 +312,9 @@ std::string build_logs_target(const std::string& id, const LogOptions& opts, boo
 } // namespace
 
 ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) {
-    const std::string target = build_logs_target(id, opts, opts.follow);
+    // Snapshot: follow=0 (requesting follow=1 here would block http::read until
+    // the container stops). Streaming callers use follow_logs().
+    const std::string target = build_logs_target(id, opts, /*follow*/ false);
 
     const Response res = request("GET", target);
     if (res.status_code != 200) {
@@ -339,7 +341,7 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     auto transport = docker::connect(host_);
     docker::TransportStream stream{*transport};
 
-    // follow is forced on regardless of opts.follow; everything else mirrors logs().
+    // Streaming: follow=1; everything else mirrors logs().
     const std::string target = build_logs_target(id, opts, /*follow*/ true);
 
     http::request<http::empty_body> req{http::verb::get, target, /*HTTP*/ 11};
@@ -442,7 +444,21 @@ std::string exec_create(DockerClient& client, const std::string& id,
         throw DockerError("exec create on container " + id + " failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
-    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+    return docker::expect_string_field(res.body, "Id", "exec create on container " + id);
+}
+
+/// Throw when `opts.stdin_data` is set but `transport` cannot half-close:
+/// after writing the bytes we must signal EOF or an in-container reader like
+/// `cat` blocks forever. Called BEFORE exec_create so no abandoned exec
+/// instance is left on the daemon (they live until the container is removed).
+void require_stdin_capable(docker::ITransport& transport, const ExecOptions& opts) {
+    if (opts.stdin_data && !transport.supports_half_close()) {
+        transport.close();
+        throw DockerError(
+            "exec: stdin_data requires a transport that supports half-close (TCP or "
+            "unix socket); the Windows named-pipe and TLS transports cannot signal "
+            "EOF, so the in-container reader would hang");
+    }
 }
 
 /// Open the exec start stream on an already-connected `stream`: write
@@ -477,8 +493,13 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
         const std::string& in = *opts.stdin_data;
         std::size_t sent = 0;
         while (sent < in.size() && !ec) {
-            sent += stream.write_some(
+            const std::size_t n = stream.write_some(
                 boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
+            if (n == 0 && !ec) {
+                // Defensive: a 0-byte write without an error would spin forever.
+                ec = boost::asio::error::broken_pipe;
+            }
+            sent += n;
         }
         if (ec) {
             transport.close();
@@ -496,18 +517,23 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts) {
-    // 1) Create the exec instance (carrying env / workdir / user / privileged /
+    // 1) Connect the raw transport first and check the stdin capability BEFORE
+    //    creating the exec instance, so an unsupported-transport failure leaves
+    //    no abandoned exec on the daemon.
+    auto transport = docker::connect(host_);
+    require_stdin_capable(*transport, opts);
+
+    // 2) Create the exec instance (carrying env / workdir / user / privileged /
     //    tty / attach-stdin from opts).
     const std::string exec_id =
         exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
 
-    // 2) Start the exec over a raw transport stream so we can (when requested)
+    // 3) Start the exec over the raw transport stream so we can (when requested)
     //    hijack stdin (see exec_start).
-    auto transport = docker::connect(host_);
     docker::TransportStream stream{*transport};
     exec_start(*transport, stream, host_, exec_id, opts);
 
-    // 3) Read the whole start response. With Tty=false this is the multiplexed
+    // 4) Read the whole start response. With Tty=false this is the multiplexed
     //    frame stream (demux it); with Tty=true it is raw, unframed bytes.
     boost::system::error_code ec;
     boost::beast::flat_buffer buffer;
@@ -536,7 +562,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         out.stderr_data = std::move(demuxed.stderr_data);
     }
 
-    // 4) Inspect the exec for the exit code.
+    // 5) Inspect the exec for the exit code.
     const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
     if (inspect_res.status_code != 200) {
         throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
@@ -548,17 +574,20 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts, const LogConsumer& consumer) {
-    // 1) Create the exec instance.
+    // 1) Connect + capability check first (see the non-streaming overload).
+    auto transport = docker::connect(host_);
+    require_stdin_capable(*transport, opts);
+
+    // 2) Create the exec instance.
     const std::string exec_id =
         exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
 
-    // 2) Start the exec over a raw stream so output can be consumed incrementally
+    // 3) Start the exec over the raw stream so output can be consumed incrementally
     //    (and stdin hijacked) — see exec_start.
-    auto transport = docker::connect(host_);
     docker::TransportStream stream{*transport};
     exec_start(*transport, stream, host_, exec_id, opts);
 
-    // 3) Read the response incrementally, delivering chunks to consumer as they
+    // 4) Read the response incrementally, delivering chunks to consumer as they
     //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
     //    deliver the raw bytes as a single stdout stream.
     boost::system::error_code ec;
@@ -626,7 +655,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     }
     transport->close();
 
-    // 4) Inspect the exec for the exit code; the output went to consumer, so
+    // 5) Inspect the exec for the exit code; the output went to consumer, so
     //    stdout_data / stderr_data are left empty.
     const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
     if (inspect_res.status_code != 200) {
@@ -689,7 +718,7 @@ std::string DockerClient::create_network(
         throw DockerError("create_network('" + name + "') failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
-    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+    return docker::expect_string_field(res.body, "Id", "create_network('" + name + "')");
 }
 
 std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
@@ -702,7 +731,7 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
         throw DockerError("create_network('" + spec.name + "') failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
-    return nlohmann::json::parse(res.body).at("Id").get<std::string>();
+    return docker::expect_string_field(res.body, "Id", "create_network('" + spec.name + "')");
 }
 
 void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,
@@ -744,7 +773,7 @@ std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
         throw DockerError("create_volume('" + spec.name + "') failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
     }
-    return nlohmann::json::parse(res.body).at("Name").get<std::string>();
+    return docker::expect_string_field(res.body, "Name", "create_volume('" + spec.name + "')");
 }
 
 VolumeInspect DockerClient::inspect_volume(const std::string& name) {

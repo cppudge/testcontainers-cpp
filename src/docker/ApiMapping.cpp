@@ -2,8 +2,10 @@
 
 #include "testcontainers/Error.hpp"
 
+#include <charconv>
 #include <cstdint>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace testcontainers::docker {
@@ -321,7 +323,20 @@ ContainerInspect parse_inspect(const std::string& body) {
                         pb.host_ip = binding.value("HostIp", std::string{});
                         const std::string host_port = binding.value("HostPort", std::string{});
                         if (!host_port.empty()) {
-                            pb.host_port = static_cast<std::uint16_t>(std::stoi(host_port));
+                            // A malformed/out-of-range HostPort drops the whole
+                            // binding: keeping it at host_port=0 would make the
+                            // IPv4-preferring selection loops pick a garbage IPv4
+                            // binding over a valid IPv6 one and connect to port 0.
+                            // (An empty HostPort — a real daemon behavior for
+                            // unpublished ports — keeps the binding with 0.)
+                            std::uint16_t hp = 0;
+                            const auto [end, err] = std::from_chars(
+                                host_port.data(), host_port.data() + host_port.size(), hp);
+                            if (err != std::errc{} ||
+                                end != host_port.data() + host_port.size() || hp == 0) {
+                                continue;
+                            }
+                            pb.host_port = hp;
                         }
                         parsed.push_back(std::move(pb));
                     }
@@ -392,6 +407,16 @@ nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
     return body;
 }
 
+std::string expect_string_field(const std::string& body, const char* field,
+                                const std::string& context) {
+    try {
+        return nlohmann::json::parse(body).at(field).get<std::string>();
+    } catch (const nlohmann::json::exception& e) {
+        throw DockerError(context + ": unexpected response from Docker (no string '" +
+                          std::string(field) + "'): " + e.what() + "; body: " + body);
+    }
+}
+
 std::int64_t parse_exec_exit_code(const std::string& body) {
     const nlohmann::json json = nlohmann::json::parse(body);
     if (const auto code = json.find("ExitCode");
@@ -413,9 +438,12 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
         }
         try {
             const nlohmann::json json = nlohmann::json::parse(line);
-            if (json.contains("error")) {
-                throw DockerError("Failed to pull image '" + image +
-                                  "': " + json["error"].get<std::string>());
+            // ANY "error" key is the daemon reporting a failed pull (docker's own
+            // jsonmessage errors on any non-nil error, regardless of shape) — dump
+            // a non-string payload rather than swallowing the failure.
+            if (const auto err = json.find("error"); err != json.end()) {
+                throw DockerError("Failed to pull image '" + image + "': " +
+                                  (err->is_string() ? err->get<std::string>() : err->dump()));
             }
         } catch (const nlohmann::json::parse_error&) {
             // Non-JSON line (shouldn't happen) — ignore.
@@ -474,13 +502,18 @@ void throw_if_build_error(const std::string& build_stream) {
         }
         try {
             const nlohmann::json json = nlohmann::json::parse(line);
-            if (const auto err = json.find("error"); err != json.end() && err->is_string()) {
-                throw DockerError("image build failed: " + err->get<std::string>());
-            }
-            if (const auto detail = json.find("errorDetail");
-                detail != json.end() && detail->is_object()) {
+            // ANY "error" key means the build failed (see throw_if_pull_error).
+            if (const auto err = json.find("error"); err != json.end()) {
                 throw DockerError("image build failed: " +
-                                  detail->value("message", std::string{}));
+                                  (err->is_string() ? err->get<std::string>() : err->dump()));
+            }
+            if (const auto detail = json.find("errorDetail"); detail != json.end()) {
+                const auto msg =
+                    detail->is_object() ? detail->find("message") : detail->end();
+                throw DockerError("image build failed: " +
+                                  (msg != detail->end() && msg->is_string()
+                                       ? msg->get<std::string>()
+                                       : detail->dump()));
             }
         } catch (const nlohmann::json::parse_error&) {
             // Non-JSON line (shouldn't happen) — ignore.

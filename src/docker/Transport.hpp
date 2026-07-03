@@ -28,6 +28,10 @@ public:
     /// SSL and Windows named pipes have no clean half-close, so those override it
     /// as a no-op (see the transport implementations).
     virtual void shutdown_send() = 0;
+    /// Whether shutdown_send() actually half-closes (TCP / unix socket) or is a
+    /// no-op (TLS / Windows named pipe). Callers that NEED the EOF signal (exec
+    /// stdin) should fail loudly instead of hanging when this is false.
+    virtual bool supports_half_close() const noexcept = 0;
     virtual void close() = 0;
 };
 

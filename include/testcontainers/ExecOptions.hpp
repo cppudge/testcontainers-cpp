@@ -16,7 +16,11 @@ struct ExecOptions {
     std::optional<std::string> user;         ///< User ("name" or "uid[:gid]")
     bool privileged = false;                 ///< Privileged
     bool tty = false;                        ///< allocate a TTY (raw, unframed output)
-    std::optional<std::string> stdin_data;   ///< when set, attach stdin and feed these bytes
+    /// When set, attach stdin, feed these bytes, then half-close so the reader
+    /// sees EOF. Requires a half-closable transport (TCP / unix socket): on the
+    /// Windows named-pipe and TLS transports exec throws instead (no EOF signal
+    /// is possible there, so a reader like `cat` would hang forever).
+    std::optional<std::string> stdin_data;
 };
 
 } // namespace testcontainers

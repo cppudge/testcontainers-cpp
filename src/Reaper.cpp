@@ -168,6 +168,14 @@ void Reaper::ensure_started() {
 
     const RyukEndpoint ep = start_ryuk(client, /*auto_remove*/ true);
 
+    // Best-effort removal of the Ryuk container on any startup failure below.
+    const auto kill_ryuk = [&client, &ep]() noexcept {
+        try {
+            client.remove_container(ep.container_id, /*force*/ true, /*remove_volumes*/ true);
+        } catch (...) {
+        }
+    };
+
     auto impl = std::make_unique<Impl>();
     impl->container_id = ep.container_id;
 
@@ -189,10 +197,7 @@ void Reaper::ensure_started() {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     if (!connected) {
-        try {
-            client.remove_container(ep.container_id, /*force*/ true, /*remove_volumes*/ true);
-        } catch (...) {
-        }
+        kill_ryuk();
         throw DockerError("Could not connect to Ryuk control port at " + ep.host + ":" +
                           std::to_string(ep.port) + ": " + ec.message());
     }
@@ -202,26 +207,26 @@ void Reaper::ensure_started() {
     const std::string line = ryuk_filter_line(kSessionIdLabel, session_id());
     asio::write(impl->socket, asio::buffer(line), ec);
     if (ec) {
-        try {
-            client.remove_container(ep.container_id, /*force*/ true, /*remove_volumes*/ true);
-        } catch (...) {
-        }
+        kill_ryuk();
         throw DockerError("Failed to send filter to Ryuk: " + ec.message());
     }
 
     asio::streambuf buf;
     asio::read_until(impl->socket, buf, '\n', ec);
     if (ec) {
-        try {
-            client.remove_container(ep.container_id, /*force*/ true, /*remove_volumes*/ true);
-        } catch (...) {
-        }
+        kill_ryuk();
         throw DockerError("Failed to read ACK from Ryuk: " + ec.message());
     }
     std::istream is(&buf);
     std::string ack;
     std::getline(is, ack);
-    // Ryuk replies "ACK" per accepted line; tolerate trailing CR just in case.
+    // Ryuk replies "ACK" per accepted line (tolerate a trailing CR). Anything
+    // else means the filter was NOT registered — fail loudly rather than run
+    // without crash-safe reaping.
+    if (ack.rfind("ACK", 0) != 0) {
+        kill_ryuk();
+        throw DockerError("Ryuk did not acknowledge the session filter (got '" + ack + "')");
+    }
 
     // Hold the socket open for the rest of the process — when the process dies,
     // the OS closes it and Ryuk reaps everything tagged with our session id.

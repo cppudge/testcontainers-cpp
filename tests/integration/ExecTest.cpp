@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "testcontainers/Container.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
@@ -25,6 +26,7 @@
 //   Exec.StreamsOutputIncrementally - the streaming overload delivers chunks to the consumer and reports the exit code.
 //   Exec.StreamingStopsWhenConsumerReturnsFalse - returning false from the consumer stops the stream early.
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); skipped on the named-pipe/TLS transport (no half-close, so the reader never sees EOF).
+//   Exec.StdinThrowsOnNonHalfClosableTransport - on the named-pipe/TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on unix-socket/TCP.
 
 using namespace testcontainers;
 
@@ -160,4 +162,20 @@ TEST_F(Exec, FeedsStdin) {
     EXPECT_NE(res.stdout_data.find("ping"), std::string::npos)
         << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {
+    // The inverse of FeedsStdin: on a transport whose shutdown_send() is a no-op
+    // (Windows named pipe, TLS) exec must fail loudly instead of leaving the
+    // in-container reader waiting forever for an EOF that never comes.
+    const DockerScheme scheme = DockerClient::from_environment().host().scheme();
+    if (scheme != DockerScheme::NamedPipe && scheme != DockerScheme::Https) {
+        GTEST_SKIP() << "this transport half-closes; the guard only fires on named pipe / TLS";
+    }
+
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    ExecOptions opts;
+    opts.stdin_data = "ping\n";
+    EXPECT_THROW((void)c.exec({"cat"}, opts), DockerError);
 }

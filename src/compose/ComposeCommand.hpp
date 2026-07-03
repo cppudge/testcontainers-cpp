@@ -32,6 +32,10 @@ struct ComposeUpCommand {
 /// A `docker compose ... down` invocation, described abstractly.
 struct ComposeDownCommand {
     std::string project_name; ///< --project-name <p>
+    /// Environment passed to the child process (local) / exec (containerised) —
+    /// the same vars as `up`, so a compose file that interpolates env resolves
+    /// to the same project definition at teardown. Not part of the argv.
+    std::vector<std::pair<std::string, std::string>> env;
     bool volumes = true;      ///< --volumes
     bool remove_images = false; ///< --rmi all
 };

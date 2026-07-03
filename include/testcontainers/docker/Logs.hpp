@@ -11,10 +11,12 @@ namespace testcontainers {
 /// Note: the include-flags are named `include_stdout` / `include_stderr` rather
 /// than `stdout` / `stderr` because the latter are reserved macros from <cstdio>
 /// on some platforms (notably MSVC, where `stdout` expands to a function call).
+/// There is deliberately no `follow` flag here: the snapshot/stream split is
+/// encoded in the method names — `logs()` is always a snapshot, `follow_logs()`
+/// always streams (mirrors java's getLogs()/followOutput()).
 struct LogOptions {
     bool include_stdout = true; ///< include the stdout stream
     bool include_stderr = true; ///< include the stderr stream
-    bool follow = false;        ///< stream until the container exits (vs. snapshot)
     std::string tail = "all";   ///< number of trailing lines, or "all"
     bool timestamps = false;    ///< prefix each line with an RFC3339 timestamp
     /// The container was created with Tty=true → its log stream is raw/unframed;

@@ -122,7 +122,10 @@ public:
     DockerComposeContainer& with_wait(bool wait = true) &;
     DockerComposeContainer&& with_wait(bool wait = true) &&;
 
-    /// Timeout for compose `--wait` (`--wait-timeout <secs>`). Default 60s.
+    /// Readiness timeout, default 60s. Applies to compose `--wait`
+    /// (`--wait-timeout <secs>`) AND to each exposed service's TCP probe; the
+    /// phases are budgeted separately (each gets the full timeout, mirroring
+    /// java's per-strategy timeouts), not shared under one deadline.
     DockerComposeContainer& with_wait_timeout(std::chrono::seconds timeout) &;
     DockerComposeContainer&& with_wait_timeout(std::chrono::seconds timeout) &&;
 

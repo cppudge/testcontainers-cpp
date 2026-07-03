@@ -15,6 +15,8 @@
 //   DockerHost.ParsesIpv6Literal - a bracketed IPv6 host with a port parses the host and port correctly.
 //   DockerHost.BarePathIsUnix - a bare filesystem path with no scheme is treated as a unix socket.
 //   DockerHost.UnsupportedSchemeThrows - an unknown scheme throws DockerError.
+//   DockerHost.OutOfRangePortThrows - a port above 65535 throws DockerError instead of silently wrapping.
+//   DockerHost.NonNumericPortThrows - a non-numeric port or trailing garbage after the digits throws DockerError.
 //   DockerHost.ResolveUsesDockerHostEnv - resolve() honors the DOCKER_HOST environment variable.
 //   DockerHost.ResolveDefaultsToPlatform - resolve() falls back to the platform default endpoint when DOCKER_HOST is unset.
 //   DockerHost.ResolveHonorsDockerHostEnv - resolve() round-trips an explicit DOCKER_HOST URL through to_string().
@@ -89,6 +91,19 @@ TEST(DockerHost, BarePathIsUnix) {
 
 TEST(DockerHost, UnsupportedSchemeThrows) {
     EXPECT_THROW(DockerHost::parse("ftp://nope"), DockerError);
+}
+
+TEST(DockerHost, OutOfRangePortThrows) {
+    // Without the range check "99999" would wrap to 34463 via the uint16_t cast.
+    EXPECT_THROW(DockerHost::parse("tcp://host:99999"), DockerError);
+    EXPECT_THROW(DockerHost::parse("tcp://host:0"), DockerError);
+}
+
+TEST(DockerHost, NonNumericPortThrows) {
+    EXPECT_THROW(DockerHost::parse("tcp://host:abc"), DockerError);
+    // Trailing garbage after digits: stoi would silently accept "2375x" as 2375;
+    // the from_chars full-match parse rejects it.
+    EXPECT_THROW(DockerHost::parse("tcp://host:2375x"), DockerError);
 }
 
 TEST(DockerHost, ResolveUsesDockerHostEnv) {

@@ -65,6 +65,7 @@ public:
         boost::system::error_code ec;
         socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
     }
+    bool supports_half_close() const noexcept override { return true; }
     void close() override {
         boost::system::error_code ec;
         socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
@@ -153,9 +154,9 @@ public:
     void shutdown_send() override {
         // SSL has no clean half-close: shutting down the underlying TCP send side
         // would break the encrypted session for the response read still in flight.
-        // Best-effort no-op — exec-stdin over a TLS daemon may therefore hang for
-        // readers that wait for EOF. A TLS daemon is rare; this is acceptable.
+        // No-op; callers needing the EOF signal check supports_half_close().
     }
+    bool supports_half_close() const noexcept override { return false; }
     void close() override {
         // Best-effort: a TLS shutdown commonly returns eof / stream_truncated
         // (the peer closed without a close_notify) — that is normal, never throw.
@@ -194,6 +195,7 @@ public:
         boost::system::error_code ec;
         socket_.shutdown(asio::local::stream_protocol::socket::shutdown_send, ec);
     }
+    bool supports_half_close() const noexcept override { return true; }
     void close() override {
         boost::system::error_code ec;
         socket_.close(ec);
@@ -248,9 +250,10 @@ public:
     }
     void shutdown_send() override {
         // A Windows named-pipe handle has no half-close primitive (closing it tears
-        // down both directions). Best-effort no-op — exec-stdin on the Windows
-        // engine is out of scope; this limitation is documented and acceptable.
+        // down both directions). No-op; callers needing the EOF signal check
+        // supports_half_close().
     }
+    bool supports_half_close() const noexcept override { return false; }
     void close() override {
         boost::system::error_code ec;
         handle_.close(ec);

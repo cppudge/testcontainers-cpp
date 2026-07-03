@@ -112,13 +112,13 @@ public:
 
     /// `GET /containers/{id}/logs` — fetch a snapshot of the container's logs and
     /// demultiplex the (non-TTY) stream into separate stdout / stderr text.
-    /// Only the non-follow case is supported here; `opts.follow` is ignored.
+    /// Always a snapshot (`follow=0`); use `follow_logs()` to stream.
     ContainerLogs logs(const std::string& id, const LogOptions& opts = {});
 
     /// `GET /containers/{id}/logs?follow=1` — stream the multiplexed logs, decoding
     /// frames and invoking `consumer` per chunk until the stream ends (container
     /// stops) or `consumer` returns false. Blocking: run on your own thread for
-    /// background consumption. `opts.follow` is forced on. Throws DockerError if the
+    /// background consumption. Always streams (`follow=1`). Throws DockerError if the
     /// initial response is not 200.
     void follow_logs(const std::string& id, const LogOptions& opts, const LogConsumer& consumer);
 
@@ -138,7 +138,9 @@ public:
     /// `opts.tty == true` the stream is raw and unframed: all of it goes to
     /// `stdout_data` and `stderr_data` is left empty. When `opts.stdin_data` is
     /// set those bytes are written to the exec's stdin and the send side is then
-    /// half-closed so a reader (e.g. `cat`) sees EOF.
+    /// half-closed so a reader (e.g. `cat`) sees EOF; on a transport that cannot
+    /// half-close (Windows named pipe, TLS) this throws DockerError instead of
+    /// hanging the reader.
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
                     const ExecOptions& opts);
 

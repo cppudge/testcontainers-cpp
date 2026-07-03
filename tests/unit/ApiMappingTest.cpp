@@ -53,14 +53,18 @@
 //   ApiMapping.ParseInspectTty - inspect JSON with Config.Tty=true parses into ContainerInspect.tty (false when absent).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
+//   ApiMapping.ParseInspectMalformedHostPort - a non-numeric or out-of-range HostPort leaves the binding's host_port 0 instead of throwing.
 //   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
+//   ApiMapping.PullNonStringErrorThrows - a pull stream entry whose "error" is not a string still throws DockerError (dumped payload), never a raw json type_error.
 //   ApiMapping.BuildErrorThrows - a build stream containing error/errorDetail throws DockerError.
 //   ApiMapping.BuildSuccessDoesNotThrow - a clean build progress stream does not throw.
 //   ApiMapping.BuildQueryBasics - build_build_query always emits t and dockerfile and includes nocache/pull/target only when set.
 //   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
+//   ApiMapping.ExpectStringFieldExtracts - expect_string_field returns the named top-level string field.
+//   ApiMapping.ExpectStringFieldWrapsFailures - a malformed body, a missing field, and a non-string field all throw DockerError carrying the context, never raw nlohmann exceptions.
 
 using namespace testcontainers;
 using namespace std::chrono_literals;
@@ -77,6 +81,7 @@ using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::split_image;
+using testcontainers::docker::expect_string_field;
 using testcontainers::docker::throw_if_build_error;
 using testcontainers::docker::throw_if_pull_error;
 
@@ -626,6 +631,28 @@ TEST(ApiMapping, ParseInspectNoHealthStatus) {
     EXPECT_FALSE(info.health_status.has_value());
 }
 
+TEST(ApiMapping, ParseInspectMalformedHostPort) {
+    // A daemon should never send these, but a malformed HostPort must not escape
+    // as a raw exception AND must not survive as a host_port=0 binding (the
+    // IPv4-preferring selection would pick it over a valid IPv6 one): the whole
+    // binding is dropped. Valid bindings on the same key are kept.
+    const std::string body = R"({
+        "Id": "abc123",
+        "State": {"Status": "running", "Running": true},
+        "NetworkSettings": {"Ports": {
+            "6379/tcp": [{"HostIp": "0.0.0.0", "HostPort": "notaport"},
+                         {"HostIp": "0.0.0.0", "HostPort": "99999"},
+                         {"HostIp": "0.0.0.0", "HostPort": "49153junk"},
+                         {"HostIp": "::", "HostPort": "32769"}]
+        }}
+    })";
+
+    const auto info = parse_inspect(body);
+    ASSERT_EQ(info.ports.at("6379/tcp").size(), 1u); // only the valid IPv6 binding
+    EXPECT_EQ(info.ports.at("6379/tcp")[0].host_ip, "::");
+    EXPECT_EQ(info.ports.at("6379/tcp")[0].host_port, 32769);
+}
+
 TEST(ApiMapping, ParseContainerList) {
     const std::string body = R"([
         {"Id": "abc", "Names": ["/x"], "Image": "redis", "State": "running",
@@ -669,6 +696,18 @@ TEST(ApiMapping, PullSuccessDoesNotThrow) {
         R"({"status":"Download complete"})"
         "\n";
     EXPECT_NO_THROW(throw_if_pull_error(stream, "alpine:3.20"));
+}
+
+TEST(ApiMapping, PullNonStringErrorThrows) {
+    // ANY "error" key is the daemon reporting a failed pull (docker's jsonmessage
+    // errors on any non-nil error); a non-string payload is dumped, never
+    // swallowed — and it must surface as DockerError, not raw json::type_error.
+    const std::string stream =
+        R"({"status":"Pulling from library/alpine"})"
+        "\n"
+        R"({"error":{"code":500}})"
+        "\n";
+    EXPECT_THROW(throw_if_pull_error(stream, "alpine:3.20"), DockerError);
 }
 
 TEST(ApiMapping, BuildErrorThrows) {
@@ -729,4 +768,23 @@ TEST(ApiMapping, BuildQueryBuildArgs) {
     const auto parsed = nlohmann::json::parse(value);
     EXPECT_EQ(parsed["VERSION"], "1.2");
     EXPECT_EQ(parsed["FLAG"], "on");
+}
+
+TEST(ApiMapping, ExpectStringFieldExtracts) {
+    EXPECT_EQ(expect_string_field(R"({"Id":"abc123","Warnings":[]})", "Id", "ctx"), "abc123");
+    EXPECT_EQ(expect_string_field(R"({"Name":"vol1"})", "Name", "ctx"), "vol1");
+}
+
+TEST(ApiMapping, ExpectStringFieldWrapsFailures) {
+    // Malformed JSON (e.g. an HTML error page through a 200), a missing field,
+    // and a wrong-typed field must all surface as DockerError with the context —
+    // never as raw nlohmann exceptions.
+    for (const char* body : {"<html>502</html>", R"({"NotId":"x"})", R"({"Id":42})"}) {
+        try {
+            (void)expect_string_field(body, "Id", "create_container('img')");
+            FAIL() << "expected DockerError for body: " << body;
+        } catch (const DockerError& e) {
+            EXPECT_NE(std::string(e.what()).find("create_container('img')"), std::string::npos);
+        }
+    }
 }

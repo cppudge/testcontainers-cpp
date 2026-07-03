@@ -354,7 +354,8 @@ void DockerComposeContainer::start() {
 
         asio::io_context io;
         boost::system::error_code ec;
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        // The same user-configurable timeout that governs compose's --wait.
+        const auto deadline = std::chrono::steady_clock::now() + wait_timeout_;
         bool connected = false;
         while (std::chrono::steady_clock::now() < deadline) {
             tcp::resolver resolver(io);
@@ -425,6 +426,9 @@ void DockerComposeContainer::drop() noexcept {
             try {
                 compose::ComposeDownCommand down;
                 down.project_name = project_;
+                for (const auto& [key, value] : env_) {
+                    down.env.emplace_back(key, value);
+                }
                 down.volumes = remove_volumes_;
                 down.remove_images = remove_images_;
                 client_->down(down);

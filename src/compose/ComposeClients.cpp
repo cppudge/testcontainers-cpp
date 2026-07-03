@@ -74,7 +74,8 @@ public:
         const std::vector<std::string> down_args = build_compose_down_args(command);
         argv.insert(argv.end(), down_args.begin(), down_args.end());
 
-        const detail::ProcessResult result = detail::run_process(argv);
+        const detail::ProcessResult result =
+            detail::run_process(argv, /*working_dir*/ std::nullopt, command.env);
         if (result.exit_code != 0) {
             throw DockerError("docker compose down exited with status " +
                               std::to_string(result.exit_code) + ":\n" + result.output);
@@ -181,7 +182,7 @@ public:
         const std::vector<std::string> down_args = build_compose_down_args(command);
         exec_cmd.insert(exec_cmd.end(), down_args.begin(), down_args.end());
 
-        const ExecResult result = exec_compose(exec_cmd, {});
+        const ExecResult result = exec_compose(exec_cmd, command.env);
         if (result.exit_code != 0) {
             throw DockerError("docker compose down exited with status " +
                               std::to_string(result.exit_code) + ":\n" + result.stdout_data +

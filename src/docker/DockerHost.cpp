@@ -7,6 +7,7 @@
 #include "testcontainers/Error.hpp"
 
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -52,11 +53,17 @@ void parse_host_port(std::string rest, std::string& hostname, std::uint16_t& por
     hostname = host;
     port = default_port;
     if (!port_str.empty()) {
-        try {
-            port = static_cast<std::uint16_t>(std::stoi(port_str));
-        } catch (const std::exception&) {
+        // from_chars with a full-match check: rejects "2375x" / whitespace /
+        // "+2375" (which stoi silently accepts) and "99999"/"0" (out of range —
+        // without the check "99999" would wrap to 34463 via the uint16_t cast).
+        std::uint32_t parsed = 0;
+        const auto [end, err] =
+            std::from_chars(port_str.data(), port_str.data() + port_str.size(), parsed);
+        if (err != std::errc{} || end != port_str.data() + port_str.size() ||
+            parsed < 1 || parsed > 65535) {
             throw DockerError("Invalid port in Docker host: " + port_str);
         }
+        port = static_cast<std::uint16_t>(parsed);
     }
 }
 
