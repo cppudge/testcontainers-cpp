@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
@@ -20,6 +22,8 @@
 //   DockerComposeContainer.EnvGetters - with_env / with_env_vars reflect in env().
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws.
+//   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
+//   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
 
 using namespace testcontainers;
 
@@ -123,4 +127,46 @@ TEST(DockerComposeContainer, UnknownServiceThrows) {
     // No start() ran, so nothing is discovered; looking the service up must throw
     // (purely a map lookup — no daemon involved).
     EXPECT_ANY_THROW(compose.get_service_container_id("redis"));
+}
+
+TEST(DockerComposeContainer, MoveConstructTransfersTempFileOwnership) {
+    // The hand-written move must zero the source's temp_file_/started_/stopped_
+    // so a moved-from handle's destructor tears nothing down. Observable via
+    // the from_yaml temp file: destroying the moved-from source must NOT delete
+    // it; destroying the target must.
+    std::string temp_path;
+    {
+        DockerComposeContainer target = [&] {
+            DockerComposeContainer source = DockerComposeContainer::from_yaml("services: {}\n");
+            temp_path = source.compose_files().front();
+            EXPECT_TRUE(std::filesystem::exists(temp_path));
+            return source; // moves out; `source`'s destructor runs here
+        }();
+        // The source was destroyed; the temp file must have survived the move.
+        EXPECT_TRUE(std::filesystem::exists(temp_path));
+        EXPECT_EQ(target.compose_files().front(), temp_path);
+        EXPECT_EQ(target.client_kind(), ComposeClientKind::Local);
+    }
+    // The target's destructor owns (and deletes) the temp file.
+    EXPECT_FALSE(std::filesystem::exists(temp_path));
+}
+
+TEST(DockerComposeContainer, MoveAssignTransfersState) {
+    std::string temp_path;
+    {
+        DockerComposeContainer target = DockerComposeContainer::with_local_client({"a.yml"});
+        {
+            DockerComposeContainer source = DockerComposeContainer::from_yaml("services: {}\n");
+            source.with_project_name("moved-project").with_wait_timeout(std::chrono::seconds(5));
+            temp_path = source.compose_files().front();
+
+            target = std::move(source);
+            // The moved-from source is destroyed here and must not delete the file.
+        }
+        EXPECT_TRUE(std::filesystem::exists(temp_path));
+        EXPECT_EQ(target.project_name(), "moved-project");
+        EXPECT_EQ(target.wait_timeout(), std::chrono::seconds(5));
+        EXPECT_EQ(target.compose_files().front(), temp_path);
+    }
+    EXPECT_FALSE(std::filesystem::exists(temp_path));
 }

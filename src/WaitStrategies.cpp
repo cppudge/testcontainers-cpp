@@ -23,11 +23,6 @@
 namespace testcontainers {
 namespace detail {
 
-namespace {
-
-using Clock = std::chrono::steady_clock;
-
-/// Count non-overlapping occurrences of `needle` in `haystack`.
 std::size_t count_occurrences(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) {
         return 0;
@@ -40,6 +35,10 @@ std::size_t count_occurrences(const std::string& haystack, const std::string& ne
     }
     return count;
 }
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
 
 /// Poll the container's logs every ~200ms until `text` has appeared `times`
 /// times in the selected stream(s), or the deadline passes (then throw).

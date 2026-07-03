@@ -131,6 +131,7 @@ if(BUILD_TESTING)
         tests/unit/HealthcheckTest.cpp
         tests/unit/MountTest.cpp
         tests/unit/GenericImageTest.cpp
+        tests/unit/ProcessTest.cpp
         tests/unit/ReaperTest.cpp
         tests/unit/ReuseTest.cpp
         tests/unit/TarTest.cpp

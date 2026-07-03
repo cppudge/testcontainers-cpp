@@ -26,12 +26,15 @@ review are recorded here so they aren't lost between milestones.
   run; two compose stacks torn down concurrently (destructors on different threads) can
   cross-contaminate env. Serialize with a static mutex, or move to `CreateProcessW`/`posix_spawn`
   with an explicit environment block. (`src/Process.cpp`)
-- **`Process.cpp` command-line construction is untested and Windows-quoting is fragile** —
-  `quote_arg` backslash-escapes embedded `"`, which cmd.exe does not honor (POSIX/MSVCRT-argv
-  convention only); currently safe because all input is library-controlled, but it is the
-  riskiest code in the repo and has zero unit tests (functions are file-local). Fix direction:
-  extract `build_command_line`/`quote_arg` into a testable internal header + unit tests
-  (spaces, embedded quotes, the cmd.exe outer-wrap). (`src/Process.cpp`)
+- **`Process.cpp` Windows-quoting of embedded `"` is fragile** — `quote_arg` backslash-escapes
+  embedded `"`, which cmd.exe does not honor (POSIX/MSVCRT-argv convention only); currently
+  safe because all input is library-controlled (compose flags + paths never carry quotes).
+  `quote_arg`/`build_command_line` are now exposed and unit-tested (`tests/unit/ProcessTest.cpp`,
+  incl. real run_process round-trips for output/exit-code/env/stdin). Found while testing: a
+  nested `cmd /c "<script>"` argv shape does NOT survive the quoting on Windows (cmd re-applies
+  its quote-stripping to the inner quoted script) — only "exe + arguments" argv is supported,
+  which is what every real caller uses. Remaining work: cmd.exe-correct `"` escaping if
+  untrusted input ever reaches the argv. (`src/Process.cpp`)
 - **No Docker API version pinned** — all targets are unversioned (`/containers/create`), relying
   on the daemon's default API version; nothing negotiates or pins `/v1.NN`. Behavior can shift
   across daemon upgrades. (`src/docker/DockerClient.cpp`)
@@ -39,12 +42,12 @@ review are recorded here so they aren't lost between milestones.
   cache read and the `GET /version`, so two threads can both issue the request on first use
   (idempotent, harmless). `std::call_once` or holding the lock across the miss would realize
   the double-checked intent. (`src/docker/DockerClient.cpp`)
-- **Test gaps found in review** — `DockerComposeContainer` move-ctor/assign have no daemon-free
-  unit test (the hand-written moves zero `started_`/`stopped_`/`temp_file_`); pure
-  `properties_reuse_enabled()` parsing is untested (`tests/unit/ReuseTest.cpp` skips it);
-  the containerised compose `exec_compose` shell-quoting has no test for env values with
-  quotes/spaces; WaitStrategies' `count_occurrences` and the Duration-clamp branch are only
-  exercised via integration.
+- **Remaining test gaps** — the review's gaps are mostly closed (Process quoting +
+  run_process end-to-end, properties_reuse_enabled, compose shell_quote,
+  count_occurrences, DockerComposeContainer moves are all unit-tested now); still open:
+  the WaitStrategies Duration-clamp-to-deadline branch is only exercised via the
+  integration `WaitStrategiesTest` (extracting it would mean restructuring the visitor),
+  and the containerised `exec_compose` env path is only integration-covered end to end.
 - **`LogDemuxer` streaming cost** — `feed()` does `pending_.erase(0, pos)` on every
   call: O(n) per chunk → O(n²) for many small chunks. Fine for `demux_all` (single
   feed); switch to a consumed-offset / ring buffer when the follow/streaming path

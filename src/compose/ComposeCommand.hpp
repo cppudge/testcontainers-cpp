@@ -52,4 +52,12 @@ std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command);
 /// v1-ism — we deviate for correctness).
 std::vector<std::string> build_compose_down_args(const ComposeDownCommand& command);
 
+/// Single-quote a token for /bin/sh, escaping embedded single quotes
+/// (`'` -> `'\''`). Used by the containerised client to wrap env-prefixed
+/// compose invocations in `/bin/sh -c "..."`. Pure — unit-testable.
+std::string shell_quote(const std::string& s);
+
+/// A `KEY='value'` env assignment for /bin/sh (the value shell-quoted).
+std::string shell_quote_assignment(const std::string& key, const std::string& value);
+
 } // namespace testcontainers::compose

@@ -14,6 +14,9 @@
 //   ComposeCommand.UpArgsBuildAndPull - --build and --pull always appear only when requested.
 //   ComposeCommand.DownArgsBare - a bare down emits --project-name <p> down and (by default) no extras here.
 //   ComposeCommand.DownArgsVolumesAndRmi - --volumes and --rmi all appear only when requested (rmi takes the `all` argument).
+//   ComposeCommand.ShellQuoteWrapsInSingleQuotes - plain tokens and ones with spaces/$/" are wrapped in single quotes verbatim.
+//   ComposeCommand.ShellQuoteEscapesEmbeddedSingleQuotes - an embedded ' becomes the '\'' close-escape-reopen sequence.
+//   ComposeCommand.ShellQuoteAssignment - KEY='value' assignments quote the value only.
 
 using namespace testcontainers::compose;
 
@@ -146,4 +149,24 @@ TEST(ComposeCommand, DownArgsVolumesAndRmi) {
     ASSERT_GT(rmi, 0);
     ASSERT_LT(static_cast<std::size_t>(rmi) + 1, args.size());
     EXPECT_EQ(args[rmi + 1], "all"); // compose v2 requires the `all` argument
+}
+
+TEST(ComposeCommand, ShellQuoteWrapsInSingleQuotes) {
+    EXPECT_EQ(shell_quote("plain"), "'plain'");
+    EXPECT_EQ(shell_quote("with spaces"), "'with spaces'");
+    // Inside single quotes /bin/sh treats $ and " literally — no extra escaping.
+    EXPECT_EQ(shell_quote("$HOME \"x\""), "'$HOME \"x\"'");
+    EXPECT_EQ(shell_quote(""), "''");
+}
+
+TEST(ComposeCommand, ShellQuoteEscapesEmbeddedSingleQuotes) {
+    // ' closes the quote, \' emits a literal quote, ' reopens: 'it'\''s'.
+    EXPECT_EQ(shell_quote("it's"), "'it'\\''s'");
+    EXPECT_EQ(shell_quote("''"), "''\\'''\\'''");
+}
+
+TEST(ComposeCommand, ShellQuoteAssignment) {
+    EXPECT_EQ(shell_quote_assignment("KEY", "value"), "KEY='value'");
+    EXPECT_EQ(shell_quote_assignment("MSG", "hello world"), "MSG='hello world'");
+    EXPECT_EQ(shell_quote_assignment("Q", "a'b"), "Q='a'\\''b'");
 }

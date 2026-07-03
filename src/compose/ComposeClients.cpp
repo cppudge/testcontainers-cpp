@@ -214,25 +214,6 @@ private:
         return client_.exec(cli_id_, {"/bin/sh", "-c", script});
     }
 
-    /// Single-quote a token for /bin/sh, escaping embedded single quotes.
-    static std::string shell_quote(const std::string& s) {
-        std::string out = "'";
-        for (const char c : s) {
-            if (c == '\'') {
-                out += "'\\''";
-            } else {
-                out.push_back(c);
-            }
-        }
-        out.push_back('\'');
-        return out;
-    }
-
-    /// `KEY='value'` env assignment for the shell.
-    static std::string shell_quote_assignment(const std::string& key, const std::string& value) {
-        return key + "=" + shell_quote(value);
-    }
-
     DockerClient client_;
     std::string cli_id_;                          ///< the long-lived cli container id
     std::vector<std::string> files_in_container_; ///< /docker-compose-<i>.yml paths

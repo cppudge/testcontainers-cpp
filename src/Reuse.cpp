@@ -53,8 +53,9 @@ std::string read_properties_file() {
     return ss.str();
 }
 
-/// True if the properties text sets `testcontainers.reuse.enable=true` (spaces
-/// trimmed; `#`-comment lines ignored).
+} // namespace
+
+/// See Reuse.hpp.
 bool properties_reuse_enabled(const std::string& contents) {
     std::istringstream stream(contents);
     std::string line;
@@ -74,8 +75,6 @@ bool properties_reuse_enabled(const std::string& contents) {
     }
     return false;
 }
-
-} // namespace
 
 const char* reuse_hash_label() { return kReuseHashLabel; }
 

@@ -52,4 +52,21 @@ std::vector<std::string> build_compose_down_args(const ComposeDownCommand& comma
     return args;
 }
 
+std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (const char c : s) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out.push_back(c);
+        }
+    }
+    out.push_back('\'');
+    return out;
+}
+
+std::string shell_quote_assignment(const std::string& key, const std::string& value) {
+    return key + "=" + shell_quote(value);
+}
+
 } // namespace testcontainers::compose

@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "WaitStrategies.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 // Tests in this file:
@@ -21,6 +22,9 @@
 //   WaitFor.ListeningPortFactory - wait_for::listening_port builds a Port with the given port (and a default poll interval).
 //   WaitFor.Copyable - a WaitFor (and a vector of them) can be copied.
 //   WaitFor.VisitDispatches - std::visit dispatches to the active alternative.
+//   WaitFor.CountOccurrencesBasics - count_occurrences counts disjoint matches, including at the ends, and 0 for no match.
+//   WaitFor.CountOccurrencesNonOverlapping - overlapping candidates count once per consumed match ("aaaa"/"aa" -> 2).
+//   WaitFor.CountOccurrencesEmptyNeedleIsZero - an empty needle yields 0 (never "instantly satisfied").
 
 using namespace testcontainers;
 
@@ -134,4 +138,26 @@ TEST(WaitFor, VisitDispatches) {
     EXPECT_EQ(describe(wait::None{}), "none");
     EXPECT_EQ(describe(wait_for::log("x")), "log");
     EXPECT_EQ(describe(wait_for::seconds(1)), "duration");
+}
+
+TEST(WaitFor, CountOccurrencesBasics) {
+    using testcontainers::detail::count_occurrences;
+    EXPECT_EQ(count_occurrences("Ready to accept connections", "Ready"), 1u);
+    EXPECT_EQ(count_occurrences("ready... ready... ready", "ready"), 3u);
+    EXPECT_EQ(count_occurrences("no match here", "READY"), 0u);
+    EXPECT_EQ(count_occurrences("", "ready"), 0u);
+}
+
+TEST(WaitFor, CountOccurrencesNonOverlapping) {
+    using testcontainers::detail::count_occurrences;
+    // Matches consume their span: "aaaa" holds two disjoint "aa", not three.
+    EXPECT_EQ(count_occurrences("aaaa", "aa"), 2u);
+    EXPECT_EQ(count_occurrences("aaa", "aa"), 1u);
+}
+
+TEST(WaitFor, CountOccurrencesEmptyNeedleIsZero) {
+    using testcontainers::detail::count_occurrences;
+    // An empty needle must not read as "message already seen".
+    EXPECT_EQ(count_occurrences("anything", ""), 0u);
+    EXPECT_EQ(count_occurrences("", ""), 0u);
 }

@@ -18,6 +18,25 @@ struct ProcessResult {
     std::string output; ///< merged stdout + stderr (we append `2>&1`)
 };
 
+/// Quote a single argv element for inclusion in a shell command line.
+///
+/// Wraps the element in double quotes and escapes any embedded double quote
+/// (`"` -> `\"`). This keeps paths/values containing spaces intact. We do NOT
+/// attempt full POSIX/cmd metacharacter escaping — the argv here is
+/// library-controlled (compose subcommands + paths), not arbitrary user shell
+/// input; see TODO.md for the cmd.exe embedded-quote caveat. Exposed (pure)
+/// for unit testing.
+std::string quote_arg(const std::string& arg);
+
+/// Build the full command line run_process hands to popen: each argv element
+/// quoted and space-joined, an optional `cd "<dir>" &&` prefix, an optional
+/// `< "<stdin-file>"` redirection, and a trailing `2>&1`. On Windows the whole
+/// line is wrapped in one more pair of quotes so cmd.exe's first/last-quote
+/// stripping is a no-op on our real quoting. Exposed (pure) for unit testing.
+std::string build_command_line(const std::vector<std::string>& argv,
+                               const std::optional<std::string>& working_dir,
+                               const std::optional<std::string>& stdin_file);
+
 /// Run `argv` as a child process, capturing its merged stdout+stderr.
 ///
 /// Implementation: we shell out via `_popen`/`_pclose` (`popen`/`pclose` on

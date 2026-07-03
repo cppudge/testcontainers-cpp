@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,11 @@ namespace testcontainers {
 class DockerClient;
 
 namespace detail {
+
+/// Count non-overlapping occurrences of `needle` in `haystack` (0 for an empty
+/// needle). Drives the log wait's "seen the message N times" check. Pure —
+/// exposed for unit testing.
+std::size_t count_occurrences(const std::string& haystack, const std::string& needle);
 
 /// Run each readiness condition in `waits` in order, under a single shared
 /// deadline (`timeout` from the moment this is called). Throws DockerError if

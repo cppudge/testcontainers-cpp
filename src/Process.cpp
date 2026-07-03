@@ -23,17 +23,10 @@
 
 namespace testcontainers::detail {
 
-namespace {
-
-/// Quote a single argv element for inclusion in a shell command line.
-///
-/// We wrap every element in double quotes and escape any embedded double quote
-/// (`"` -> `\"`). This keeps paths/values containing spaces intact. On Windows
-/// the command runs via `cmd /c` (what `_popen` uses); double-quote wrapping is
-/// the portable common denominator that both `cmd` and `/bin/sh` accept for our
-/// inputs (compose flags, absolute file paths, project names). We do NOT attempt
-/// full POSIX/cmd metacharacter escaping — the argv here is library-controlled
-/// (compose subcommands + paths), not arbitrary user shell input.
+/// See Process.hpp. On Windows the command runs via `cmd /c` (what `_popen`
+/// uses); double-quote wrapping is the portable common denominator that both
+/// `cmd` and `/bin/sh` accept for our inputs (compose flags, absolute file
+/// paths, project names).
 std::string quote_arg(const std::string& arg) {
     std::string out;
     out.reserve(arg.size() + 2);
@@ -48,15 +41,12 @@ std::string quote_arg(const std::string& arg) {
     return out;
 }
 
-/// Build the full command line: each argv element quoted and space-joined, an
-/// optional `cd "<dir>" &&` prefix, an optional `< "<stdin-file>"` redirection,
-/// and a trailing `2>&1` to capture stderr.
-///
-/// On Windows, `_popen` runs `cmd.exe /c <line>`. cmd has a notorious rule: when
-/// the line begins with a quote, it strips the FIRST and LAST quote of the whole
-/// line — which would corrupt our leading `"docker"`. The documented workaround
-/// (`cmd /?`) is to wrap the ENTIRE line in one more pair of quotes, so cmd's
-/// strip removes that outer pair and leaves our real, per-arg quoting intact.
+/// See Process.hpp. On Windows, `_popen` runs `cmd.exe /c <line>`. cmd has a
+/// notorious rule: when the line begins with a quote, it strips the FIRST and
+/// LAST quote of the whole line — which would corrupt our leading `"docker"`.
+/// The documented workaround (`cmd /?`) is to wrap the ENTIRE line in one more
+/// pair of quotes, so cmd's strip removes that outer pair and leaves our real,
+/// per-arg quoting intact.
 std::string build_command_line(const std::vector<std::string>& argv,
                                const std::optional<std::string>& working_dir,
                                const std::optional<std::string>& stdin_file) {
@@ -85,6 +75,8 @@ std::string build_command_line(const std::vector<std::string>& argv,
 #endif
     return cmd;
 }
+
+namespace {
 
 /// Read an environment variable, returning nullopt when unset. (On Windows
 /// `getenv` is flagged unsafe under the secure-CRT; use `_dupenv_s`.)
