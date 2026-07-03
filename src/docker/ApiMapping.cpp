@@ -168,6 +168,18 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     return body;
 }
 
+nlohmann::json build_connect_network_body(const std::string& container_id,
+                                          const std::vector<std::string>& aliases) {
+    nlohmann::json body;
+    body["Container"] = container_id;
+    if (!aliases.empty()) {
+        nlohmann::json endpoint = nlohmann::json::object();
+        endpoint["Aliases"] = aliases;
+        body["EndpointConfig"] = std::move(endpoint);
+    }
+    return body;
+}
+
 nlohmann::json build_network_create_body(const NetworkCreateSpec& spec) {
     nlohmann::json body;
     body["Name"] = spec.name;

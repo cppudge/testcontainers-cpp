@@ -1,12 +1,11 @@
 #include "testcontainers/Volume.hpp"
 
-#include <array>
-#include <random>
 #include <string>
 
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 
+#include "RandomHex.hpp"
 #include "Reaper.hpp"
 
 namespace testcontainers {
@@ -14,16 +13,7 @@ namespace testcontainers {
 namespace {
 
 /// Generate a unique-ish volume name like "tc-1a2b3c4d5e6f7a8b".
-std::string random_volume_name() {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::random_device rd;
-    std::uniform_int_distribution<int> dist(0, 15);
-    std::array<char, 16> buf{};
-    for (char& c : buf) {
-        c = hex[dist(rd)];
-    }
-    return "tc-" + std::string(buf.data(), buf.size());
-}
+std::string random_volume_name() { return "tc-" + detail::random_hex(16); }
 
 } // namespace
 

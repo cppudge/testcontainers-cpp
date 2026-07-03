@@ -33,6 +33,7 @@
 //   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
 //   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
 //   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
+//   ApiMapping.BuildConnectNetworkBody - the connect body carries Container, adding EndpointConfig.Aliases only when aliases are given.
 //   ApiMapping.BuildVolumeCreateBody - a full VolumeCreateSpec maps to Name, Driver, DriverOpts, and Labels.
 //   ApiMapping.BuildVolumeCreateBodyMinimal - a VolumeCreateSpec with only a name emits just Name and no Driver/DriverOpts/Labels.
 //   ApiMapping.ParseVolumeInspect - GET /volumes/{name} JSON parses Name/Driver/Mountpoint/Scope and the Labels/Options maps.
@@ -53,7 +54,7 @@
 //   ApiMapping.ParseInspectTty - inspect JSON with Config.Tty=true parses into ContainerInspect.tty (false when absent).
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
-//   ApiMapping.ParseInspectMalformedHostPort - a non-numeric or out-of-range HostPort leaves the binding's host_port 0 instead of throwing.
+//   ApiMapping.ParseInspectMalformedHostPort - a non-numeric, out-of-range, or trailing-garbage HostPort drops that binding (valid siblings survive) instead of throwing or surviving as port 0.
 //   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
@@ -72,6 +73,7 @@ using testcontainers::docker::build_build_query;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
+using testcontainers::docker::build_connect_network_body;
 using testcontainers::docker::build_network_create_body;
 using testcontainers::docker::build_volume_create_body;
 using testcontainers::docker::parse_volume_inspect;
@@ -227,7 +229,7 @@ TEST(ApiMapping, BuildCreateBodyAutoRemove) {
 TEST(ApiMapping, BuildCreateBodyBindMount) {
     CreateContainerSpec spec;
     spec.image = "alpine:3.20";
-    spec.mounts = {Mount::bind("/host/data", "/data").read_only()};
+    spec.mounts = {Mount::bind("/host/data", "/data").with_read_only()};
 
     const auto body = build_create_body(spec);
     ASSERT_TRUE(body.contains("HostConfig"));
@@ -387,6 +389,18 @@ TEST(ApiMapping, BuildNetworkCreateBodyMinimal) {
     EXPECT_FALSE(body.contains("IPAM"));
     EXPECT_FALSE(body.contains("Options"));
     EXPECT_FALSE(body.contains("Labels"));
+}
+
+TEST(ApiMapping, BuildConnectNetworkBody) {
+    const auto bare = build_connect_network_body("abc123", {});
+    EXPECT_EQ(bare["Container"], "abc123");
+    EXPECT_FALSE(bare.contains("EndpointConfig"));
+
+    const auto with_aliases = build_connect_network_body("abc123", {"cache", "redis"});
+    EXPECT_EQ(with_aliases["Container"], "abc123");
+    ASSERT_TRUE(with_aliases.contains("EndpointConfig"));
+    EXPECT_EQ(with_aliases["EndpointConfig"]["Aliases"],
+              (nlohmann::json::array({"cache", "redis"})));
 }
 
 TEST(ApiMapping, BuildVolumeCreateBody) {

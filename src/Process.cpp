@@ -5,9 +5,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <random>
 #include <string>
 
+#include "RandomHex.hpp"
 #include "testcontainers/Error.hpp"
 
 #if defined(_WIN32)
@@ -84,20 +84,6 @@ std::string build_command_line(const std::vector<std::string>& argv,
     cmd = "\"" + cmd + "\"";
 #endif
     return cmd;
-}
-
-/// Generate a random lowercase-hex id, mirroring the random_device + hex idiom
-/// used elsewhere in the repo (Reaper.cpp, Network.cpp).
-std::string random_hex(std::size_t chars) {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::random_device rd;
-    std::uniform_int_distribution<int> dist(0, 15);
-    std::string out;
-    out.reserve(chars);
-    for (std::size_t i = 0; i < chars; ++i) {
-        out.push_back(hex[dist(rd)]);
-    }
-    return out;
 }
 
 /// Read an environment variable, returning nullopt when unset. (On Windows

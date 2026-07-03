@@ -2,6 +2,8 @@
 
 #include "Reaper.hpp"
 
+#include "RandomHex.hpp"
+#include "docker/Ports.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -18,7 +20,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <istream>
-#include <random>
 #include <string>
 #include <thread>
 
@@ -35,19 +36,6 @@ constexpr const char* kRyukPort = "8080/tcp";
 
 constexpr const char* kManagedByLabel = "org.testcontainers.managed-by";
 constexpr const char* kSessionIdLabel = "org.testcontainers.session-id";
-
-/// Generate a random 32-hex-char id (128 bits of entropy).
-std::string random_hex(std::size_t chars) {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::random_device rd;
-    std::uniform_int_distribution<int> dist(0, 15);
-    std::string out;
-    out.reserve(chars);
-    for (std::size_t i = 0; i < chars; ++i) {
-        out.push_back(hex[dist(rd)]);
-    }
-    return out;
-}
 
 bool env_truthy(const char* name) {
     const char* v = std::getenv(name);
@@ -105,31 +93,21 @@ RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove) {
     client.start_container(id);
 
     // Resolve the published host port (prefer the IPv4 binding).
-    std::uint16_t host_port = 0;
-    {
-        const ContainerInspect info = client.inspect_container(id);
-        const auto it = info.ports.find(kRyukPort);
-        if (it == info.ports.end() || it->second.empty()) {
-            try {
-                client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
-            } catch (...) {
-            }
-            throw DockerError("Ryuk container " + id + " published no host port for " +
-                              kRyukPort);
+    const ContainerInspect info = client.inspect_container(id);
+    const auto host_port =
+        docker::select_host_port(info.ports, kRyukPort, docker::HostPortFamily::Any);
+    if (!host_port) {
+        try {
+            client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
+        } catch (...) {
         }
-        host_port = it->second.front().host_port;
-        for (const PortBinding& binding : it->second) {
-            if (binding.host_ip.find(':') == std::string::npos) { // IPv4 / empty
-                host_port = binding.host_port;
-                break;
-            }
-        }
+        throw DockerError("Ryuk container " + id + " published no host port for " + kRyukPort);
     }
 
     RyukEndpoint ep;
     ep.container_id = id;
     ep.host = client.host().http_host(); // "localhost" for a named pipe / unix socket
-    ep.port = host_port;
+    ep.port = *host_port;
     return ep;
 }
 

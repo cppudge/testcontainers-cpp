@@ -123,7 +123,7 @@ TEST(GenericImage, ConfigBuildersReflectGetters) {
         .with_user("1000:1000")
         .with_privileged()
         .with_mount(Mount::tmpfs("/cache").with_tmpfs_size(1024))
-        .with_mount(Mount::bind("/host", "/data").read_only());
+        .with_mount(Mount::bind("/host", "/data").with_read_only());
 
     EXPECT_EQ(img.entrypoint(), (std::vector<std::string>{"echo"}));
     ASSERT_TRUE(img.working_dir().has_value());

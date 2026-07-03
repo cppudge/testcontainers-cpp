@@ -55,6 +55,96 @@ std::string url_encode(std::string_view value) {
     return out;
 }
 
+/// A request carrying the headers every Docker call shares (Host, User-Agent)
+/// with keep-alive off (one connection per request for now).
+template <class Body>
+http::request<Body> make_request(http::verb method, const std::string& target,
+                                 const DockerHost& host) {
+    http::request<Body> req{method, target, /*HTTP*/ 11};
+    req.set(http::field::host, host.http_host());
+    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
+    req.keep_alive(false);
+    return req;
+}
+
+/// Read the response header off a hijacked/streaming connection and require
+/// HTTP 200: on a read error or a non-200 status this closes `transport` and
+/// throws DockerError prefixed with `context`.
+template <class Parser>
+void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
+                    boost::beast::flat_buffer& buffer, Parser& parser,
+                    const std::string& context) {
+    boost::system::error_code ec;
+    http::read_header(stream, buffer, parser, ec);
+    if (ec && ec != http::error::end_of_stream) {
+        transport.close();
+        throw DockerError(context + " failed to read response: " + ec.message());
+    }
+    if (parser.get().result_int() != 200) {
+        const int status = static_cast<int>(parser.get().result_int());
+        transport.close();
+        throw DockerError(context + " failed: HTTP " + std::to_string(status));
+    }
+}
+
+/// Deliver a streaming (follow-logs / exec) response body to `consumer` chunk
+/// by chunk. read_some (not read): read returns only when the whole message is
+/// complete — for a follow stream that means "when the container stops",
+/// batching all output to the end; read_some returns after each socket read, so
+/// frames arrive as the daemon flushes them. With `tty` the stream is
+/// raw/unframed and is delivered verbatim as stdout; otherwise the multiplexed
+/// frames are demuxed (stdin frames never appear in log/exec output and are
+/// skipped). Returns when the stream ends, the daemon resets it, or `consumer`
+/// returns false — the caller closes the connection either way.
+void stream_body_to_consumer(docker::TransportStream& stream, boost::beast::flat_buffer& buffer,
+                             http::response_parser<http::buffer_body>& parser, bool tty,
+                             const LogConsumer& consumer) {
+    docker::LogDemuxer demuxer;
+    std::array<char, 8192> buf{};
+    boost::system::error_code ec;
+    bool stop = false;
+    while (!stop && !parser.is_done()) {
+        parser.get().body().data = buf.data();
+        parser.get().body().size = buf.size();
+
+        http::read_some(stream, buffer, parser, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {}; // the buffer filled up: not an error, just keep reading
+        }
+        if (ec) {
+            break; // end_of_stream (the stream ended) or reset by the daemon
+        }
+
+        const std::size_t n = buf.size() - parser.get().body().size;
+        if (n == 0) {
+            continue;
+        }
+        if (tty) {
+            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
+                stop = true;
+            }
+            continue;
+        }
+        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
+            LogSource source = LogSource::Stdout;
+            switch (frame.stream) {
+            case docker::LogStreamKind::StdIn:
+                continue;
+            case docker::LogStreamKind::StdOut:
+                source = LogSource::Stdout;
+                break;
+            case docker::LogStreamKind::StdErr:
+                source = LogSource::Stderr;
+                break;
+            }
+            if (!consumer(source, frame.data)) {
+                stop = true; // consumer asked to stop
+                break;
+            }
+        }
+    }
+}
+
 } // namespace
 
 std::string Response::header(std::string_view name) const {
@@ -78,11 +168,8 @@ Response DockerClient::request(std::string_view method, std::string_view target,
     auto transport = docker::connect(host_);
     docker::TransportStream stream{*transport};
 
-    http::request<http::string_body> req{http::string_to_verb(std::string(method)),
-                                         std::string(target), /*HTTP*/ 11};
-    req.set(http::field::host, host_.http_host());
-    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
-    req.keep_alive(false); // one connection per request for now
+    auto req = make_request<http::string_body>(http::string_to_verb(std::string(method)),
+                                               std::string(target), host_);
     for (const auto& [key, value] : headers) {
         req.set(key, value);
     }
@@ -344,10 +431,7 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     // Streaming: follow=1; everything else mirrors logs().
     const std::string target = build_logs_target(id, opts, /*follow*/ true);
 
-    http::request<http::empty_body> req{http::verb::get, target, /*HTTP*/ 11};
-    req.set(http::field::host, host_.http_host());
-    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
-    req.keep_alive(false); // one connection per request for now
+    const auto req = make_request<http::empty_body>(http::verb::get, target, host_);
 
     boost::system::error_code ec;
     http::write(stream, req, ec);
@@ -361,70 +445,8 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    http::read_header(stream, buffer, parser, ec);
-    if (ec && ec != http::error::end_of_stream) {
-        transport->close();
-        throw DockerError("Failed to read response from Docker (GET " + target +
-                          "): " + ec.message());
-    }
-    if (parser.get().result_int() != 200) {
-        const int status = static_cast<int>(parser.get().result_int());
-        transport->close();
-        throw DockerError("follow_logs(" + id + ") failed: HTTP " + std::to_string(status));
-    }
-
-    docker::LogDemuxer demuxer;
-    std::array<char, 8192> buf{};
-    bool stop = false;
-    while (!stop && !parser.is_done()) {
-        parser.get().body().data = buf.data();
-        parser.get().body().size = buf.size();
-
-        // read_some (not read): read returns only when the whole message is
-        // complete, which for a follow stream means "when the container stops" —
-        // that would batch all output to the end. read_some returns after each
-        // socket read, so frames are delivered as the daemon flushes them.
-        http::read_some(stream, buffer, parser, ec);
-        if (ec == http::error::need_buffer) {
-            ec = {}; // the buffer filled up: not an error, just keep reading
-        }
-        if (ec == http::error::end_of_stream) {
-            break; // the container's log stream ended (it stopped)
-        }
-        if (ec) {
-            break; // the stream was reset/closed by the daemon; treat as end
-        }
-
-        const std::size_t n = buf.size() - parser.get().body().size;
-        if (n == 0) {
-            continue;
-        }
-        if (opts.tty) {
-            // Raw, unframed (the container was created with Tty=true): deliver the
-            // bytes verbatim as a single stdout stream, no demux.
-            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
-                stop = true;
-            }
-            continue;
-        }
-        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
-            LogSource source = LogSource::Stdout;
-            switch (frame.stream) {
-            case docker::LogStreamKind::StdIn:
-                continue; // never present in log output
-            case docker::LogStreamKind::StdOut:
-                source = LogSource::Stdout;
-                break;
-            case docker::LogStreamKind::StdErr:
-                source = LogSource::Stderr;
-                break;
-            }
-            if (!consumer(source, frame.data)) {
-                stop = true; // consumer asked to stop; close the connection below
-                break;
-            }
-        }
-    }
+    read_ok_header(*transport, stream, buffer, parser, "follow_logs(" + id + ")");
+    stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
 
     // Closing the connection tells Docker to stop streaming (also on early stop).
     transport->close();
@@ -472,11 +494,8 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
     const std::string start_body =
         std::string(R"({"Detach":false,"Tty":)") + (opts.tty ? "true" : "false") + "}";
 
-    http::request<http::string_body> req{http::verb::post, start_target, /*HTTP*/ 11};
-    req.set(http::field::host, host.http_host());
-    req.set(http::field::user_agent, "testcontainers-cpp/" + version());
+    auto req = make_request<http::string_body>(http::verb::post, start_target, host);
     req.set(http::field::content_type, "application/json");
-    req.keep_alive(false);
     req.body() = start_body;
     req.prepare_payload();
 
@@ -539,15 +558,11 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     boost::beast::flat_buffer buffer;
     http::response_parser<http::string_body> parser;
     parser.body_limit(boost::none);
-    http::read(stream, buffer, parser, ec);
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    http::read(stream, buffer, parser, ec); // the rest of the body
     if (ec && ec != http::error::end_of_stream) {
         transport->close();
         throw DockerError("exec start " + exec_id + " failed to read response: " + ec.message());
-    }
-    if (parser.get().result_int() != 200) {
-        const int status = static_cast<int>(parser.get().result_int());
-        transport->close();
-        throw DockerError("exec start " + exec_id + " failed: HTTP " + std::to_string(status));
     }
     std::string body = std::move(parser.get().body());
     transport->close();
@@ -590,69 +605,12 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     // 4) Read the response incrementally, delivering chunks to consumer as they
     //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
     //    deliver the raw bytes as a single stdout stream.
-    boost::system::error_code ec;
     boost::beast::flat_buffer buffer;
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    http::read_header(stream, buffer, parser, ec);
-    if (ec && ec != http::error::end_of_stream) {
-        transport->close();
-        throw DockerError("exec start " + exec_id + " failed to read response: " + ec.message());
-    }
-    if (parser.get().result_int() != 200) {
-        const int status = static_cast<int>(parser.get().result_int());
-        transport->close();
-        throw DockerError("exec start " + exec_id + " failed: HTTP " + std::to_string(status));
-    }
-
-    docker::LogDemuxer demuxer;
-    std::array<char, 8192> buf{};
-    bool stop = false;
-    while (!stop && !parser.is_done()) {
-        parser.get().body().data = buf.data();
-        parser.get().body().size = buf.size();
-
-        http::read_some(stream, buffer, parser, ec);
-        if (ec == http::error::need_buffer) {
-            ec = {}; // the buffer filled up: keep reading
-        }
-        if (ec == http::error::end_of_stream) {
-            break; // the exec output stream ended (command finished)
-        }
-        if (ec) {
-            break; // the stream was reset/closed by the daemon; treat as end
-        }
-
-        const std::size_t n = buf.size() - parser.get().body().size;
-        if (n == 0) {
-            continue;
-        }
-        if (opts.tty) {
-            // Raw, unframed: deliver verbatim as stdout.
-            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
-                stop = true;
-            }
-            continue;
-        }
-        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
-            LogSource source = LogSource::Stdout;
-            switch (frame.stream) {
-            case docker::LogStreamKind::StdIn:
-                continue; // never present in exec output
-            case docker::LogStreamKind::StdOut:
-                source = LogSource::Stdout;
-                break;
-            case docker::LogStreamKind::StdErr:
-                source = LogSource::Stderr;
-                break;
-            }
-            if (!consumer(source, frame.data)) {
-                stop = true; // consumer asked to stop; close the connection below
-                break;
-            }
-        }
-    }
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
     transport->close();
 
     // 5) Inspect the exec for the exit code; the output went to consumer, so
@@ -701,24 +659,11 @@ std::string DockerClient::copy_from_container(const std::string& id,
 
 std::string DockerClient::create_network(
     const std::string& name, const std::vector<std::pair<std::string, std::string>>& labels) {
-    nlohmann::json body;
-    body["Name"] = name;
-    if (!labels.empty()) {
-        nlohmann::json json_labels = nlohmann::json::object();
-        for (const auto& [key, value] : labels) {
-            json_labels[key] = value;
-        }
-        body["Labels"] = std::move(json_labels);
-    }
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
-
-    const Response res = request("POST", "/networks/create", body.dump(), headers);
-    if (res.status_code != 201) {
-        throw DockerError("create_network('" + name + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
-    }
-    return docker::expect_string_field(res.body, "Id", "create_network('" + name + "')");
+    // A name+labels network is just a minimal spec; one construction path.
+    NetworkCreateSpec spec;
+    spec.name = name;
+    spec.labels = labels;
+    return create_network(spec);
 }
 
 std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
@@ -736,18 +681,11 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
 
 void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,
                                    const std::vector<std::string>& aliases) {
-    nlohmann::json body;
-    body["Container"] = container_id;
-    if (!aliases.empty()) {
-        nlohmann::json endpoint = nlohmann::json::object();
-        endpoint["Aliases"] = aliases;
-        body["EndpointConfig"] = std::move(endpoint);
-    }
+    const std::string body = docker::build_connect_network_body(container_id, aliases).dump();
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
-    const Response res =
-        request("POST", "/networks/" + network_id + "/connect", body.dump(), headers);
+    const Response res = request("POST", "/networks/" + network_id + "/connect", body, headers);
     // 200 (older daemons) or 204 (current) both mean connected.
     if (res.status_code != 200 && res.status_code != 204) {
         throw DockerError("connect_network(" + network_id + ", " + container_id + ") failed: HTTP " +

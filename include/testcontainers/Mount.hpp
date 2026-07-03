@@ -51,7 +51,7 @@ public:
 
     // --- In-place setters (single overload; chain on lvalues and temporaries) ---
 
-    Mount& read_only(bool ro = true) {
+    Mount& with_read_only(bool ro = true) {
         read_only_ = ro;
         return *this;
     }

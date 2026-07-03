@@ -13,6 +13,7 @@
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/http.hpp>
 
+#include "docker/Ports.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -134,22 +135,19 @@ void wait_for_healthcheck(DockerClient& client, const std::string& id, Clock::ti
 }
 
 /// Resolve the host port Docker published for `port`, preferring the IPv4
-/// binding (mirrors `Container::get_host_port`). Throws if nothing is published.
+/// binding (same policy as `Container::get_host_port`). Throws if nothing is
+/// published.
 std::uint16_t mapped_host_port(DockerClient& client, const std::string& id,
                                const ContainerPort& port) {
     const ContainerInspect info = client.inspect_container(id);
     const std::string key = to_string(port);
 
-    const auto it = info.ports.find(key);
-    if (it == info.ports.end() || it->second.empty()) {
+    const auto host_port =
+        docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    if (!host_port) {
         throw DockerError("Container " + id + " has no published host port for " + key);
     }
-    for (const PortBinding& binding : it->second) {
-        if (binding.host_ip.find(':') == std::string::npos) { // IPv4 (or empty host IP)
-            return binding.host_port;
-        }
-    }
-    return it->second.front().host_port;
+    return *host_port;
 }
 
 /// One HTTP probe: open a TCP connection to host:port and GET `path`. Returns

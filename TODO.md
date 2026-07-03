@@ -21,18 +21,6 @@ review are recorded here so they aren't lost between milestones.
   `parse_server_os`, `parse_exec_exit_code`) still call `nlohmann::json::parse` unguarded — an
   HTML error page through a 200 escapes as a raw `json::parse_error`; route them through the
   same wrap-to-DockerError policy. (`include/testcontainers/Error.hpp`, `src/docker/ApiMapping.*`)
-- **`Container` public API leaks start() wiring** — `set_stopping_hooks`, `set_exposed_ports`,
-  and the adopt-constructor are public but documented "called by GenericImage::start()"; a
-  newcomer can't tell them from real operations. Fix direction: passkey idiom or
-  `friend GenericImage`. (`include/testcontainers/Container.hpp`)
-- **Duplicated internal helpers** — (a) the IPv4-preferring host-port selection is hand-rolled
-  in `src/WaitStrategies.cpp`, `src/DockerComposeContainer.cpp` (`published_host_port`), and
-  `src/Reaper.cpp` although `docker::select_host_port` (`src/docker/Ports.hpp`) already exists;
-  (b) `random_hex` is copy-pasted across 5 TUs (Reaper, Network, Volume, Process,
-  DockerComposeContainer); (c) the streaming read loop (~45 lines: buffer_body parser +
-  `read_some`/`need_buffer`/`end_of_stream` + demux switch) is triplicated in `follow_logs` and
-  the two streaming `exec` bodies; (d) request-building boilerplate (host/user-agent/keep_alive)
-  repeats in `request`/`follow_logs`/`exec_start`. Fold each onto one shared helper.
 - **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
   credential-helper path) mutate process-global env via `_putenv_s`/`setenv` around the child
   run; two compose stacks torn down concurrently (destructors on different threads) can
@@ -117,18 +105,15 @@ review are recorded here so they aren't lost between milestones.
   lowest-numbered published port), `inspect()` (structured `ContainerInspect`) and `inspect_raw()` (the
   full inspect JSON string for fields we don't model). The binding-selection logic is a pure, unit-tested
   helper (`src/docker/Ports.hpp`: `select_host_port`/`lowest_published_host_port`). Known limits:
-  (a) every getter re-inspects the container (no caching of the published ports); (b) `WaitStrategies.cpp`
-  `mapped_host_port` still re-implements the IPv4-preference instead of reusing `docker::select_host_port`
-  — fold it onto the shared helper; (c) `first_mapped_port`'s exposed-order is only known for handles
+  (a) every getter re-inspects the container (no caching of the published ports);
+  (b) `first_mapped_port`'s exposed-order is only known for handles
   returned by `start()` (adopted/manual handles fall back to lowest-numbered).
   (`src/Container.cpp`, `src/docker/Ports.hpp`)
 - **Log-wait polling cost** — the log wait re-fetches the full `tail=all` snapshot
   every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
   item above). (`src/WaitStrategies.cpp`)
-- **Wait-strategy port resolution duplicated** — `mapped_host_port` in
-  `src/WaitStrategies.cpp` (HTTP + port waits) re-implements `Container::get_host_port`'s IPv4-binding
-  preference; factor into one shared helper. The HTTP/port waits also open a fresh TCP connection +
-  `io_context` per probe (fine for ~200ms polling).
+- **Wait probes open a fresh TCP connection + `io_context` per probe** — fine for ~200ms
+  polling; noted in case probe frequency ever increases. (`src/WaitStrategies.cpp`)
 - **`wait::Port` probes only the externally mapped host port** — `wait_for::listening_port` resolves
   the published host port and does a TCP connect; it does NOT do the in-container `/proc/net/tcp`
   listening check that testcontainers-java additionally performs (`tcp_probe` in

@@ -22,6 +22,11 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec);
 /// Build the JSON body for `POST /networks/create` from a NetworkCreateSpec.
 nlohmann::json build_network_create_body(const NetworkCreateSpec& spec);
 
+/// Build the JSON body for `POST /networks/{id}/connect`: Container plus an
+/// optional EndpointConfig.Aliases (omitted when `aliases` is empty).
+nlohmann::json build_connect_network_body(const std::string& container_id,
+                                          const std::vector<std::string>& aliases);
+
 /// Build the JSON body for `POST /volumes/create` from a VolumeCreateSpec. Always
 /// emits Name; emits Driver/DriverOpts/Labels only when set/non-empty.
 nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec);

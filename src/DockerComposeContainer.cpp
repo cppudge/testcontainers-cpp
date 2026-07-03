@@ -1,7 +1,9 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
+#include "RandomHex.hpp"
 #include "compose/ComposeClients.hpp"
 #include "compose/ComposeCommand.hpp"
+#include "docker/Ports.hpp"
 
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -15,7 +17,6 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
-#include <random>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -36,36 +37,18 @@ constexpr const char* kComposeImage = "docker:26.1-cli";
 constexpr const char* kComposeProjectLabel = "com.docker.compose.project";
 constexpr const char* kComposeServiceLabel = "com.docker.compose.service";
 
-/// Generate a random lowercase-hex id (a valid compose project name fragment),
-/// matching Reaper's random_hex.
-std::string random_hex(std::size_t chars) {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::random_device rd;
-    std::uniform_int_distribution<int> dist(0, 15);
-    std::string out;
-    out.reserve(chars);
-    for (std::size_t i = 0; i < chars; ++i) {
-        out.push_back(hex[dist(rd)]);
-    }
-    return out;
-}
+using detail::random_hex;
 
 /// Resolve the published host port for `key` (e.g. "6379/tcp") in an inspect,
-/// preferring the IPv4 binding (mirrors Reaper / Container::get_host_port).
+/// preferring the IPv4 binding (same policy as Container::get_host_port).
 std::uint16_t published_host_port(const ContainerInspect& info, const std::string& key) {
-    const auto it = info.ports.find(key);
-    if (it == info.ports.end() || it->second.empty()) {
+    const auto host_port =
+        docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    if (!host_port) {
         throw DockerError("Compose service container " + info.id +
                           " published no host port for " + key);
     }
-    std::uint16_t host_port = it->second.front().host_port;
-    for (const PortBinding& binding : it->second) {
-        if (binding.host_ip.find(':') == std::string::npos) { // IPv4 / empty host IP
-            host_port = binding.host_port;
-            break;
-        }
-    }
-    return host_port;
+    return *host_port;
 }
 
 /// Map the public client kind to the internal compose-client kind.
