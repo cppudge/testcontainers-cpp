@@ -33,8 +33,18 @@ review are recorded here so they aren't lost between milestones.
   incl. real run_process round-trips for output/exit-code/env/stdin). Found while testing: a
   nested `cmd /c "<script>"` argv shape does NOT survive the quoting on Windows (cmd re-applies
   its quote-stripping to the inner quoted script) — only "exe + arguments" argv is supported,
-  which is what every real caller uses. Remaining work: cmd.exe-correct `"` escaping if
-  untrusted input ever reaches the argv. (`src/Process.cpp`)
+  which is what every real caller uses (now stated in `run_process`'s doc comment). Remaining
+  work: (a) cmd.exe-correct `"` escaping if untrusted input ever reaches the argv; (b) the
+  `working_dir` prefix uses `cd` without `/d`, so on Windows a dir on ANOTHER DRIVE is silently
+  not switched to — harmless today (every caller passes nullopt; compose uses absolute `-f`
+  paths + `--project-directory`), but emit `cd /d` under `_WIN32` before anyone relies on it.
+  (`src/Process.cpp`)
+- **`DockerComposeContainer` moves are 17-member hand-written** — the move ctor/assign must
+  manually zero `temp_file_`/`started_`/`stopped_` and copy every field; the next added field
+  will silently be dropped from the move (the unit tests only guard the temp-file case). Fix
+  direction: a small RAII `TempFile` member (delete-on-destroy, moveable) + an owning "torn
+  down" flag type, then `= default` both moves — rule of zero makes the whole failure class
+  impossible and the move tests shrink to trivia. (`src/DockerComposeContainer.cpp`)
 - **No Docker API version pinned** — all targets are unversioned (`/containers/create`), relying
   on the daemon's default API version; nothing negotiates or pins `/v1.NN`. Behavior can shift
   across daemon upgrades. (`src/docker/DockerClient.cpp`)
@@ -42,12 +52,12 @@ review are recorded here so they aren't lost between milestones.
   cache read and the `GET /version`, so two threads can both issue the request on first use
   (idempotent, harmless). `std::call_once` or holding the lock across the miss would realize
   the double-checked intent. (`src/docker/DockerClient.cpp`)
-- **Remaining test gaps** — the review's gaps are mostly closed (Process quoting +
-  run_process end-to-end, properties_reuse_enabled, compose shell_quote,
-  count_occurrences, DockerComposeContainer moves are all unit-tested now); still open:
-  the WaitStrategies Duration-clamp-to-deadline branch is only exercised via the
-  integration `WaitStrategiesTest` (extracting it would mean restructuring the visitor),
-  and the containerised `exec_compose` env path is only integration-covered end to end.
+- **Remaining test gaps** — the review's gaps are closed (Process quoting + run_process
+  end-to-end, properties_reuse_enabled, compose shell_quote + the assembled
+  build_env_wrapped_script, count_occurrences, DockerComposeContainer moves are all
+  unit-tested now); still open: the WaitStrategies Duration-clamp-to-deadline branch is
+  only exercised via the integration `WaitStrategiesTest` (the ~5-line clamp could be
+  extracted as a pure `clamped_wait_plan(now, value, deadline)` if it ever regresses).
 - **`LogDemuxer` streaming cost** — `feed()` does `pending_.erase(0, pos)` on every
   call: O(n) per chunk → O(n²) for many small chunks. Fine for `demux_all` (single
   feed); switch to a consumed-offset / ring buffer when the follow/streaming path

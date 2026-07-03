@@ -16,9 +16,10 @@ const char* reuse_hash_label();
 std::string reuse_hash(const std::string& canonical);
 
 /// True if the given ~/.testcontainers.properties text sets
-/// `testcontainers.reuse.enable=true` (keys/values space-trimmed; `#`-comment
-/// and blank lines ignored). Pure — exposed for unit testing; `reuse_enabled()`
-/// feeds it the real file's contents.
+/// `testcontainers.reuse.enable=true` (keys/values space-trimmed; the value is
+/// case-insensitive, matching java's Boolean.parseBoolean on this shared file;
+/// `#`-comment and blank lines ignored). Pure — exposed for unit testing;
+/// `reuse_enabled()` feeds it the real file's contents.
 bool properties_reuse_enabled(const std::string& contents);
 
 /// Whether container reuse is enabled: env TESTCONTAINERS_REUSE_ENABLE in

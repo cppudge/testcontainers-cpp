@@ -2,6 +2,7 @@
 
 #include "Reuse.hpp"
 
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -53,6 +54,14 @@ std::string read_properties_file() {
     return ss.str();
 }
 
+/// ASCII-lowercase a copy of `s`.
+std::string to_lower(std::string s) {
+    for (char& c : s) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return s;
+}
+
 } // namespace
 
 /// See Reuse.hpp.
@@ -68,8 +77,13 @@ bool properties_reuse_enabled(const std::string& contents) {
         if (eq == std::string::npos) {
             continue;
         }
+        // The value is compared case-insensitively ("true"/"TRUE"/"True"):
+        // ~/.testcontainers.properties is the same file testcontainers-java
+        // reads, and java parses it with the case-insensitive
+        // Boolean.parseBoolean — a value that enables reuse there must not
+        // silently disable it here.
         if (trim(trimmed.substr(0, eq)) == "testcontainers.reuse.enable" &&
-            trim(trimmed.substr(eq + 1)) == "true") {
+            to_lower(trim(trimmed.substr(eq + 1))) == "true") {
             return true;
         }
     }

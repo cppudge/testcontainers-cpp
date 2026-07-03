@@ -103,7 +103,9 @@ TEST(Process, RunProcessAppliesAndRestoresEnv) {
         {"powershell", "-NoProfile", "-Command", "Write-Output $env:TC_PROC_TEST_ENV"},
         /*working_dir*/ std::nullopt, {{"TC_PROC_TEST_ENV", "visible-in-child"}});
 #else
-    const auto result = run_process({"sh", "-c", "echo $TC_PROC_TEST_ENV"},
+    // printenv (not `sh -c 'echo $VAR'`): the outer popen shell would expand
+    // $VAR itself, proving less than a child actually reading its environment.
+    const auto result = run_process({"printenv", "TC_PROC_TEST_ENV"},
                                     /*working_dir*/ std::nullopt,
                                     {{"TC_PROC_TEST_ENV", "visible-in-child"}});
 #endif

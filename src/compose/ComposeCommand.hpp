@@ -57,7 +57,17 @@ std::vector<std::string> build_compose_down_args(const ComposeDownCommand& comma
 /// compose invocations in `/bin/sh -c "..."`. Pure — unit-testable.
 std::string shell_quote(const std::string& s);
 
-/// A `KEY='value'` env assignment for /bin/sh (the value shell-quoted).
+/// A `KEY='value'` env assignment for /bin/sh (the value shell-quoted; KEY is
+/// emitted verbatim — library-controlled, not validated or quoted).
 std::string shell_quote_assignment(const std::string& key, const std::string& value);
+
+/// Assemble the one-line /bin/sh script the containerised client execs when
+/// env vars must prefix a compose invocation:
+/// `KEY1='v1' KEY2='v2' 'argv0' 'argv1' ...` — every value and argv token
+/// shell-quoted. With an empty `env` it degrades to just the quoted argv.
+/// Pure — unit-testable without a daemon.
+std::string build_env_wrapped_script(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& env);
 
 } // namespace testcontainers::compose

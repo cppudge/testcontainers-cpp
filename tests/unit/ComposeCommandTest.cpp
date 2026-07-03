@@ -17,6 +17,8 @@
 //   ComposeCommand.ShellQuoteWrapsInSingleQuotes - plain tokens and ones with spaces/$/" are wrapped in single quotes verbatim.
 //   ComposeCommand.ShellQuoteEscapesEmbeddedSingleQuotes - an embedded ' becomes the '\'' close-escape-reopen sequence.
 //   ComposeCommand.ShellQuoteAssignment - KEY='value' assignments quote the value only.
+//   ComposeCommand.EnvWrappedScriptPrefixesAssignments - build_env_wrapped_script emits the env assignments before the quoted argv, all shell-quoted (spaces/quotes survive).
+//   ComposeCommand.EnvWrappedScriptEmptyEnvIsJustArgv - with no env the script is just the quoted argv.
 
 using namespace testcontainers::compose;
 
@@ -169,4 +171,18 @@ TEST(ComposeCommand, ShellQuoteAssignment) {
     EXPECT_EQ(shell_quote_assignment("KEY", "value"), "KEY='value'");
     EXPECT_EQ(shell_quote_assignment("MSG", "hello world"), "MSG='hello world'");
     EXPECT_EQ(shell_quote_assignment("Q", "a'b"), "Q='a'\\''b'");
+}
+
+TEST(ComposeCommand, EnvWrappedScriptPrefixesAssignments) {
+    // The exact /bin/sh -c script the containerised client execs: env
+    // assignments first, then every argv token, all shell-quoted so values
+    // with spaces and quotes survive the shell.
+    const std::string script = build_env_wrapped_script(
+        {"docker", "compose", "up"}, {{"FOO", "a b"}, {"Q", "it's"}});
+    EXPECT_EQ(script, "FOO='a b' Q='it'\\''s' 'docker' 'compose' 'up'");
+}
+
+TEST(ComposeCommand, EnvWrappedScriptEmptyEnvIsJustArgv) {
+    EXPECT_EQ(build_env_wrapped_script({"docker", "compose", "version"}, {}),
+              "'docker' 'compose' 'version'");
 }

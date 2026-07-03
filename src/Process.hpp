@@ -39,6 +39,14 @@ std::string build_command_line(const std::vector<std::string>& argv,
 
 /// Run `argv` as a child process, capturing its merged stdout+stderr.
 ///
+/// CONTRACT: `argv[0]` must be a real executable ("exe + arguments" — its
+/// arguments are parsed with the MSVCRT/`CommandLineToArgvW` rules our quoting
+/// targets, which is how every library caller uses it: docker, compose,
+/// docker-credential-<helper>). A nested `cmd /c "<script>"` argv — or a
+/// .bat/.cmd file, which cmd.exe also tokenizes itself — is UNSUPPORTED on
+/// Windows: cmd's tokenizer re-processes the quotes and mangles the quoted
+/// script (see tests/unit/ProcessTest.cpp and TODO.md).
+///
 /// Implementation: we shell out via `_popen`/`_pclose` (`popen`/`pclose` on
 /// POSIX), so the argv is joined into a single command line. Each element is
 /// quoted defensively (wrapped in double quotes with embedded double quotes

@@ -194,24 +194,14 @@ private:
     /// Exec a `docker compose ...` argv inside the cli container. When `env` is
     /// non-empty we wrap the call in `/bin/sh -c "KEY=VALUE ... docker compose
     /// ..."` so the env vars are visible to compose (the exec API here has no
-    /// dedicated env field). With no env we exec the argv directly.
+    /// dedicated env field). With no env we exec the argv directly. The script
+    /// assembly is the pure, unit-tested build_env_wrapped_script.
     ExecResult exec_compose(const std::vector<std::string>& argv,
                             const std::vector<std::pair<std::string, std::string>>& env) {
         if (env.empty()) {
             return client_.exec(cli_id_, argv);
         }
-        std::string script;
-        for (const auto& [key, value] : env) {
-            script += shell_quote_assignment(key, value);
-            script += ' ';
-        }
-        for (std::size_t i = 0; i < argv.size(); ++i) {
-            if (i != 0) {
-                script.push_back(' ');
-            }
-            script += shell_quote(argv[i]);
-        }
-        return client_.exec(cli_id_, {"/bin/sh", "-c", script});
+        return client_.exec(cli_id_, {"/bin/sh", "-c", build_env_wrapped_script(argv, env)});
     }
 
     DockerClient client_;

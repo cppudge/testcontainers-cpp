@@ -16,7 +16,7 @@
 //   Reuse.HashEmptyInputIsFnvOffsetBasis - reuse_hash of the empty string is the 64-bit FNV-1a offset basis.
 //   Reuse.HashLabelConstant - reuse_hash_label() is the org.testcontainers.reuse.hash key.
 //   Reuse.EnabledViaEnvVar - reuse_enabled() honours TESTCONTAINERS_REUSE_ENABLE truthy values.
-//   Reuse.PropertiesEnabledParsesTheFlag - properties_reuse_enabled matches testcontainers.reuse.enable=true with spaces trimmed around key and value.
+//   Reuse.PropertiesEnabledParsesTheFlag - properties_reuse_enabled matches testcontainers.reuse.enable=true with spaces trimmed and the value case-insensitive (java Boolean.parseBoolean parity).
 //   Reuse.PropertiesEnabledIgnoresCommentsAndNoise - comment lines, blank lines, other keys, non-true values, and lines without '=' never enable reuse.
 
 using testcontainers::detail::properties_reuse_enabled;
@@ -97,6 +97,10 @@ TEST(Reuse, PropertiesEnabledParsesTheFlag) {
     EXPECT_TRUE(properties_reuse_enabled("testcontainers.reuse.enable=true"));
     // Spaces around key and value are trimmed; CRLF endings tolerated.
     EXPECT_TRUE(properties_reuse_enabled("  testcontainers.reuse.enable = true \r\n"));
+    // The value is case-insensitive: this is the same file testcontainers-java
+    // reads with Boolean.parseBoolean, where TRUE/True also enable reuse.
+    EXPECT_TRUE(properties_reuse_enabled("testcontainers.reuse.enable=TRUE\n"));
+    EXPECT_TRUE(properties_reuse_enabled("testcontainers.reuse.enable=True\n"));
     // The flag holds regardless of surrounding properties.
     EXPECT_TRUE(properties_reuse_enabled("docker.host=tcp://x:2375\n"
                                          "testcontainers.reuse.enable=true\n"
@@ -107,8 +111,8 @@ TEST(Reuse, PropertiesEnabledIgnoresCommentsAndNoise) {
     EXPECT_FALSE(properties_reuse_enabled(""));
     EXPECT_FALSE(properties_reuse_enabled("# testcontainers.reuse.enable=true\n"));
     EXPECT_FALSE(properties_reuse_enabled("testcontainers.reuse.enable=false\n"));
-    EXPECT_FALSE(properties_reuse_enabled("testcontainers.reuse.enable=TRUE\n")); // exact "true"
-    EXPECT_FALSE(properties_reuse_enabled("testcontainers.reuse.enable\n"));      // no '='
+    EXPECT_FALSE(properties_reuse_enabled("testcontainers.reuse.enable=1\n")); // not a boolean word
+    EXPECT_FALSE(properties_reuse_enabled("testcontainers.reuse.enable\n"));   // no '='
     EXPECT_FALSE(properties_reuse_enabled("some.other.key=true\n"));
     EXPECT_FALSE(properties_reuse_enabled("\n\n   \n"));
 }

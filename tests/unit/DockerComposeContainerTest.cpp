@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -134,15 +135,21 @@ TEST(DockerComposeContainer, MoveConstructTransfersTempFileOwnership) {
     // so a moved-from handle's destructor tears nothing down. Observable via
     // the from_yaml temp file: destroying the moved-from source must NOT delete
     // it; destroying the target must.
+    //
+    // std::optional makes the move ctor + moved-from destruction UNAMBIGUOUS:
+    // a `return source;` from a helper would be NRVO-elided (GCC/Clang do it
+    // even at -O0), silently skipping the very move this test exists to check.
     std::string temp_path;
     {
-        DockerComposeContainer target = [&] {
-            DockerComposeContainer source = DockerComposeContainer::from_yaml("services: {}\n");
-            temp_path = source.compose_files().front();
-            EXPECT_TRUE(std::filesystem::exists(temp_path));
-            return source; // moves out; `source`'s destructor runs here
-        }();
-        // The source was destroyed; the temp file must have survived the move.
+        std::optional<DockerComposeContainer> source(
+            DockerComposeContainer::from_yaml("services: {}\n"));
+        temp_path = source->compose_files().front();
+        ASSERT_TRUE(std::filesystem::exists(temp_path));
+
+        const DockerComposeContainer target(std::move(*source)); // the move ctor, guaranteed
+        source.reset(); // the moved-from handle's destructor runs NOW
+
+        // The moved-from source was destroyed; the temp file must have survived.
         EXPECT_TRUE(std::filesystem::exists(temp_path));
         EXPECT_EQ(target.compose_files().front(), temp_path);
         EXPECT_EQ(target.client_kind(), ComposeClientKind::Local);
