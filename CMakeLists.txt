@@ -126,6 +126,7 @@ if(BUILD_TESTING)
         tests/unit/LogDemuxTest.cpp
         tests/unit/StreamReadTest.cpp
         tests/unit/TransportTimeoutTest.cpp
+        tests/unit/ErrorModelTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp

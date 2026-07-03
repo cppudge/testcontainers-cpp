@@ -19,7 +19,8 @@ std::uint16_t Container::get_host_port(ContainerPort port) const {
     const auto host_port =
         docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
     if (!host_port) {
-        throw DockerError("Container " + id_ + " has no published host port for " + key);
+        throw DockerError("Container " + id_ + " has no published host port for " + key,
+                          std::nullopt, id_);
     }
     return *host_port;
 }
@@ -30,7 +31,8 @@ std::uint16_t Container::get_host_port_ipv4(ContainerPort port) const {
     const auto host_port =
         docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv4);
     if (!host_port) {
-        throw DockerError("Container " + id_ + " has no IPv4-published host port for " + key);
+        throw DockerError("Container " + id_ + " has no IPv4-published host port for " + key,
+                          std::nullopt, id_);
     }
     return *host_port;
 }
@@ -41,7 +43,8 @@ std::uint16_t Container::get_host_port_ipv6(ContainerPort port) const {
     const auto host_port =
         docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv6);
     if (!host_port) {
-        throw DockerError("Container " + id_ + " has no IPv6-published host port for " + key);
+        throw DockerError("Container " + id_ + " has no IPv6-published host port for " + key,
+                          std::nullopt, id_);
     }
     return *host_port;
 }
@@ -58,7 +61,7 @@ std::uint16_t Container::first_mapped_port() const {
     const auto host_port =
         docker::lowest_published_host_port(info.ports, docker::HostPortFamily::Any);
     if (!host_port) {
-        throw DockerError("Container " + id_ + " publishes no ports");
+        throw DockerError("Container " + id_ + " publishes no ports", std::nullopt, id_);
     }
     return *host_port;
 }

@@ -124,7 +124,7 @@ asio::ip::tcp::resolver::results_type resolve_endpoints(asio::io_context& ioc,
                            });
     run_pending(ioc, remaining(deadline), done, ec, [&] { resolver.cancel(); });
     if (ec) {
-        throw DockerError("Cannot resolve Docker host '" + host + "': " + ec.message());
+        throw_transport_error("Cannot resolve Docker host '" + host + "': " + ec.message(), ec);
     }
     return endpoints;
 }
@@ -173,8 +173,9 @@ public:
             socket_.close(ignore);
         });
         if (ec) {
-            throw DockerError("Cannot connect to Docker at " + host + ":" +
-                              std::to_string(port) + ": " + ec.message());
+            throw_transport_error("Cannot connect to Docker at " + host + ":" +
+                                      std::to_string(port) + ": " + ec.message(),
+                                  ec);
         }
     }
 
@@ -278,8 +279,9 @@ public:
             stream_.lowest_layer().close(ignore);
         });
         if (ec) {
-            throw DockerError("Cannot connect to Docker at " + host + ":" +
-                              std::to_string(port) + ": " + ec.message());
+            throw_transport_error("Cannot connect to Docker at " + host + ":" +
+                                      std::to_string(port) + ": " + ec.message(),
+                                  ec);
         }
 
         // Server Name Indication: many TLS endpoints need it to select a cert.
@@ -295,8 +297,9 @@ public:
                                 });
         run_pending(ioc_, remaining(deadline), done, ec, [&] { cancel_pending(); });
         if (ec) {
-            throw DockerError("TLS handshake with " + host + ":" + std::to_string(port) +
-                              " failed: " + ec.message());
+            throw_transport_error("TLS handshake with " + host + ":" + std::to_string(port) +
+                                      " failed: " + ec.message(),
+                                  ec);
         }
     }
 
@@ -366,8 +369,9 @@ public:
                               });
         run_pending(ioc_, timeouts.connect, done, ec, [&] { cancel_pending(); });
         if (ec) {
-            throw DockerError("Cannot connect to Docker unix socket '" + path +
-                              "': " + ec.message() + ". Is the Docker daemon running?");
+            throw_transport_error("Cannot connect to Docker unix socket '" + path +
+                                      "': " + ec.message() + ". Is the Docker daemon running?",
+                                  ec);
         }
     }
 
@@ -442,7 +446,9 @@ public:
                               "). Is Docker Desktop running?");
         }
         if (handle == INVALID_HANDLE_VALUE) {
-            throw DockerError("Docker named pipe is busy: " + win_path);
+            // The connect budget was exhausted waiting for a free pipe instance.
+            throw TimeoutError("Docker named pipe is busy: " + win_path +
+                               " (connect budget exhausted)");
         }
         boost::system::error_code ec;
         handle_.assign(handle, ec);
@@ -550,6 +556,13 @@ bool docker_tls_verify() {
     }
     const std::string v = value;
     return v == "1" || v == "true" || v == "TRUE" || v == "True";
+}
+
+void throw_transport_error(const std::string& message, const boost::system::error_code& ec) {
+    if (ec == asio::error::timed_out) {
+        throw TimeoutError(message);
+    }
+    throw DockerError(message);
 }
 
 std::unique_ptr<ITransport> connect(const DockerHost& host, const TransportTimeouts& timeouts) {

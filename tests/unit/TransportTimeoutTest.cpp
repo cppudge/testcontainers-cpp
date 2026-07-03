@@ -38,8 +38,8 @@
 //   TransportTimeout.SetIoTimeoutAppliesToSubsequentReads - a transport opened without a deadline starts timing out after set_io_timeout(ms).
 //   TransportTimeout.WriteTimesOutWhenPeerStopsReading - once the peer's receive window fills, a write fails with timed_out instead of blocking forever.
 //   TransportTimeout.ConnectRefusedFailsWithDockerError - connecting to a closed port throws DockerError (the refused path is an error, not a hang).
-//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws within the connect budget (composed-op cancellation).
-//   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws DockerError instead of hanging the Beast parser loop (end-to-end through TransportStream).
+//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws TimeoutError within the connect budget (composed-op cancellation).
+//   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws TimeoutError (status_code()==nullopt) instead of hanging the Beast parser loop (end-to-end through TransportStream).
 //   TransportTimeout.NamedPipeReadTimesOutOnSilentServer - (Windows) a named-pipe read against a silent pipe server fails with timed_out within the deadline.
 
 namespace {
@@ -50,6 +50,7 @@ using namespace std::chrono_literals;
 
 using testcontainers::DockerError;
 using testcontainers::DockerHost;
+using testcontainers::TimeoutError;
 using testcontainers::docker::TransportTimeouts;
 
 /// A loopback TCP server accepting ONE connection, running `session` on it,
@@ -234,8 +235,10 @@ TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
     const auto start = std::chrono::steady_clock::now();
     try {
         testcontainers::docker::connect(host, timeouts);
-        FAIL() << "expected DockerError";
-    } catch (const DockerError& e) {
+        FAIL() << "expected TimeoutError";
+    } catch (const TimeoutError& e) {
+        // The typed timeout is also a DockerError (checked by the static
+        // hierarchy tests); here the specific type must survive the throw.
         EXPECT_NE(std::string(e.what()).find("TLS handshake"), std::string::npos) << e.what();
     }
     EXPECT_LT(elapsed_since(start), 5s);
@@ -258,10 +261,11 @@ TEST(TransportTimeout, RequestTimesOutMidBody) {
     const auto start = std::chrono::steady_clock::now();
     try {
         client.request("GET", "/wedged");
-        FAIL() << "expected DockerError";
-    } catch (const DockerError& e) {
+        FAIL() << "expected TimeoutError";
+    } catch (const TimeoutError& e) {
         EXPECT_NE(std::string(e.what()).find("Failed to read response"), std::string::npos)
             << e.what();
+        EXPECT_EQ(e.status_code(), std::nullopt); // a timeout never saw a status
     }
     EXPECT_LT(elapsed_since(start), 5s);
 }

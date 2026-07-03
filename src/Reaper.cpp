@@ -4,6 +4,7 @@
 
 #include "RandomHex.hpp"
 #include "docker/Ports.hpp"
+#include "docker/Transport.hpp" // throw_transport_error
 #include "testcontainers/Error.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -213,8 +214,9 @@ void Reaper::ensure_started() {
     }
     if (!connected) {
         kill_ryuk();
-        throw DockerError("Could not connect to Ryuk control port at " + ep.host + ":" +
-                          std::to_string(ep.port) + ": " + ec.message());
+        docker::throw_transport_error("Could not connect to Ryuk control port at " + ep.host +
+                                          ":" + std::to_string(ep.port) + ": " + ec.message(),
+                                      ec);
     }
 
     // Register the session filter and wait for the ACK so we know Ryuk accepted
@@ -235,7 +237,7 @@ void Reaper::ensure_started() {
     });
     if (ec) {
         kill_ryuk();
-        throw DockerError("Failed to send filter to Ryuk: " + ec.message());
+        docker::throw_transport_error("Failed to send filter to Ryuk: " + ec.message(), ec);
     }
 
     asio::streambuf buf;
@@ -251,7 +253,7 @@ void Reaper::ensure_started() {
     });
     if (ec) {
         kill_ryuk();
-        throw DockerError("Failed to read ACK from Ryuk: " + ec.message());
+        docker::throw_transport_error("Failed to read ACK from Ryuk: " + ec.message(), ec);
     }
     std::istream is(&buf);
     std::string ack;

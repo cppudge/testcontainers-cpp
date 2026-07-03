@@ -10,6 +10,36 @@
 
 namespace testcontainers::docker {
 
+namespace {
+
+/// Cap a response body for inclusion in an error message: a misrouted proxy /
+/// captive portal can hand back megabytes of HTML through a 200, and the
+/// exception text must stay readable.
+std::string body_excerpt(const std::string& body) {
+    constexpr std::size_t kMax = 2048;
+    if (body.size() <= kMax) {
+        return body;
+    }
+    return body.substr(0, kMax) + "... [truncated, " + std::to_string(body.size()) +
+           " bytes total]";
+}
+
+/// Run a parse function, wrapping ANY nlohmann failure (invalid JSON or an
+/// unexpected shape/type) in a DockerError prefixed with `context`, so callers
+/// see one uniform error type instead of raw nlohmann exceptions (an HTML
+/// error page smuggled through a 200 must not escape as json::parse_error).
+template <class Fn>
+auto guard_parse(const char* context, const std::string& body, Fn&& fn) {
+    try {
+        return fn();
+    } catch (const nlohmann::json::exception& e) {
+        throw DockerError(std::string(context) + ": unexpected response from Docker: " +
+                          e.what() + "; body: " + body_excerpt(body));
+    }
+}
+
+} // namespace
+
 nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     nlohmann::json body;
     body["Image"] = spec.image;
@@ -252,31 +282,36 @@ nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec) {
 }
 
 VolumeInspect parse_volume_inspect(const std::string& body) {
-    const nlohmann::json json = nlohmann::json::parse(body);
+    return guard_parse("inspect_volume", body, [&] {
+        const nlohmann::json json = nlohmann::json::parse(body);
 
-    VolumeInspect info;
-    info.name = json.value("Name", std::string{});
-    info.driver = json.value("Driver", std::string{});
-    info.mountpoint = json.value("Mountpoint", std::string{});
-    info.scope = json.value("Scope", std::string{});
+        VolumeInspect info;
+        info.name = json.value("Name", std::string{});
+        info.driver = json.value("Driver", std::string{});
+        info.mountpoint = json.value("Mountpoint", std::string{});
+        info.scope = json.value("Scope", std::string{});
 
-    if (const auto labels = json.find("Labels"); labels != json.end() && labels->is_object()) {
-        for (const auto& [key, value] : labels->items()) {
-            info.labels.emplace(key, value.get<std::string>());
+        if (const auto labels = json.find("Labels"); labels != json.end() && labels->is_object()) {
+            for (const auto& [key, value] : labels->items()) {
+                info.labels.emplace(key, value.get<std::string>());
+            }
         }
-    }
-    if (const auto options = json.find("Options"); options != json.end() && options->is_object()) {
-        for (const auto& [key, value] : options->items()) {
-            info.options.emplace(key, value.get<std::string>());
+        if (const auto options = json.find("Options");
+            options != json.end() && options->is_object()) {
+            for (const auto& [key, value] : options->items()) {
+                info.options.emplace(key, value.get<std::string>());
+            }
         }
-    }
 
-    return info;
+        return info;
+    });
 }
 
 std::string parse_server_os(const std::string& version_json) {
-    const nlohmann::json json = nlohmann::json::parse(version_json);
-    return json.value("Os", std::string{});
+    return guard_parse("server_os (GET /version)", version_json, [&] {
+        const nlohmann::json json = nlohmann::json::parse(version_json);
+        return json.value("Os", std::string{});
+    });
 }
 
 std::string build_create_query(const CreateContainerSpec& spec,
@@ -298,7 +333,13 @@ std::string build_create_query(const CreateContainerSpec& spec,
     return query;
 }
 
+static ContainerInspect parse_inspect_unguarded(const std::string& body);
+
 ContainerInspect parse_inspect(const std::string& body) {
+    return guard_parse("inspect_container", body, [&] { return parse_inspect_unguarded(body); });
+}
+
+static ContainerInspect parse_inspect_unguarded(const std::string& body) {
     const nlohmann::json json = nlohmann::json::parse(body);
 
     ContainerInspect info;
@@ -361,7 +402,14 @@ ContainerInspect parse_inspect(const std::string& body) {
     return info;
 }
 
+static std::vector<ContainerSummary> parse_container_list_unguarded(const std::string& body);
+
 std::vector<ContainerSummary> parse_container_list(const std::string& body) {
+    return guard_parse("list_containers", body,
+                       [&] { return parse_container_list_unguarded(body); });
+}
+
+static std::vector<ContainerSummary> parse_container_list_unguarded(const std::string& body) {
     const nlohmann::json json = nlohmann::json::parse(body);
 
     std::vector<ContainerSummary> out;
@@ -425,17 +473,19 @@ std::string expect_string_field(const std::string& body, const char* field,
         return nlohmann::json::parse(body).at(field).get<std::string>();
     } catch (const nlohmann::json::exception& e) {
         throw DockerError(context + ": unexpected response from Docker (no string '" +
-                          std::string(field) + "'): " + e.what() + "; body: " + body);
+                          std::string(field) + "'): " + e.what() + "; body: " + body_excerpt(body));
     }
 }
 
 std::int64_t parse_exec_exit_code(const std::string& body) {
-    const nlohmann::json json = nlohmann::json::parse(body);
-    if (const auto code = json.find("ExitCode");
-        code != json.end() && code->is_number_integer()) {
-        return code->get<std::int64_t>();
-    }
-    return 0;
+    return guard_parse("exec inspect", body, [&]() -> std::int64_t {
+        const nlohmann::json json = nlohmann::json::parse(body);
+        if (const auto code = json.find("ExitCode");
+            code != json.end() && code->is_number_integer()) {
+            return code->get<std::int64_t>();
+        }
+        return 0;
+    });
 }
 
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image) {

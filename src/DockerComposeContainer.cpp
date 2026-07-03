@@ -354,9 +354,10 @@ void DockerComposeContainer::start() {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         if (!connected) {
-            throw DockerError("Compose service '" + service + "' host port " +
-                              std::to_string(host_port) + " did not accept a connection: " +
-                              ec.message());
+            throw StartupTimeoutError("Compose service '" + service + "' host port " +
+                                      std::to_string(host_port) +
+                                      " did not accept a connection within the wait timeout: " +
+                                      ec.message());
         }
     }
 }

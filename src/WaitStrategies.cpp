@@ -72,9 +72,9 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
         }
 
         if (Clock::now() >= deadline) {
-            throw DockerError("Timed out waiting for log message \"" + cond.text + "\" (" +
-                              std::to_string(seen) + "/" + std::to_string(needed) +
-                              " occurrences) in container " + id);
+            throw StartupTimeoutError("Timed out waiting for log message \"" + cond.text + "\" (" +
+                                      std::to_string(seen) + "/" + std::to_string(needed) +
+                                      " occurrences) in container " + id);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -93,14 +93,15 @@ void wait_for_exit(DockerClient& client, const std::string& id, const wait::Exit
                     const std::string actual =
                         info.exit_code ? std::to_string(*info.exit_code) : "unknown";
                     throw DockerError("Container " + id + " exited with code " + actual +
-                                      ", expected " + std::to_string(*cond.code));
+                                          ", expected " + std::to_string(*cond.code),
+                                      std::nullopt, id);
                 }
             }
             return;
         }
 
         if (Clock::now() >= deadline) {
-            throw DockerError("Timed out waiting for container " + id + " to exit");
+            throw StartupTimeoutError("Timed out waiting for container " + id + " to exit");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -118,17 +119,19 @@ void wait_for_healthcheck(DockerClient& client, const std::string& id, Clock::ti
             return;
         }
         if (status == "unhealthy") {
-            throw DockerError("Container " + id + " reported health status \"unhealthy\"");
+            throw DockerError("Container " + id + " reported health status \"unhealthy\"",
+                              std::nullopt, id);
         }
         if (status.empty()) {
             throw DockerError("Container " + id +
-                              " has no healthcheck configured (cannot wait for healthy)");
+                                  " has no healthcheck configured (cannot wait for healthy)",
+                              std::nullopt, id);
         }
         // "starting" (or any other transient status) -> keep polling.
 
         if (Clock::now() >= deadline) {
-            throw DockerError("Timed out waiting for container " + id +
-                              " to become healthy (last status \"" + status + "\")");
+            throw StartupTimeoutError("Timed out waiting for container " + id +
+                                      " to become healthy (last status \"" + status + "\")");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -145,7 +148,8 @@ std::uint16_t mapped_host_port(DockerClient& client, const std::string& id,
     const auto host_port =
         docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
     if (!host_port) {
-        throw DockerError("Container " + id + " has no published host port for " + key);
+        throw DockerError("Container " + id + " has no published host port for " + key,
+                          std::nullopt, id);
     }
     return *host_port;
 }
@@ -298,10 +302,10 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
         }
 
         if (Clock::now() >= deadline) {
-            throw DockerError("Timed out waiting for HTTP " + std::to_string(cond.expected_status) +
-                              " from " + host + ":" + std::to_string(port) + cond.path +
-                              " (container " + id + ", last status " + std::to_string(last_status) +
-                              ")");
+            throw StartupTimeoutError(
+                "Timed out waiting for HTTP " + std::to_string(cond.expected_status) + " from " +
+                host + ":" + std::to_string(port) + cond.path + " (container " + id +
+                ", last status " + std::to_string(last_status) + ")");
         }
         std::this_thread::sleep_for(interval);
     }
@@ -324,8 +328,8 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
         }
 
         if (Clock::now() >= deadline) {
-            throw DockerError("Timed out waiting for TCP connection to " + host + ":" +
-                              std::to_string(port) + " (container " + id + ")");
+            throw StartupTimeoutError("Timed out waiting for TCP connection to " + host + ":" +
+                                      std::to_string(port) + " (container " + id + ")");
         }
         std::this_thread::sleep_for(interval);
     }
@@ -351,7 +355,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                     const Clock::time_point wake = Clock::now() + cond.value;
                     std::this_thread::sleep_until(wake < deadline ? wake : deadline);
                     if (Clock::now() >= deadline && wake > deadline) {
-                        throw DockerError("Timed out during wait::Duration for container " + id);
+                        throw StartupTimeoutError("Timed out during wait::Duration for container " +
+                                                  id);
                     }
                 } else if constexpr (std::is_same_v<T, wait::Exit>) {
                     wait_for_exit(client, id, cond, deadline);
@@ -370,7 +375,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
             // next condition (if any) would observe the expiry, so re-check here
             // to fail fast rather than enter the next strategy with no budget.
             if (&w != &waits.back()) {
-                throw DockerError("Startup timeout exceeded while waiting for container " + id);
+                throw StartupTimeoutError("Startup timeout exceeded while waiting for container " +
+                                          id);
             }
         }
     }

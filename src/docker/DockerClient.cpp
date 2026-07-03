@@ -109,14 +109,36 @@ inline std::string read_error_body(docker::TransportStream& stream,
     return body;
 }
 
+/// Throw the typed error for a non-OK daemon reply: NotFoundError on 404,
+/// DockerError carrying the HTTP status otherwise. The message is
+/// "<context> failed: HTTP <status> <body>". `resource_id` names the
+/// container / image / network / volume / exec instance the call was about
+/// ("" when the call has no single subject).
+[[noreturn]] void throw_status_error(const std::string& context, int status,
+                                     const std::string& body,
+                                     const std::string& resource_id = {}) {
+    const std::string msg = context + " failed: HTTP " + std::to_string(status) +
+                            (body.empty() ? "" : " " + body);
+    if (status == 404) {
+        throw NotFoundError(msg, resource_id);
+    }
+    throw DockerError(msg, status, resource_id);
+}
+
+[[noreturn]] void throw_status_error(const std::string& context, const Response& res,
+                                     const std::string& resource_id = {}) {
+    throw_status_error(context, res.status_code, res.body, resource_id);
+}
+
 /// Read the response header off a hijacked/streaming connection and require
 /// HTTP 200: on a read error, an immediate EOF, or a non-200 status this
-/// closes `transport` and throws DockerError prefixed with `context` (for a
-/// non-200 the daemon's error body is drained and appended).
+/// closes `transport` and throws the typed error prefixed with `context` (a
+/// deadline expiry becomes TimeoutError, a non-200 goes through
+/// throw_status_error with the daemon's drained error body appended).
 template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
                     boost::beast::flat_buffer& buffer, Parser& parser,
-                    const std::string& context) {
+                    const std::string& context, const std::string& resource_id = {}) {
     boost::system::error_code ec;
     http::read_header(stream, buffer, parser, ec);
     if (ec == http::error::end_of_stream && !parser.is_header_done()) {
@@ -127,14 +149,13 @@ void read_ok_header(docker::ITransport& transport, docker::TransportStream& stre
     }
     if (ec && ec != http::error::end_of_stream) {
         transport.close();
-        throw DockerError(context + " failed to read response: " + ec.message());
+        docker::throw_transport_error(context + " failed to read response: " + ec.message(), ec);
     }
     if (parser.get().result_int() != 200) {
         const int status = static_cast<int>(parser.get().result_int());
         const std::string detail = read_error_body(stream, buffer, parser);
         transport.close();
-        throw DockerError(context + " failed: HTTP " + std::to_string(status) +
-                          (detail.empty() ? "" : " " + detail));
+        throw_status_error(context, status, detail, resource_id);
     }
 }
 
@@ -183,8 +204,9 @@ Response DockerClient::request_with_io_timeout(
     boost::system::error_code ec;
     http::write(stream, req, ec);
     if (ec) {
-        throw DockerError("Failed to send request to Docker (" + std::string(method) + " " +
-                          std::string(target) + "): " + ec.message());
+        docker::throw_transport_error("Failed to send request to Docker (" + std::string(method) +
+                                          " " + std::string(target) + "): " + ec.message(),
+                                      ec);
     }
 
     boost::beast::flat_buffer buffer;
@@ -194,8 +216,10 @@ Response DockerClient::request_with_io_timeout(
     parser.body_limit(boost::none);
     http::read(stream, buffer, parser, ec);
     if (ec && ec != http::error::end_of_stream) {
-        throw DockerError("Failed to read response from Docker (" + std::string(method) + " " +
-                          std::string(target) + "): " + ec.message());
+        docker::throw_transport_error("Failed to read response from Docker (" +
+                                          std::string(method) + " " + std::string(target) +
+                                          "): " + ec.message(),
+                                      ec);
     }
     auto& res = parser.get();
 
@@ -230,8 +254,7 @@ std::string DockerClient::server_os() {
 
     const Response res = request("GET", "/version");
     if (!res.ok()) {
-        throw DockerError("server_os: GET /version failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("server_os: GET /version", res);
     }
     std::string os = docker::parse_server_os(res.body);
 
@@ -267,8 +290,7 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
 
     const Response res = request("POST", target, /*body*/ {}, headers);
     if (res.status_code != 200) {
-        throw DockerError("Failed to pull image '" + image + "': HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("pull_image('" + image + "')", res, image);
     }
     // Docker streams progress as newline-delimited JSON and returns 200 even on
     // failure, embedding the error in the stream.
@@ -292,8 +314,7 @@ void DockerClient::build_image(const std::string& context_tar,
     }
     const Response res = request_with_io_timeout("POST", target, context_tar, headers, io);
     if (res.status_code != 200) {
-        throw DockerError("build_image('" + options.tag + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("build_image('" + options.tag + "')", res, options.tag);
     }
     // Docker streams build output as newline-delimited JSON and returns 200 even
     // on a build failure, embedding the error in the stream.
@@ -316,8 +337,7 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
         res = request("POST", target, body, headers);
     }
     if (res.status_code != 201) {
-        throw DockerError("create_container('" + spec.image + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("create_container('" + spec.image + "')", res, spec.image);
     }
 
     return docker::expect_string_field(res.body, "Id", "create_container('" + spec.image + "')");
@@ -327,19 +347,17 @@ void DockerClient::start_container(const std::string& id) {
     const Response res = request("POST", "/containers/" + id + "/start");
     // 204 = started, 304 = already started.
     if (res.status_code != 204 && res.status_code != 304) {
-        throw DockerError("start_container(" + id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("start_container(" + id + ")", res, id);
     }
 }
 
 std::string DockerClient::inspect_container_raw(const std::string& id) {
     const Response res = request("GET", "/containers/" + id + "/json");
     if (res.status_code == 404) {
-        throw DockerError("Container not found: " + id);
+        throw NotFoundError("Container not found: " + id, id);
     }
     if (res.status_code != 200) {
-        throw DockerError("inspect_container(" + id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("inspect_container(" + id + ")", res, id);
     }
     return res.body;
 }
@@ -365,8 +383,7 @@ std::vector<ContainerSummary> DockerClient::list_containers(
 
     const Response res = request("GET", target);
     if (res.status_code != 200) {
-        throw DockerError("list_containers failed: HTTP " + std::to_string(res.status_code) + " " +
-                          res.body);
+        throw_status_error("list_containers", res);
     }
     return docker::parse_container_list(res.body);
 }
@@ -393,8 +410,7 @@ void DockerClient::stop_container(const std::string& id, std::optional<int> time
     const Response res = request_with_io_timeout("POST", target, {}, {}, io);
     // 204 = stopped, 304 = already stopped.
     if (res.status_code != 204 && res.status_code != 304) {
-        throw DockerError("stop_container(" + id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("stop_container(" + id + ")", res, id);
     }
 }
 
@@ -403,8 +419,7 @@ void DockerClient::remove_container(const std::string& id, bool force, bool remo
                                "&v=" + (remove_volumes ? "true" : "false");
     const Response res = request("DELETE", target);
     if (res.status_code != 204) {
-        throw DockerError("remove_container(" + id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("remove_container(" + id + ")", res, id);
     }
 }
 
@@ -428,8 +443,7 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
 
     const Response res = request("GET", target);
     if (res.status_code != 200) {
-        throw DockerError("logs(" + id + ") failed: HTTP " + std::to_string(res.status_code) +
-                          " " + res.body);
+        throw_status_error("logs(" + id + ")", res, id);
     }
 
     ContainerLogs out;
@@ -459,7 +473,8 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     boost::system::error_code ec;
     http::write(stream, req, ec);
     if (ec) {
-        throw DockerError("Failed to send request to Docker (GET " + target + "): " + ec.message());
+        docker::throw_transport_error(
+            "Failed to send request to Docker (GET " + target + "): " + ec.message(), ec);
     }
 
     // Read incrementally with a buffer_body parser so frames are decoded as they
@@ -471,7 +486,7 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     // The GET target carries the log options (tail/timestamps/...) — keep it in
     // the error context so a rejected logs request is diagnosable.
     read_ok_header(*transport, stream, buffer, parser,
-                   "follow_logs(" + id + ") (GET " + target + ")");
+                   "follow_logs(" + id + ") (GET " + target + ")", id);
     // Following logs legitimately idles until the container writes the next
     // line — from here on, waiting indefinitely is the intended behavior.
     transport->set_io_timeout(std::nullopt);
@@ -492,8 +507,7 @@ std::string exec_create(DockerClient& client, const std::string& id,
     const Response res = client.request("POST", "/containers/" + id + "/exec", create_body,
                                         json_headers);
     if (res.status_code != 201) {
-        throw DockerError("exec create on container " + id + " failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("exec create on container " + id, res, id);
     }
     return docker::expect_string_field(res.body, "Id", "exec create on container " + id);
 }
@@ -532,7 +546,8 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
     http::write(stream, req, ec);
     if (ec) {
         transport.close();
-        throw DockerError("exec start " + exec_id + " failed to send request: " + ec.message());
+        docker::throw_transport_error(
+            "exec start " + exec_id + " failed to send request: " + ec.message(), ec);
     }
 
     // Feed stdin (if any) onto the same hijacked stream, then half-close the send
@@ -551,7 +566,8 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
         }
         if (ec) {
             transport.close();
-            throw DockerError("exec start " + exec_id + " failed to send stdin: " + ec.message());
+            docker::throw_transport_error(
+                "exec start " + exec_id + " failed to send stdin: " + ec.message(), ec);
         }
         transport.shutdown_send(); // signal end-of-input (EOF) to the container
     }
@@ -587,14 +603,15 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     boost::beast::flat_buffer buffer;
     http::response_parser<http::string_body> parser;
     parser.body_limit(boost::none);
-    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id);
     // The body completes only when the command exits — it may legitimately run
     // (and stay silent) for as long as the caller's command takes.
     transport->set_io_timeout(std::nullopt);
     http::read(stream, buffer, parser, ec); // the rest of the body
     if (ec && ec != http::error::end_of_stream) {
         transport->close();
-        throw DockerError("exec start " + exec_id + " failed to read response: " + ec.message());
+        docker::throw_transport_error(
+            "exec start " + exec_id + " failed to read response: " + ec.message(), ec);
     }
     std::string body = std::move(parser.get().body());
     transport->close();
@@ -612,8 +629,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     // 5) Inspect the exec for the exit code.
     const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
     if (inspect_res.status_code != 200) {
-        throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
-                          std::to_string(inspect_res.status_code) + " " + inspect_res.body);
+        throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
     }
     out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
     return out;
@@ -641,7 +657,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id);
     // Streaming exec output idles until the command writes the next chunk —
     // waiting indefinitely is the intended behavior from here on.
     transport->set_io_timeout(std::nullopt);
@@ -652,8 +668,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     //    stdout_data / stderr_data are left empty.
     const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
     if (inspect_res.status_code != 200) {
-        throw DockerError("exec inspect " + exec_id + " failed: HTTP " +
-                          std::to_string(inspect_res.status_code) + " " + inspect_res.body);
+        throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
     }
     ExecResult out;
     out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
@@ -671,8 +686,7 @@ void DockerClient::copy_to_container(const std::string& id, const CopyToContaine
 
     const Response res = request("PUT", target, tar, headers);
     if (res.status_code != 200) {
-        throw DockerError("copy_to_container(" + id + ", '" + source.target() + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("copy_to_container(" + id + ", '" + source.target() + "')", res, id);
     }
 }
 
@@ -685,11 +699,11 @@ std::string DockerClient::copy_from_container(const std::string& id,
         return res.body;
     }
     if (res.status_code == 404) {
-        throw DockerError("copy_from_container(" + id + ", '" + container_path +
-                          "') failed: no such container or path: HTTP 404 " + res.body);
+        throw NotFoundError("copy_from_container(" + id + ", '" + container_path +
+                                "') failed: no such container or path: HTTP 404 " + res.body,
+                            id);
     }
-    throw DockerError("copy_from_container(" + id + ", '" + container_path + "') failed: HTTP " +
-                      std::to_string(res.status_code) + " " + res.body);
+    throw_status_error("copy_from_container(" + id + ", '" + container_path + "')", res, id);
 }
 
 std::string DockerClient::create_network(
@@ -708,8 +722,7 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
 
     const Response res = request("POST", "/networks/create", body, headers);
     if (res.status_code != 201) {
-        throw DockerError("create_network('" + spec.name + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("create_network('" + spec.name + "')", res, spec.name);
     }
     return docker::expect_string_field(res.body, "Id", "create_network('" + spec.name + "')");
 }
@@ -723,16 +736,15 @@ void DockerClient::connect_network(const std::string& network_id, const std::str
     const Response res = request("POST", "/networks/" + network_id + "/connect", body, headers);
     // 200 (older daemons) or 204 (current) both mean connected.
     if (res.status_code != 200 && res.status_code != 204) {
-        throw DockerError("connect_network(" + network_id + ", " + container_id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("connect_network(" + network_id + ", " + container_id + ")", res,
+                           network_id);
     }
 }
 
 void DockerClient::remove_network(const std::string& id) {
     const Response res = request("DELETE", "/networks/" + id);
     if (res.status_code != 204) {
-        throw DockerError("remove_network(" + id + ") failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("remove_network(" + id + ")", res, id);
     }
 }
 
@@ -743,8 +755,7 @@ std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
 
     const Response res = request("POST", "/volumes/create", body, headers);
     if (res.status_code != 201) {
-        throw DockerError("create_volume('" + spec.name + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        throw_status_error("create_volume('" + spec.name + "')", res, spec.name);
     }
     return docker::expect_string_field(res.body, "Name", "create_volume('" + spec.name + "')");
 }
@@ -752,9 +763,8 @@ std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
 VolumeInspect DockerClient::inspect_volume(const std::string& name) {
     const Response res = request("GET", "/volumes/" + url_encode(name));
     if (res.status_code != 200) {
-        // 404 here means "no such volume" — surfaced to callers as a DockerError.
-        throw DockerError("inspect_volume('" + name + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        // 404 ("no such volume") becomes NotFoundError via throw_status_error.
+        throw_status_error("inspect_volume('" + name + "')", res, name);
     }
     return docker::parse_volume_inspect(res.body);
 }
@@ -764,9 +774,8 @@ void DockerClient::remove_volume(const std::string& name, bool force) {
         "/volumes/" + url_encode(name) + "?force=" + (force ? "true" : "false");
     const Response res = request("DELETE", target);
     if (res.status_code != 204) {
-        // 404 (absent) or 409 (still in use) both arrive here.
-        throw DockerError("remove_volume('" + name + "') failed: HTTP " +
-                          std::to_string(res.status_code) + " " + res.body);
+        // 404 (absent, -> NotFoundError) or 409 (still in use) both arrive here.
+        throw_status_error("remove_volume('" + name + "')", res, name);
     }
 }
 
