@@ -4,6 +4,59 @@ Running list of known limitations, tech debt, and future work. Items found durin
 review are recorded here so they aren't lost between milestones.
 
 ## Known limitations / tech debt
+- **No I/O timeouts in the transport layer** — every transport does synchronous blocking
+  `read_some`/`write_some`/`resolve`/`connect` on a private `io_context` with no deadline, so a
+  wedged daemon, a stuck exec, or a network black-hole blocks the calling thread forever. The
+  `ITransport` doc-comment lists timeouts as an expected concern, but nothing implements them.
+  Fix direction: per-operation deadlines (Asio `async_*` + `io_context::run_for`, or a
+  steady-timer that cancels the socket) exposed through `ITransport`. (`src/docker/Transport.*`)
+- **Error model thinner than the README claims** — README promises "structured errors carrying
+  HTTP status / container id", but `Error`/`DockerError` are bare `runtime_error`s with no
+  fields or subtypes. The same `DockerError` is also thrown for pure usage errors (port not
+  exposed, readiness timeout), so callers cannot `catch` selectively. Fix direction: a small
+  hierarchy (e.g. `TimeoutError`, `NotFoundError`) + status/id fields on `DockerError`.
+  Related: the create-endpoint "Id"/"Name" extraction now goes through
+  `docker::expect_string_field` (wraps nlohmann failures in DockerError), but the other parse
+  entry points (`parse_inspect`, `parse_container_list`, `parse_volume_inspect`,
+  `parse_server_os`, `parse_exec_exit_code`) still call `nlohmann::json::parse` unguarded — an
+  HTML error page through a 200 escapes as a raw `json::parse_error`; route them through the
+  same wrap-to-DockerError policy. (`include/testcontainers/Error.hpp`, `src/docker/ApiMapping.*`)
+- **`Container` public API leaks start() wiring** — `set_stopping_hooks`, `set_exposed_ports`,
+  and the adopt-constructor are public but documented "called by GenericImage::start()"; a
+  newcomer can't tell them from real operations. Fix direction: passkey idiom or
+  `friend GenericImage`. (`include/testcontainers/Container.hpp`)
+- **Duplicated internal helpers** — (a) the IPv4-preferring host-port selection is hand-rolled
+  in `src/WaitStrategies.cpp`, `src/DockerComposeContainer.cpp` (`published_host_port`), and
+  `src/Reaper.cpp` although `docker::select_host_port` (`src/docker/Ports.hpp`) already exists;
+  (b) `random_hex` is copy-pasted across 5 TUs (Reaper, Network, Volume, Process,
+  DockerComposeContainer); (c) the streaming read loop (~45 lines: buffer_body parser +
+  `read_some`/`need_buffer`/`end_of_stream` + demux switch) is triplicated in `follow_logs` and
+  the two streaming `exec` bodies; (d) request-building boilerplate (host/user-agent/keep_alive)
+  repeats in `request`/`follow_logs`/`exec_start`. Fold each onto one shared helper.
+- **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
+  credential-helper path) mutate process-global env via `_putenv_s`/`setenv` around the child
+  run; two compose stacks torn down concurrently (destructors on different threads) can
+  cross-contaminate env. Serialize with a static mutex, or move to `CreateProcessW`/`posix_spawn`
+  with an explicit environment block. (`src/Process.cpp`)
+- **`Process.cpp` command-line construction is untested and Windows-quoting is fragile** —
+  `quote_arg` backslash-escapes embedded `"`, which cmd.exe does not honor (POSIX/MSVCRT-argv
+  convention only); currently safe because all input is library-controlled, but it is the
+  riskiest code in the repo and has zero unit tests (functions are file-local). Fix direction:
+  extract `build_command_line`/`quote_arg` into a testable internal header + unit tests
+  (spaces, embedded quotes, the cmd.exe outer-wrap). (`src/Process.cpp`)
+- **No Docker API version pinned** — all targets are unversioned (`/containers/create`), relying
+  on the daemon's default API version; nothing negotiates or pins `/v1.NN`. Behavior can shift
+  across daemon upgrades. (`src/docker/DockerClient.cpp`)
+- **`server_os()` cache race is benign but unrealized** — the mutex is released between the
+  cache read and the `GET /version`, so two threads can both issue the request on first use
+  (idempotent, harmless). `std::call_once` or holding the lock across the miss would realize
+  the double-checked intent. (`src/docker/DockerClient.cpp`)
+- **Test gaps found in review** — `DockerComposeContainer` move-ctor/assign have no daemon-free
+  unit test (the hand-written moves zero `started_`/`stopped_`/`temp_file_`); pure
+  `properties_reuse_enabled()` parsing is untested (`tests/unit/ReuseTest.cpp` skips it);
+  the containerised compose `exec_compose` shell-quoting has no test for env values with
+  quotes/spaces; WaitStrategies' `count_occurrences` and the Duration-clamp branch are only
+  exercised via integration.
 - **`LogDemuxer` streaming cost** — `feed()` does `pending_.erase(0, pos)` on every
   call: O(n) per chunk → O(n²) for many small chunks. Fine for `demux_all` (single
   feed); switch to a consumed-offset / ring buffer when the follow/streaming path
@@ -93,9 +146,16 @@ review are recorded here so they aren't lost between milestones.
   (a) **stdin only works on a half-closable transport** — feeding `stdin_data` writes the bytes onto
   the hijacked connection then calls `ITransport::shutdown_send()` so the in-container reader sees EOF;
   TCP and unix sockets implement it, but the Windows **named pipe** and **TLS** transports cannot
-  half-close (their `shutdown_send()` is a documented no-op), so a reader like `cat` blocks forever
-  there — `Exec.FeedsStdin` SKIPS on those transports (so it's unproven on this named-pipe host,
-  though the create-body + write path is unit-tested);
+  half-close (their `shutdown_send()` is a documented no-op), so exec **throws DockerError up front**
+  on those transports (`ITransport::supports_half_close()`, checked BEFORE exec-create) instead of
+  letting a reader like `cat` hang forever — `Exec.FeedsStdin` SKIPS there (so the happy path is
+  unproven on this named-pipe host, though the create-body + write path is unit-tested and the
+  throw is integration-tested). **The named-pipe half is FIXABLE**: moby creates the daemon pipe
+  in message mode, and go-winio's `CloseWrite` signals EOF with a zero-length message
+  (`WriteFile(h, buf, 0, ...)`) — exactly how `docker exec -i` works on Windows. Implementable on
+  the Asio `stream_handle` via `native_handle()`; that would make exec-stdin work on the PRIMARY
+  local transport, leaving the throw a TLS-only edge case (Go's `tls.Conn` has no `CloseWrite`
+  either — even the docker CLI hangs there, so throwing beats the reference behavior);
   (b) no exec **TTY resize** (`POST /exec/{id}/resize`) / window size;
   (c) still one fresh connection per exec, and the streaming overload has the same blocking +
   cooperative-stop-only nature as `follow_logs` (no socket-level cancellation).
@@ -254,6 +314,10 @@ review are recorded here so they aren't lost between milestones.
   `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
 
 ## Open / not yet built
+- **Transport I/O timeouts** — the biggest robustness gap before production-grade; see the
+  tech-debt item above.
+- **Structured error hierarchy** — status/id fields + `TimeoutError` etc.; see the tech-debt
+  item above.
 - **`ContainerRequest` + `Runner` split of `start()`** — responsibility + testability; not a
   blocker. See the tech-debt item above.
 - **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an
