@@ -1,5 +1,55 @@
-# clangd reads the compile database from the default Ninja preset's build dir,
-# so include paths, the C++ standard, and dependency headers resolve correctly.
-# Configure once (`cmake --preset ninja`) to generate it.
+# clangd configuration — powers IntelliSense in VS Code through the
+# llvm-vs-code-extensions.vscode-clangd extension. (cpptools IntelliSense is
+# disabled in .vscode/settings.json so the two engines don't draw duplicate
+# squiggles.)
+#
+# clangd reads the compile database emitted by the Ninja preset, so include
+# paths, the C++20 standard, and every Conan dependency header resolve exactly
+# as the real MSVC build sees them. Generate it once:
+#
+#     cmake --preset ninja
+#
+# and re-run `cmake --preset ninja` after adding a new .cpp to CMakeLists.txt so
+# the database keeps up (new headers need no reconfigure). Conan headers
+# (Boost / asio / nlohmann / openssl) arrive as MSVC `/external:I` paths, which
+# clangd maps to system includes — their warnings stay silent and only our own
+# sources get linted.
 CompileFlags:
   CompilationDatabase: build/ninja
+
+Index:
+  # Index the whole project in the background so go-to-definition, find-all-
+  # references and call hierarchy work across translation units. The index is
+  # cached under .cache/clangd (gitignored) — delete that folder if diagnostics
+  # ever go stale after large refactors or file moves.
+  Background: Build
+
+Diagnostics:
+  # Run clang-tidy as you type. The set is deliberately high-signal: bug-prone
+  # patterns plus cheap modernizations, minus checks that are noisy on a
+  # Boost/asio-heavy codebase. This only affects local editing, never the build,
+  # so tune it freely.
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+      - modernize-use-nullptr
+      - modernize-use-override
+      - modernize-use-emplace
+      - readability-redundant-*
+      - readability-misleading-indentation
+    Remove:
+      - bugprone-easily-swappable-parameters
+      - bugprone-narrowing-conversions
+      - performance-avoid-endl
+  # Flag includes that no longer pull their weight. Boost can occasionally
+  # trip a false positive here — switch to `None` if it gets noisy.
+  UnusedIncludes: Strict
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Hover:
+  ShowAKA: true

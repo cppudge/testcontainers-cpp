@@ -106,6 +106,7 @@ Container GenericImage::start() const {
             try {
                 client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
             } catch (...) {
+                ;
             }
             throw;
         }
@@ -123,7 +124,7 @@ Container GenericImage::start() const {
     // failure, if attempts remain, swallow and retry (each retry builds a brand-new
     // container via the factory); after the final attempt, rethrow the last error.
     const auto with_retry = [&](const auto& attempt) -> Container {
-        const int attempts = startup_attempts_ < 1 ? 1 : startup_attempts_;
+        const int attempts = std::max(1, startup_attempts_);
         for (int i = 0;; ++i) {
             try {
                 return attempt();

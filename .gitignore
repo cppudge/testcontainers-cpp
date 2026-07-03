@@ -15,6 +15,10 @@ conandata.yml.lock
 /.idea/
 *.user
 
+# clangd background-index cache (regenerated on demand; stale entries can cause
+# phantom diagnostics — delete this folder to force a clean re-index)
+/.cache/
+
 # Reference-only nested repos (external sources / previous FFI fork) — not part of this project
 /testcontainers-cxx/
 /_research/
