@@ -483,6 +483,11 @@ std::string build_build_query(const BuildOptions& options,
     };
     append("t", options.tag);
     append("dockerfile", options.dockerfile);
+    // The legacy builder keeps the FAILED step's intermediate container around
+    // "for debugging" (rm=1, the default, only removes them on success). A test
+    // library must not leak: forcerm removes them on failure too. The container
+    // carries no testcontainers labels, so Ryuk could not reap it either.
+    append("forcerm", "1");
     if (options.no_cache) {
         append("nocache", "1");
     }

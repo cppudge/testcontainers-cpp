@@ -62,7 +62,7 @@
 //   ApiMapping.PullNonStringErrorThrows - a pull stream entry whose "error" is not a string still throws DockerError (dumped payload), never a raw json type_error.
 //   ApiMapping.BuildErrorThrows - a build stream containing error/errorDetail throws DockerError.
 //   ApiMapping.BuildSuccessDoesNotThrow - a clean build progress stream does not throw.
-//   ApiMapping.BuildQueryBasics - build_build_query always emits t and dockerfile and includes nocache/pull/target only when set.
+//   ApiMapping.BuildQueryBasics - build_build_query always emits t, dockerfile and forcerm=1 (a failed build's intermediate container must not leak) and includes nocache/pull/target only when set.
 //   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
 //   ApiMapping.ExpectStringFieldExtracts - expect_string_field returns the named top-level string field.
 //   ApiMapping.ExpectStringFieldWrapsFailures - a malformed body, a missing field, and a non-string field all throw DockerError carrying the context, never raw nlohmann exceptions.
@@ -751,6 +751,9 @@ TEST(ApiMapping, BuildQueryBasics) {
     const std::string q = build_build_query(options, identity);
     EXPECT_NE(q.find("t=myimg:latest"), std::string::npos);
     EXPECT_NE(q.find("dockerfile=Dockerfile"), std::string::npos);
+    // Always present: without forcerm the legacy builder LEAKS the failed
+    // step's intermediate (unlabelled, hence un-reapable) container.
+    EXPECT_NE(q.find("forcerm=1"), std::string::npos);
     // Off-by-default flags / unset target are omitted.
     EXPECT_EQ(q.find("nocache="), std::string::npos);
     EXPECT_EQ(q.find("pull="), std::string::npos);

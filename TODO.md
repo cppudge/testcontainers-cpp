@@ -228,7 +228,11 @@ review are recorded here so they aren't lost between milestones.
   stream (no live build-log streaming/consumer — could reuse the `follow_logs` chunked-read approach).
   Built images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
   are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets, ssh,
-  cache-from, squash, and platform on build are not. (`src/GenericBuildableImage.cpp`)
+  cache-from, squash, and platform on build are not. The build query always sends `forcerm=1`:
+  without it the legacy builder KEEPS a failed step's intermediate container "for debugging"
+  (`rm=1`, the default, removes them only on success), and that container carries no
+  testcontainers labels, so Ryuk cannot reap it — every failed-build test leaked one container.
+  (`src/GenericBuildableImage.cpp`, `src/docker/ApiMapping.cpp`)
 - **HostConfig: typed subset + escape hatch** — `GenericImage` has typed setters for memory, shm_size,
   ulimits, cap_add/cap_drop, extra_hosts; everything else goes through `with_create_body_patch` (a raw
   `/containers/create` JSON fragment deep-merged via RFC-7386 AFTER our fields, so it overrides them; nest
