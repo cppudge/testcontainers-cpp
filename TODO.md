@@ -12,17 +12,32 @@ review are recorded here so they aren't lost between milestones.
   discarded. `DockerClient::set_transport_timeouts` configures a client; `stop` widens the io
   deadline past its grace period, `build` past silent build steps (10 min), and the streaming
   call sites (`follow_logs`, exec attach reads) disable it after the response header — waiting
-  there is intended. TLS `close()` caps the close_notify exchange at 5s. Unit-tested against
-  loopback TCP + named-pipe servers (`tests/unit/TransportTimeoutTest.cpp`). Residual gaps:
-  (a) the Reaper's persistent Ryuk control socket is a raw asio socket — its ACK `read_until`
-  has no deadline (a Ryuk that accepts but never ACKs would hang the first start);
-  (b) `WaitStrategies` `tcp_probe` does its own synchronous `connect` to the container's mapped
-  port — a black-holed port blocks a poll iteration for the OS connect timeout (not forever);
-  (c) a timeout surfaces as the platform's `timed_out` message inside `DockerError` — a typed
+  there is intended. TLS `close()` caps the close_notify exchange at 5s. Also bounded (review
+  round): the WaitStrategies `http_probe`/`tcp_probe` run on a `beast::tcp_stream` with a
+  per-probe `expires_after` (min(time left, 5s) — a mapped port that ACCEPTS but never answers
+  is an ordinary startup state and used to hang `wait_for_http` forever; the 5s cap must absorb
+  Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost"), and the Reaper's Ryuk
+  handshake is deadline-bounded too (per-attempt connect against the 20s budget, 5s per
+  write/ACK leg — it runs under the Reaper mutex on the first start of every session).
+  **Non-obvious constraint:** cancelling a MULTI-ENDPOINT `asio::async_connect` on deadline
+  does NOT abort it — the composed op treats a cancelled attempt as "try the next endpoint"
+  and only stops when the socket is closed; expiry must `close()` the socket, not `cancel()`
+  it (single-op read/write/handshake cancels are fine). IP literals skip the resolver
+  entirely; `resolver.cancel()` cannot interrupt an in-flight getaddrinfo (inherent to Asio),
+  so the connect budget is soft for the resolve leg of DNS names. Unit-tested against loopback
+  TCP + named-pipe servers incl. TLS-handshake timeout and a mid-body stall through
+  `DockerClient::request` (`tests/unit/TransportTimeoutTest.cpp`). Residual gaps:
+  (a) a timeout surfaces as the platform's `timed_out` message inside `DockerError` — a typed
   `TimeoutError` belongs to the error-model item below;
-  (d) deadlines are per-operation (idle), so a malicious/trickling peer can extend a response
-  indefinitely — fine for a trusted daemon; a whole-request cap would need a second budget.
-  (`src/docker/Transport.*`, `include/testcontainers/docker/Timeouts.hpp`)
+  (b) deadlines are per-operation (idle), so a malicious/trickling peer can extend a response
+  indefinitely — fine for a trusted daemon; a whole-request cap would need a second budget;
+  (c) `pull_image` keeps the default 60s idle deadline (progress streaming is chatty, but the
+  extraction of a very large layer could in principle stay silent longer — widen like `build`
+  if it ever bites);
+  (d) `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded,
+  not forever) — port it to the bounded probe if compose waits ever misbehave.
+  (`src/docker/Transport.*`, `include/testcontainers/docker/Timeouts.hpp`,
+  `src/WaitStrategies.cpp`, `src/Reaper.cpp`)
 - **Error model thinner than the README claims** — README promises "structured errors carrying
   HTTP status / container id", but `Error`/`DockerError` are bare `runtime_error`s with no
   fields or subtypes. The same `DockerError` is also thrown for pure usage errors (port not

@@ -1,5 +1,6 @@
 #include "WaitStrategies.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -7,10 +8,10 @@
 #include <thread>
 #include <variant>
 
-#include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
 
 #include "docker/Ports.hpp"
@@ -149,12 +150,31 @@ std::uint16_t mapped_host_port(DockerClient& client, const std::string& id,
     return *host_port;
 }
 
-/// One HTTP probe: open a TCP connection to host:port and GET `path`. Returns
-/// the response status, or std::nullopt if the connection/exchange failed (the
-/// caller treats that as "not ready yet").
+/// Per-probe deadline: the time left until `deadline`, capped at 5s and
+/// floored at 1ms. A port that ACCEPTS the connection but never answers is an
+/// ordinary startup state (listener up, application not serving yet) — an
+/// unbounded probe there would hang the whole wait past its own deadline.
+///
+/// The cap must absorb Windows' refused-connect retry: "localhost" resolves to
+/// [::1, 127.0.0.1] and Docker Desktop's proxy listens on IPv4 only, so every
+/// probe first burns ~2s on the ::1 attempt (WinSock retries a refused
+/// loopback SYN) before 127.0.0.1 succeeds — a 2s cap made every probe time
+/// out mid-range-connect and the wait never became ready.
+std::chrono::milliseconds probe_budget(Clock::time_point deadline) {
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+    return std::clamp(left, std::chrono::milliseconds(1),
+                      std::chrono::milliseconds(std::chrono::seconds(5)));
+}
+
+/// One HTTP probe, bounded by `budget`: open a TCP connection to host:port and
+/// GET `path`. Returns the response status, or std::nullopt if the
+/// connection/exchange failed or timed out (the caller treats that as "not
+/// ready yet").
 std::optional<int> http_probe(const std::string& host, std::uint16_t port,
-                              const std::string& path) {
+                              const std::string& path, std::chrono::milliseconds budget) {
     namespace asio = boost::asio;
+    namespace beast = boost::beast;
     namespace http = boost::beast::http;
     using asio::ip::tcp;
 
@@ -167,10 +187,19 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
             return std::nullopt;
         }
 
-        tcp::socket socket(io);
-        asio::connect(socket, endpoints, ec);
+        // One expires_after arms the whole probe (connect + write + read): on
+        // expiry the pending op fails with beast::error::timeout and the
+        // stream's socket is closed — "not ready yet", never a hang.
+        beast::tcp_stream stream(io);
+        stream.expires_after(budget);
+
+        stream.async_connect(endpoints,
+                             [&](const boost::system::error_code& op_ec, const tcp::endpoint&) {
+                                 ec = op_ec;
+                             });
+        io.run();
         if (ec) {
-            return std::nullopt; // refused / unreachable -> not ready yet
+            return std::nullopt; // refused / unreachable / timed out -> not ready yet
         }
 
         http::request<http::empty_body> req{http::verb::get, path, 11};
@@ -178,20 +207,30 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
         req.set(http::field::user_agent, "testcontainers-cpp");
         req.keep_alive(false);
 
-        http::write(socket, req, ec);
+        http::async_write(stream, req,
+                          [&](const boost::system::error_code& op_ec, std::size_t) {
+                              ec = op_ec;
+                          });
+        io.restart();
+        io.run();
         if (ec) {
-            return std::nullopt; // reset mid-write
+            return std::nullopt; // reset / timed out mid-write
         }
 
         boost::beast::flat_buffer buffer;
         http::response<http::string_body> res;
-        http::read(socket, buffer, res, ec);
+        http::async_read(stream, buffer, res,
+                         [&](const boost::system::error_code& op_ec, std::size_t) {
+                             ec = op_ec;
+                         });
+        io.restart();
+        io.run();
         if (ec && ec != http::error::end_of_stream) {
             return std::nullopt;
         }
 
         boost::system::error_code ignore;
-        socket.shutdown(tcp::socket::shutdown_both, ignore);
+        stream.socket().shutdown(tcp::socket::shutdown_both, ignore);
         return static_cast<int>(res.result_int());
     } catch (...) {
         // Any transient transport failure is treated as "not ready yet".
@@ -199,11 +238,13 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
     }
 }
 
-/// One TCP probe: resolve host:port and open a connection. Returns true on a
-/// successful connect (the caller treats that as "ready"), false on any
-/// refusal/unreachable/error (treated as "not ready yet").
-bool tcp_probe(const std::string& host, std::uint16_t port) {
+/// One TCP probe, bounded by `budget`: resolve host:port and open a
+/// connection. Returns true on a successful connect (the caller treats that as
+/// "ready"), false on any refusal/unreachable/timeout (treated as "not ready
+/// yet").
+bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::milliseconds budget) {
     namespace asio = boost::asio;
+    namespace beast = boost::beast;
     using asio::ip::tcp;
 
     try {
@@ -215,14 +256,19 @@ bool tcp_probe(const std::string& host, std::uint16_t port) {
             return false;
         }
 
-        tcp::socket socket(io);
-        asio::connect(socket, endpoints, ec);
+        beast::tcp_stream stream(io);
+        stream.expires_after(budget);
+        stream.async_connect(endpoints,
+                             [&](const boost::system::error_code& op_ec, const tcp::endpoint&) {
+                                 ec = op_ec;
+                             });
+        io.run();
         if (ec) {
-            return false; // refused / unreachable -> not ready yet
+            return false; // refused / unreachable / timed out -> not ready yet
         }
 
         boost::system::error_code ignore;
-        socket.shutdown(tcp::socket::shutdown_both, ignore);
+        stream.socket().shutdown(tcp::socket::shutdown_both, ignore);
         return true;
     } catch (...) {
         // Any transient transport failure is treated as "not ready yet".
@@ -243,7 +289,8 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
 
     int last_status = 0;
     for (;;) {
-        if (const std::optional<int> status = http_probe(host, port, cond.path)) {
+        if (const std::optional<int> status =
+                http_probe(host, port, cond.path, probe_budget(deadline))) {
             last_status = *status;
             if (last_status == cond.expected_status) {
                 return;
@@ -272,7 +319,7 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
         cond.poll_interval.count() > 0 ? cond.poll_interval : std::chrono::milliseconds(200);
 
     for (;;) {
-        if (tcp_probe(host, port)) {
+        if (tcp_probe(host, port, probe_budget(deadline))) {
             return;
         }
 

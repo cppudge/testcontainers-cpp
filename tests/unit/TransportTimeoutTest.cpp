@@ -16,6 +16,7 @@
 
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
 
@@ -37,6 +38,8 @@
 //   TransportTimeout.SetIoTimeoutAppliesToSubsequentReads - a transport opened without a deadline starts timing out after set_io_timeout(ms).
 //   TransportTimeout.WriteTimesOutWhenPeerStopsReading - once the peer's receive window fills, a write fails with timed_out instead of blocking forever.
 //   TransportTimeout.ConnectRefusedFailsWithDockerError - connecting to a closed port throws DockerError (the refused path is an error, not a hang).
+//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws within the connect budget (composed-op cancellation).
+//   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws DockerError instead of hanging the Beast parser loop (end-to-end through TransportStream).
 //   TransportTimeout.NamedPipeReadTimesOutOnSilentServer - (Windows) a named-pipe read against a silent pipe server fails with timed_out within the deadline.
 
 namespace {
@@ -219,6 +222,48 @@ TEST(TransportTimeout, ConnectRefusedFailsWithDockerError) {
             }
         },
         DockerError);
+}
+
+TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
+    LoopbackServer server; // accepts, never answers the ClientHello
+    TransportTimeouts timeouts;
+    timeouts.connect = 500ms;
+    const DockerHost host =
+        DockerHost::parse("https://127.0.0.1:" + std::to_string(server.port()));
+
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        testcontainers::docker::connect(host, timeouts);
+        FAIL() << "expected DockerError";
+    } catch (const DockerError& e) {
+        EXPECT_NE(std::string(e.what()).find("TLS handshake"), std::string::npos) << e.what();
+    }
+    EXPECT_LT(elapsed_since(start), 5s);
+}
+
+TEST(TransportTimeout, RequestTimesOutMidBody) {
+    LoopbackServer server([](tcp::socket& socket) {
+        // A response header promising more body than is ever sent — a daemon
+        // that wedges mid-response.
+        asio::write(socket, asio::buffer(std::string(
+                                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")));
+        // ... then silence (the fixture holds the socket open).
+    });
+
+    testcontainers::DockerClient client{server.host()};
+    TransportTimeouts timeouts;
+    timeouts.io = 250ms;
+    client.set_transport_timeouts(timeouts);
+
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        client.request("GET", "/wedged");
+        FAIL() << "expected DockerError";
+    } catch (const DockerError& e) {
+        EXPECT_NE(std::string(e.what()).find("Failed to read response"), std::string::npos)
+            << e.what();
+    }
+    EXPECT_LT(elapsed_since(start), 5s);
 }
 
 #if defined(_WIN32)

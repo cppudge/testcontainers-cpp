@@ -9,6 +9,7 @@
 // Asio first so it pulls <winsock2.h> before any <windows.h> below.
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 
@@ -94,6 +95,40 @@ std::size_t bounded_io(asio::io_context& ioc,
     return bytes;
 }
 
+/// Resolve host:port within the remaining connect budget. An IP literal skips
+/// the resolver entirely (the common case for a non-localhost DOCKER_HOST).
+/// For names, a caveat: resolver.cancel() cannot interrupt an ALREADY-RUNNING
+/// getaddrinfo (Asio's worker thread only checks the cancel flag before
+/// starting it), so the drain may overrun the budget by the OS resolver time.
+/// That is inherent to Asio — do not "fix" the cancel lambda.
+asio::ip::tcp::resolver::results_type resolve_endpoints(asio::io_context& ioc,
+                                                        const std::string& host,
+                                                        std::uint16_t port,
+                                                        Clock::time_point deadline) {
+    boost::system::error_code literal_ec;
+    const asio::ip::address address = asio::ip::make_address(host, literal_ec);
+    if (!literal_ec) {
+        return asio::ip::tcp::resolver::results_type::create(
+            asio::ip::tcp::endpoint(address, port), host, std::to_string(port));
+    }
+
+    asio::ip::tcp::resolver resolver(ioc);
+    asio::ip::tcp::resolver::results_type endpoints;
+    boost::system::error_code ec;
+    bool done = false;
+    resolver.async_resolve(host, std::to_string(port),
+                           [&](const boost::system::error_code& op_ec, auto results) {
+                               done = true;
+                               ec = op_ec;
+                               endpoints = std::move(results);
+                           });
+    run_pending(ioc, remaining(deadline), done, ec, [&] { resolver.cancel(); });
+    if (ec) {
+        throw DockerError("Cannot resolve Docker host '" + host + "': " + ec.message());
+    }
+    return endpoints;
+}
+
 /// Shared io_context + io-deadline state for the concrete transports. Each
 /// transport owns a private io_context and runs it only from the calling
 /// thread (run_pending), keeping the blocking call-and-return surface of
@@ -118,30 +153,25 @@ public:
     TcpTransport(const std::string& host, std::uint16_t port, const TransportTimeouts& timeouts)
         : TransportBase(timeouts.io), socket_(ioc_) {
         const auto deadline = Clock::now() + timeouts.connect;
+        const auto endpoints = resolve_endpoints(ioc_, host, port, deadline);
+
         boost::system::error_code ec;
-
-        asio::ip::tcp::resolver resolver(ioc_);
-        asio::ip::tcp::resolver::results_type endpoints;
         bool done = false;
-        resolver.async_resolve(host, std::to_string(port),
-                               [&](const boost::system::error_code& op_ec, auto results) {
-                                   done = true;
-                                   ec = op_ec;
-                                   endpoints = std::move(results);
-                               });
-        run_pending(ioc_, remaining(deadline), done, ec, [&] { resolver.cancel(); });
-        if (ec) {
-            throw DockerError("Cannot resolve Docker host '" + host + "': " + ec.message());
-        }
-
-        done = false;
         asio::async_connect(socket_, endpoints,
                             [&](const boost::system::error_code& op_ec,
                                 const asio::ip::tcp::endpoint&) {
                                 done = true;
                                 ec = op_ec;
                             });
-        run_pending(ioc_, remaining(deadline), done, ec, [&] { cancel_pending(); });
+        // Deadline expiry CLOSES the socket instead of cancelling it: the
+        // multi-endpoint async_connect treats a cancelled per-endpoint attempt
+        // as "try the next endpoint" and only stops when the socket is no
+        // longer open, so a plain cancel() would let the drain run to the OS
+        // connect timeout — or even report success after the budget expired.
+        run_pending(ioc_, remaining(deadline), done, ec, [&] {
+            boost::system::error_code ignore;
+            socket_.close(ignore);
+        });
         if (ec) {
             throw DockerError("Cannot connect to Docker at " + host + ":" +
                               std::to_string(port) + ": " + ec.message());
@@ -231,30 +261,22 @@ public:
         }
 
         const auto deadline = Clock::now() + timeouts.connect;
+        const auto endpoints = resolve_endpoints(ioc_, host, port, deadline);
+
         boost::system::error_code ec;
-
-        asio::ip::tcp::resolver resolver(ioc_);
-        asio::ip::tcp::resolver::results_type endpoints;
         bool done = false;
-        resolver.async_resolve(host, std::to_string(port),
-                               [&](const boost::system::error_code& op_ec, auto results) {
-                                   done = true;
-                                   ec = op_ec;
-                                   endpoints = std::move(results);
-                               });
-        run_pending(ioc_, remaining(deadline), done, ec, [&] { resolver.cancel(); });
-        if (ec) {
-            throw DockerError("Cannot resolve Docker host '" + host + "': " + ec.message());
-        }
-
-        done = false;
         asio::async_connect(stream_.lowest_layer(), endpoints,
                             [&](const boost::system::error_code& op_ec,
                                 const asio::ip::tcp::endpoint&) {
                                 done = true;
                                 ec = op_ec;
                             });
-        run_pending(ioc_, remaining(deadline), done, ec, [&] { cancel_pending(); });
+        // Close-not-cancel on expiry: see TcpTransport — a cancelled range
+        // connect just moves on to the next endpoint.
+        run_pending(ioc_, remaining(deadline), done, ec, [&] {
+            boost::system::error_code ignore;
+            stream_.lowest_layer().close(ignore);
+        });
         if (ec) {
             throw DockerError("Cannot connect to Docker at " + host + ":" +
                               std::to_string(port) + ": " + ec.message());
@@ -396,9 +418,10 @@ public:
         : TransportBase(timeouts.io), handle_(ioc_) {
         const std::string win_path = to_windows_pipe_path(pipe_path);
         // Opening a local pipe is immediate; only a busy pipe (all instances in
-        // use) waits, bounded by the connect budget per attempt.
-        const DWORD busy_wait_ms =
-            static_cast<DWORD>(std::max<long long>(1, timeouts.connect.count()));
+        // use) waits. ONE connect budget covers all attempts (per-attempt waits
+        // use whatever is left of it, floored at 1ms — 0 would mean
+        // NMPWAIT_USE_DEFAULT_WAIT).
+        const auto deadline = Clock::now() + timeouts.connect;
         HANDLE handle = INVALID_HANDLE_VALUE;
         for (int attempt = 0; attempt < 3; ++attempt) {
             handle = ::CreateFileA(win_path.c_str(), GENERIC_READ | GENERIC_WRITE,
@@ -409,6 +432,8 @@ public:
             }
             const DWORD err = ::GetLastError();
             if (err == ERROR_PIPE_BUSY) {
+                const DWORD busy_wait_ms = static_cast<DWORD>(
+                    std::max<long long>(1, remaining(deadline).count()));
                 ::WaitNamedPipeA(win_path.c_str(), busy_wait_ms);
                 continue;
             }

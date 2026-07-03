@@ -375,10 +375,17 @@ void DockerClient::stop_container(const std::string& id, std::optional<int> time
     std::string target = "/containers/" + id + "/stop";
     // The daemon replies only after the container stopped — up to the full
     // grace period with zero bytes on the wire — so the io deadline must
-    // outlive `t` or a long grace period would read as a transport timeout.
+    // outlive the grace or a long stop would read as a transport timeout.
+    // Without an explicit t the daemon uses the container's StopTimeout
+    // (create-time, default 10s); a negative t means "wait indefinitely".
     std::optional<std::chrono::milliseconds> io = timeouts_.io;
-    if (timeout_secs && io) {
-        io = std::max(*io, std::chrono::milliseconds(std::chrono::seconds(*timeout_secs + 30)));
+    if (io) {
+        if (timeout_secs && *timeout_secs < 0) {
+            io = std::nullopt;
+        } else {
+            io = std::max(*io, std::chrono::milliseconds(std::chrono::seconds(
+                                   timeout_secs.value_or(10) + 30)));
+        }
     }
     if (timeout_secs) {
         target += "?t=" + std::to_string(*timeout_secs);
