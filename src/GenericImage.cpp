@@ -114,10 +114,7 @@ Container GenericImage::start() const {
         // The handle gets its own client copy so the captured `client` stays
         // usable across startup-attempt retries (DockerClient is a stateless host
         // config — opening a fresh connection per call).
-        Container c(client, id, remove_on_drop, spec.tty);
-        c.set_stopping_hooks(stopping_hooks_);
-        c.set_exposed_ports(exposed_ports_);
-        return c;
+        return Container(client, id, remove_on_drop, spec.tty, stopping_hooks_, exposed_ports_);
     };
 
     // Run an attempt-producing factory up to startup_attempts_ times: on a thrown
@@ -167,10 +164,8 @@ Container GenericImage::start() const {
                 // path is NOT retried — it adopts an already-running match rather
                 // than creating anything.
                 detail::wait_until_ready(client, m.id, waits_, startup_timeout_, spec.tty);
-                Container c(std::move(client), m.id, /*remove_on_drop*/ false, spec.tty);
-                c.set_stopping_hooks(stopping_hooks_);
-                c.set_exposed_ports(exposed_ports_);
-                return c;
+                return Container(std::move(client), m.id, /*remove_on_drop*/ false, spec.tty,
+                                 stopping_hooks_, exposed_ports_);
             }
         }
         // No match: create a NEW reuse container (persistent, not reaped). This

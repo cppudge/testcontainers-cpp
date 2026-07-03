@@ -17,6 +17,14 @@ namespace testcontainers {
 
 class GenericImage;
 
+/// Who removes an adopted container. No default on purpose: adopting a
+/// container this library did not create must state the ownership decision
+/// explicitly at the call site.
+enum class AdoptOwnership {
+    Keep,         ///< never remove it — it is someone else's container
+    RemoveOnDrop, ///< force-remove it when the handle is destroyed
+};
+
 /// A RAII handle to a running container, normally obtained from
 /// `GenericImage::start()`.
 ///
@@ -31,15 +39,17 @@ class Container {
 public:
     /// Adopt an already-running container that this library did NOT start (the
     /// manual escape hatch; `GenericImage::start()` is the normal way to obtain
-    /// a handle). With `remove_on_drop == false` the handle is persistent: it
-    /// never removes the container. `tty` records whether the container was
-    /// created with Tty=true, so `logs()` / `follow_logs()` read its
-    /// raw/unframed log stream instead of demuxing. An adopted handle does not
-    /// know the exposed-port declaration order — `first_mapped_port()` falls
-    /// back to the lowest-numbered published port.
-    static Container adopt(DockerClient client, std::string id, bool remove_on_drop = true,
+    /// a handle). `ownership` decides whether the handle removes the container
+    /// on destruction — there is deliberately no default, since destroying a
+    /// container we did not create must be an explicit choice. `tty` records
+    /// whether the container was created with Tty=true, so `logs()` /
+    /// `follow_logs()` read its raw/unframed log stream instead of demuxing.
+    /// An adopted handle does not know the exposed-port declaration order —
+    /// `first_mapped_port()` falls back to the lowest-numbered published port.
+    static Container adopt(DockerClient client, std::string id, AdoptOwnership ownership,
                            bool tty = false) {
-        return Container(std::move(client), std::move(id), remove_on_drop, tty);
+        return Container(std::move(client), std::move(id),
+                         ownership == AdoptOwnership::RemoveOnDrop, tty, {}, {});
     }
 
     Container(const Container&) = delete;
@@ -173,27 +183,23 @@ public:
     void remove();
 
 private:
-    // The wiring below is GenericImage::start()'s (the friend's) private
+    // The constructor below is GenericImage::start()'s (the friend's) private
     // channel for handing over a fully-configured handle; it is not part of
     // the user-facing API.
     friend class GenericImage;
 
-    /// Wrap an already-created, already-started container (see adopt() for the
-    /// parameter semantics).
-    Container(DockerClient client, std::string id, bool remove_on_drop = true, bool tty = false)
+    /// Wrap an already-created, already-started container. The wiring is
+    /// constructor-only so a handle is never observable half-configured:
+    /// `stopping_hooks` fire once at teardown (on stop()/remove(), or on
+    /// destruction of an auto-removing handle — never on a persistent handle's
+    /// drop); `exposed_ports` records the user's declaration order so
+    /// `first_mapped_port()` resolves the FIRST exposed port instead of
+    /// guessing the lowest-numbered published one.
+    Container(DockerClient client, std::string id, bool remove_on_drop, bool tty,
+              std::vector<LifecycleHook> stopping_hooks, std::vector<ContainerPort> exposed_ports)
         : client_(std::move(client)), id_(std::move(id)), remove_on_drop_(remove_on_drop),
-          tty_(tty) {}
-
-    /// Attach the stopping (teardown) lifecycle hooks; they fire once at
-    /// teardown: on stop()/remove(), or on destruction of an auto-removing
-    /// handle (never on a persistent/reusable handle's drop).
-    void set_stopping_hooks(std::vector<LifecycleHook> hooks);
-
-    /// Record the ports the user exposed, in the order they were declared (via
-    /// `GenericImage::with_exposed_port`). Purely informational — it lets
-    /// `first_mapped_port()` resolve the FIRST exposed port rather than
-    /// guessing the lowest-numbered published port.
-    void set_exposed_ports(std::vector<ContainerPort> ports);
+          tty_(tty), exposed_ports_(std::move(exposed_ports)),
+          stopping_hooks_(std::move(stopping_hooks)) {}
 
     /// Best-effort force-remove, swallowing any error. Marks the handle dropped.
     void drop() noexcept;

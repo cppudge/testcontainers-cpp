@@ -157,14 +157,6 @@ bool Container::is_running() const { return client_.inspect_container(id_).runni
 
 void Container::remove() { drop(); }
 
-void Container::set_stopping_hooks(std::vector<LifecycleHook> hooks) {
-    stopping_hooks_ = std::move(hooks);
-}
-
-void Container::set_exposed_ports(std::vector<ContainerPort> ports) {
-    exposed_ports_ = std::move(ports);
-}
-
 void Container::fire_stopping() noexcept {
     if (stopping_fired_) {
         return;

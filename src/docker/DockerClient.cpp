@@ -3,6 +3,7 @@
 #include "docker/ApiMapping.hpp"
 #include "docker/Auth.hpp"
 #include "docker/LogDemux.hpp"
+#include "docker/StreamRead.hpp"
 #include "docker/Tar.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
@@ -67,81 +68,71 @@ http::request<Body> make_request(http::verb method, const std::string& target,
     return req;
 }
 
+/// Best-effort bounded drain of an ERROR response's body so the daemon's JSON
+/// `{"message": ...}` can be appended to the thrown error. Returns "" on any
+/// read failure (diagnostics only — never throws).
+inline std::string read_error_body(docker::TransportStream& stream,
+                                   boost::beast::flat_buffer& buffer,
+                                   http::response_parser<http::buffer_body>& parser) {
+    std::string out;
+    std::array<char, 2048> buf{};
+    boost::system::error_code ec;
+    while (!parser.is_done() && out.size() < 8192) {
+        parser.get().body().data = buf.data();
+        parser.get().body().size = buf.size();
+        http::read_some(stream, buffer, parser, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {};
+        }
+        if (ec) {
+            break;
+        }
+        out.append(buf.data(), buf.size() - parser.get().body().size);
+    }
+    return out;
+}
+
+inline std::string read_error_body(docker::TransportStream& stream,
+                                   boost::beast::flat_buffer& buffer,
+                                   http::response_parser<http::string_body>& parser) {
+    boost::system::error_code ec;
+    http::read(stream, buffer, parser, ec); // error bodies are small JSON lines
+    if (ec && ec != http::error::end_of_stream) {
+        return {};
+    }
+    std::string body = std::move(parser.get().body());
+    if (body.size() > 8192) {
+        body.resize(8192);
+    }
+    return body;
+}
+
 /// Read the response header off a hijacked/streaming connection and require
-/// HTTP 200: on a read error or a non-200 status this closes `transport` and
-/// throws DockerError prefixed with `context`.
+/// HTTP 200: on a read error, an immediate EOF, or a non-200 status this
+/// closes `transport` and throws DockerError prefixed with `context` (for a
+/// non-200 the daemon's error body is drained and appended).
 template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
                     boost::beast::flat_buffer& buffer, Parser& parser,
                     const std::string& context) {
     boost::system::error_code ec;
     http::read_header(stream, buffer, parser, ec);
+    if (ec == http::error::end_of_stream && !parser.is_header_done()) {
+        // Without this check an immediate EOF would read the status off a
+        // never-populated parser, masquerading as an empty 200 response.
+        transport.close();
+        throw DockerError(context + " failed: connection closed before a response header");
+    }
     if (ec && ec != http::error::end_of_stream) {
         transport.close();
         throw DockerError(context + " failed to read response: " + ec.message());
     }
     if (parser.get().result_int() != 200) {
         const int status = static_cast<int>(parser.get().result_int());
+        const std::string detail = read_error_body(stream, buffer, parser);
         transport.close();
-        throw DockerError(context + " failed: HTTP " + std::to_string(status));
-    }
-}
-
-/// Deliver a streaming (follow-logs / exec) response body to `consumer` chunk
-/// by chunk. read_some (not read): read returns only when the whole message is
-/// complete — for a follow stream that means "when the container stops",
-/// batching all output to the end; read_some returns after each socket read, so
-/// frames arrive as the daemon flushes them. With `tty` the stream is
-/// raw/unframed and is delivered verbatim as stdout; otherwise the multiplexed
-/// frames are demuxed (stdin frames never appear in log/exec output and are
-/// skipped). Returns when the stream ends, the daemon resets it, or `consumer`
-/// returns false — the caller closes the connection either way.
-void stream_body_to_consumer(docker::TransportStream& stream, boost::beast::flat_buffer& buffer,
-                             http::response_parser<http::buffer_body>& parser, bool tty,
-                             const LogConsumer& consumer) {
-    docker::LogDemuxer demuxer;
-    std::array<char, 8192> buf{};
-    boost::system::error_code ec;
-    bool stop = false;
-    while (!stop && !parser.is_done()) {
-        parser.get().body().data = buf.data();
-        parser.get().body().size = buf.size();
-
-        http::read_some(stream, buffer, parser, ec);
-        if (ec == http::error::need_buffer) {
-            ec = {}; // the buffer filled up: not an error, just keep reading
-        }
-        if (ec) {
-            break; // end_of_stream (the stream ended) or reset by the daemon
-        }
-
-        const std::size_t n = buf.size() - parser.get().body().size;
-        if (n == 0) {
-            continue;
-        }
-        if (tty) {
-            if (!consumer(LogSource::Stdout, std::string_view(buf.data(), n))) {
-                stop = true;
-            }
-            continue;
-        }
-        for (const auto& frame : demuxer.feed(std::string_view(buf.data(), n))) {
-            LogSource source = LogSource::Stdout;
-            switch (frame.stream) {
-            case docker::LogStreamKind::StdIn:
-                continue;
-            case docker::LogStreamKind::StdOut:
-                source = LogSource::Stdout;
-                break;
-            case docker::LogStreamKind::StdErr:
-                source = LogSource::Stderr;
-                break;
-            }
-            if (!consumer(source, frame.data)) {
-                stop = true; // consumer asked to stop
-                break;
-            }
-        }
+        throw DockerError(context + " failed: HTTP " + std::to_string(status) +
+                          (detail.empty() ? "" : " " + detail));
     }
 }
 
@@ -445,8 +436,11 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    read_ok_header(*transport, stream, buffer, parser, "follow_logs(" + id + ")");
-    stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+    // The GET target carries the log options (tail/timestamps/...) — keep it in
+    // the error context so a rejected logs request is diagnosable.
+    read_ok_header(*transport, stream, buffer, parser,
+                   "follow_logs(" + id + ") (GET " + target + ")");
+    docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
 
     // Closing the connection tells Docker to stop streaming (also on early stop).
     transport->close();
@@ -610,7 +604,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     parser.body_limit(boost::none);
 
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
-    stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+    docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
     transport->close();
 
     // 5) Inspect the exec for the exit code; the output went to consumer, so
