@@ -61,6 +61,7 @@ public:
     }
     void shutdown_send() override {}
     bool supports_half_close() const noexcept override { return true; }
+    void set_io_timeout(std::optional<std::chrono::milliseconds> /*timeout*/) override {}
     void close() override {}
 
 private:

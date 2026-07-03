@@ -14,8 +14,10 @@
 #include <boost/beast/http.hpp>
 #include <boost/optional.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -156,7 +158,16 @@ DockerClient DockerClient::from_environment() {
 Response DockerClient::request(std::string_view method, std::string_view target,
                                std::string_view body,
                                const std::vector<std::pair<std::string, std::string>>& headers) {
-    auto transport = docker::connect(host_);
+    return request_with_io_timeout(method, target, body, headers, timeouts_.io);
+}
+
+Response DockerClient::request_with_io_timeout(
+    std::string_view method, std::string_view target, std::string_view body,
+    const std::vector<std::pair<std::string, std::string>>& headers,
+    std::optional<std::chrono::milliseconds> io_timeout) {
+    docker::TransportTimeouts timeouts = timeouts_;
+    timeouts.io = io_timeout;
+    auto transport = docker::connect(host_, timeouts);
     docker::TransportStream stream{*transport};
 
     auto req = make_request<http::string_body>(http::string_to_verb(std::string(method)),
@@ -272,7 +283,14 @@ void DockerClient::build_image(const std::string& context_tar,
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/x-tar"}};
 
-    const Response res = request("POST", target, context_tar, headers);
+    // The legacy /build endpoint streams output only when a step produces it —
+    // a silent RUN step can legitimately idle for minutes — so widen the io
+    // deadline instead of misreading a quiet build as a wedged daemon.
+    std::optional<std::chrono::milliseconds> io = timeouts_.io;
+    if (io) {
+        io = std::max(*io, std::chrono::milliseconds(std::chrono::minutes(10)));
+    }
+    const Response res = request_with_io_timeout("POST", target, context_tar, headers, io);
     if (res.status_code != 200) {
         throw DockerError("build_image('" + options.tag + "') failed: HTTP " +
                           std::to_string(res.status_code) + " " + res.body);
@@ -355,10 +373,17 @@ std::vector<ContainerSummary> DockerClient::list_containers(
 
 void DockerClient::stop_container(const std::string& id, std::optional<int> timeout_secs) {
     std::string target = "/containers/" + id + "/stop";
+    // The daemon replies only after the container stopped — up to the full
+    // grace period with zero bytes on the wire — so the io deadline must
+    // outlive `t` or a long grace period would read as a transport timeout.
+    std::optional<std::chrono::milliseconds> io = timeouts_.io;
+    if (timeout_secs && io) {
+        io = std::max(*io, std::chrono::milliseconds(std::chrono::seconds(*timeout_secs + 30)));
+    }
     if (timeout_secs) {
         target += "?t=" + std::to_string(*timeout_secs);
     }
-    const Response res = request("POST", target);
+    const Response res = request_with_io_timeout("POST", target, {}, {}, io);
     // 204 = stopped, 304 = already stopped.
     if (res.status_code != 204 && res.status_code != 304) {
         throw DockerError("stop_container(" + id + ") failed: HTTP " +
@@ -416,7 +441,7 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
 
 void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
                                const LogConsumer& consumer) {
-    auto transport = docker::connect(host_);
+    auto transport = docker::connect(host_, timeouts_);
     docker::TransportStream stream{*transport};
 
     // Streaming: follow=1; everything else mirrors logs().
@@ -440,6 +465,9 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     // the error context so a rejected logs request is diagnosable.
     read_ok_header(*transport, stream, buffer, parser,
                    "follow_logs(" + id + ") (GET " + target + ")");
+    // Following logs legitimately idles until the container writes the next
+    // line — from here on, waiting indefinitely is the intended behavior.
+    transport->set_io_timeout(std::nullopt);
     docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
 
     // Closing the connection tells Docker to stop streaming (also on early stop).
@@ -533,7 +561,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     // 1) Connect the raw transport first and check the stdin capability BEFORE
     //    creating the exec instance, so an unsupported-transport failure leaves
     //    no abandoned exec on the daemon.
-    auto transport = docker::connect(host_);
+    auto transport = docker::connect(host_, timeouts_);
     require_stdin_capable(*transport, opts);
 
     // 2) Create the exec instance (carrying env / workdir / user / privileged /
@@ -553,6 +581,9 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     http::response_parser<http::string_body> parser;
     parser.body_limit(boost::none);
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    // The body completes only when the command exits — it may legitimately run
+    // (and stay silent) for as long as the caller's command takes.
+    transport->set_io_timeout(std::nullopt);
     http::read(stream, buffer, parser, ec); // the rest of the body
     if (ec && ec != http::error::end_of_stream) {
         transport->close();
@@ -584,7 +615,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts, const LogConsumer& consumer) {
     // 1) Connect + capability check first (see the non-streaming overload).
-    auto transport = docker::connect(host_);
+    auto transport = docker::connect(host_, timeouts_);
     require_stdin_capable(*transport, opts);
 
     // 2) Create the exec instance.
@@ -604,6 +635,9 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     parser.body_limit(boost::none);
 
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id);
+    // Streaming exec output idles until the command writes the next chunk —
+    // waiting indefinitely is the intended behavior from here on.
+    transport->set_io_timeout(std::nullopt);
     docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
     transport->close();
 

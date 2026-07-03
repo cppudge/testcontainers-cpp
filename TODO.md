@@ -4,12 +4,25 @@ Running list of known limitations, tech debt, and future work. Items found durin
 review are recorded here so they aren't lost between milestones.
 
 ## Known limitations / tech debt
-- **No I/O timeouts in the transport layer** — every transport does synchronous blocking
-  `read_some`/`write_some`/`resolve`/`connect` on a private `io_context` with no deadline, so a
-  wedged daemon, a stuck exec, or a network black-hole blocks the calling thread forever. The
-  `ITransport` doc-comment lists timeouts as an expected concern, but nothing implements them.
-  Fix direction: per-operation deadlines (Asio `async_*` + `io_context::run_for`, or a
-  steady-timer that cancels the socket) exposed through `ITransport`. (`src/docker/Transport.*`)
+- **Transport I/O timeouts (done), with known residuals** — every transport now runs `async_*`
+  ops on its private `io_context` bounded by `run_for` + cancel: `TransportTimeouts.connect`
+  budgets the whole establishment (resolve + connect + TLS handshake / busy-pipe wait, default
+  10s) and `TransportTimeouts.io` deadlines EACH read/write (an idle deadline, default 60s;
+  `nullopt` disables). A timed-out op fails with `asio::error::timed_out` and the connection is
+  discarded. `DockerClient::set_transport_timeouts` configures a client; `stop` widens the io
+  deadline past its grace period, `build` past silent build steps (10 min), and the streaming
+  call sites (`follow_logs`, exec attach reads) disable it after the response header — waiting
+  there is intended. TLS `close()` caps the close_notify exchange at 5s. Unit-tested against
+  loopback TCP + named-pipe servers (`tests/unit/TransportTimeoutTest.cpp`). Residual gaps:
+  (a) the Reaper's persistent Ryuk control socket is a raw asio socket — its ACK `read_until`
+  has no deadline (a Ryuk that accepts but never ACKs would hang the first start);
+  (b) `WaitStrategies` `tcp_probe` does its own synchronous `connect` to the container's mapped
+  port — a black-holed port blocks a poll iteration for the OS connect timeout (not forever);
+  (c) a timeout surfaces as the platform's `timed_out` message inside `DockerError` — a typed
+  `TimeoutError` belongs to the error-model item below;
+  (d) deadlines are per-operation (idle), so a malicious/trickling peer can extend a response
+  indefinitely — fine for a trusted daemon; a whole-request cap would need a second budget.
+  (`src/docker/Transport.*`, `include/testcontainers/docker/Timeouts.hpp`)
 - **Error model thinner than the README claims** — README promises "structured errors carrying
   HTTP status / container id", but `Error`/`DockerError` are bare `runtime_error`s with no
   fields or subtypes. The same `DockerError` is also thrown for pure usage errors (port not
@@ -312,8 +325,6 @@ review are recorded here so they aren't lost between milestones.
   `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
 
 ## Open / not yet built
-- **Transport I/O timeouts** — the biggest robustness gap before production-grade; see the
-  tech-debt item above.
 - **Structured error hierarchy** — status/id fields + `TimeoutError` etc.; see the tech-debt
   item above.
 - **`ContainerRequest` + `Runner` split of `start()`** — responsibility + testability; not a

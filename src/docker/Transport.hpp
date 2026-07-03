@@ -1,11 +1,15 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
+
+#include "testcontainers/docker/Timeouts.hpp"
 
 namespace testcontainers {
 class DockerHost;
@@ -15,6 +19,12 @@ namespace testcontainers::docker {
 
 /// A bidirectional byte stream to the Docker daemon, abstracting over the
 /// concrete transport (unix socket / Windows named pipe / TCP / TLS).
+///
+/// Every operation is deadline-bounded (see TransportTimeouts): a read/write
+/// that produces no progress within the io deadline fails with
+/// boost::asio::error::timed_out instead of blocking forever. A timed-out
+/// connection is mid-exchange and therefore unusable — callers must close and
+/// discard it (which the one-connection-per-request model does anyway).
 class ITransport {
 public:
     virtual ~ITransport() = default;
@@ -22,6 +32,11 @@ public:
                                   boost::system::error_code& ec) = 0;
     virtual std::size_t write_some(const void* data, std::size_t size,
                                    boost::system::error_code& ec) = 0;
+    /// Replace the per-operation io deadline for subsequent reads/writes;
+    /// std::nullopt disables it. Used by the streaming call sites (follow_logs,
+    /// exec attach reads) where waiting indefinitely for the next chunk is the
+    /// intended behavior.
+    virtual void set_io_timeout(std::optional<std::chrono::milliseconds> timeout) = 0;
     /// Half-close the send side so the peer sees EOF on its read while we keep
     /// reading the response (used by exec-stdin: after writing the input bytes we
     /// signal end-of-input so a reader like `cat`/`wc` terminates). Best-effort:
@@ -93,7 +108,10 @@ private:
     ITransport* transport_;
 };
 
-/// Open a fresh transport connection to the given Docker host.
-std::unique_ptr<ITransport> connect(const DockerHost& host);
+/// Open a fresh transport connection to the given Docker host, applying
+/// `timeouts.connect` to the connection establishment and `timeouts.io` as the
+/// per-operation deadline of the returned transport.
+std::unique_ptr<ITransport> connect(const DockerHost& host,
+                                    const TransportTimeouts& timeouts = {});
 
 } // namespace testcontainers::docker

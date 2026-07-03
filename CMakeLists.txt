@@ -125,6 +125,7 @@ if(BUILD_TESTING)
         tests/unit/AuthTest.cpp
         tests/unit/LogDemuxTest.cpp
         tests/unit/StreamReadTest.cpp
+        tests/unit/TransportTimeoutTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp
@@ -145,7 +146,8 @@ if(BUILD_TESTING)
         # TarTest builds tars via the internal builder and reads them back with libarchive.
         LibArchive::LibArchive
         # StreamReadTest drives the internal Beast streaming loop over a fake
-        # ITransport (allowed in a test translation unit — not a public header).
+        # ITransport; TransportTimeoutTest runs in-process Asio loopback servers
+        # (allowed in a test translation unit — not a public header).
         boost::boost
         GTest::gtest
         GTest::gtest_main

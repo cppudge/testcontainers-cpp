@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,6 +15,7 @@
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
+#include "testcontainers/docker/Timeouts.hpp"
 
 namespace testcontainers {
 
@@ -44,6 +46,16 @@ public:
     static DockerClient from_environment();
 
     const DockerHost& host() const noexcept { return host_; }
+
+    /// Transport deadlines applied to every connection this client opens (a
+    /// copy of the client carries its timeouts along). Endpoints known to be
+    /// long-polling widen the io deadline internally (`stop` waits up to its
+    /// grace period, `build` may have long silent steps); the streaming call
+    /// sites (`follow_logs`, exec attach reads) disable it regardless.
+    void set_transport_timeouts(const docker::TransportTimeouts& timeouts) {
+        timeouts_ = timeouts;
+    }
+    const docker::TransportTimeouts& transport_timeouts() const noexcept { return timeouts_; }
 
     /// Perform an HTTP request against the daemon and return the full response.
     /// `target` is the path (e.g. "/_ping", "/v1.43/containers/json").
@@ -203,7 +215,15 @@ public:
     void remove_volume(const std::string& name, bool force = false);
 
 private:
+    /// request() with the per-operation io deadline overridden for this one
+    /// call (the long-polling endpoints widen it; nullopt disables it).
+    Response request_with_io_timeout(std::string_view method, std::string_view target,
+                                     std::string_view body,
+                                     const std::vector<std::pair<std::string, std::string>>& headers,
+                                     std::optional<std::chrono::milliseconds> io_timeout);
+
     DockerHost host_;
+    docker::TransportTimeouts timeouts_;
 };
 
 } // namespace testcontainers
