@@ -10,6 +10,7 @@
 #endif
 #include <windows.h>
 
+#include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>
 
 #include <chrono>
@@ -26,6 +27,7 @@
 // daemon — the zero-length-message half-close of the named-pipe transport):
 //   NamedPipeHalfClose.DeliversEofOnMessageModePipe - on a MESSAGE-mode pipe (what a real daemon serves), shutdown_send() delivers a zero-byte read (EOF) to the server, and the client can still READ the server's reply afterwards — the exec-stdin shape (write stdin, half-close, read output).
 //   NamedPipeHalfClose.ByteModePipeReportsNoHalfClose - on a BYTE-mode pipe a zero-byte write is invisible, so supports_half_close() is false and shutdown_send() is a harmless no-op (the loud-throw guard stays reachable).
+//   NamedPipeHalfClose.PeerCloseWriteReadsAsEof - the MIRROR direction: when the PEER half-closes (go-winio CloseWrite = zero-length message; how dockerd ends a hijacked exec stream while holding the pipe open), read_some reports EOF instead of a bare 0-byte success — otherwise the raw-stream reader re-issues the read and blocks forever (the CI exec hang).
 
 namespace {
 
@@ -119,6 +121,57 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
     EXPECT_EQ(eof_bytes_promise.get_future().get(), 0u)
         << "the EOF signal is a zero-byte read, not data";
 
+    server.join();
+    ::CloseHandle(pipe);
+}
+
+TEST(NamedPipeHalfClose, PeerCloseWriteReadsAsEof) {
+    // The daemon side of a hijacked exec stream: dockerd (go-winio) writes the
+    // output, then CloseWrite — a zero-length message — and HOLDS the pipe
+    // open waiting for the client to hang up. The client must observe that
+    // zero-byte read as EOF (exactly how go-winio's own reader maps it);
+    // reporting it as a bare (0 bytes, success) makes every read-to-EOF loop
+    // re-issue the read and block forever on the still-open pipe.
+    const std::string name = pipe_name("peer-eof");
+    const HANDLE pipe =
+        ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
+                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                           /*default timeout*/ 0, /*security*/ nullptr);
+    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
+
+    std::promise<void> done;
+    std::thread server([&] {
+        ::ConnectNamedPipe(pipe, nullptr);
+        const std::string payload = "output";
+        DWORD written = 0;
+        ::WriteFile(pipe, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr);
+        // go-winio CloseWrite: flush, then the zero-length message. The pipe
+        // stays OPEN — the EOF must come from the message, not a pipe close.
+        ::FlushFileBuffers(pipe);
+        ::WriteFile(pipe, "", 0, &written, nullptr);
+        done.get_future().wait(); // hold the pipe open until the client is done
+    });
+
+    TransportTimeouts timeouts;
+    timeouts.io = 5s; // a regression must fail the test in bounded time, not hang
+    const auto transport = testcontainers::docker::connect(pipe_host("peer-eof"), timeouts);
+
+    boost::system::error_code ec;
+    char buf[64] = {};
+    const std::size_t n = transport->read_some(buf, sizeof(buf), ec);
+    ASSERT_FALSE(ec) << ec.message();
+    EXPECT_EQ(std::string(buf, n), "output");
+
+    // The peer's CloseWrite: a read-to-EOF loop keeps reading until ec — this
+    // read MUST deliver eof, not (0 bytes, success).
+    const std::size_t eof_n = transport->read_some(buf, sizeof(buf), ec);
+    EXPECT_EQ(eof_n, 0u);
+    EXPECT_EQ(ec, boost::asio::error::eof)
+        << "peer CloseWrite must read as EOF, got: " << ec.message();
+
+    transport->close();
+    done.set_value();
     server.join();
     ::CloseHandle(pipe);
 }

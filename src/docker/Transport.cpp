@@ -469,13 +469,26 @@ public:
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
-        return bounded_io(
+        const std::size_t n = bounded_io(
             ioc_, io_timeout_, ec,
             [&](auto&& handler) {
                 handle_.async_read_some(asio::buffer(data, size),
                                         std::forward<decltype(handler)>(handler));
             },
             [&] { cancel_pending(); });
+        // A successful ZERO-byte read is the peer's half-close arriving: the
+        // mirror image of shutdown_send() below — go-winio's CloseWrite is a
+        // zero-length message, and dockerd ends a hijacked stream (exec) that
+        // way while HOLDING the pipe open for the client to hang up. Report
+        // it as EOF, exactly like go-winio's own reader (and like a socket's
+        // 0-byte recv) — a bare (0, success) would make every read-to-EOF
+        // loop re-issue the read and block forever. Note: Docker Desktop's
+        // pipe proxy closes the pipe outright instead (broken_pipe), which is
+        // why only a DIRECT dockerd npipe (e.g. CI runners) exercises this.
+        if (!ec && n == 0 && size != 0) {
+            ec = asio::error::eof;
+        }
+        return n;
     }
     std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
