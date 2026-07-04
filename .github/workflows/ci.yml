@@ -86,8 +86,15 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: conan-${{ runner.os }}-
 
+      # /Z7 + /DEBUG produce PDBs for OUR targets in the Release build (the
+      # Conan dependencies stay plain Release), so a hang dump captured below
+      # can be symbolized locally in WinDbg/VS. /Z7 embeds the debug info in
+      # the objects — no compiler-PDB contention under ninja's parallelism.
       - name: Configure
-        run: cmake --preset ninja
+        run: >
+          cmake --preset ninja
+          "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Z7"
+          "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/DEBUG /INCREMENTAL:NO"
 
       - name: Build
         run: cmake --build build/ninja
@@ -131,10 +138,35 @@ jobs:
       # Linux-guarded suites self-skip, while WindowsContainer.* really runs —
       # nanoserver:ltsc2022 is pre-cached on windows-2022 images, and the test
       # resolves the tag from the daemon's build (an unknown build FAILS, so a
-      # runner-image upgrade cannot silently hollow this job out). The step
-      # timeout turns a wedged daemon (observed once: 56 min of silence) into
-      # a bounded red instead of eating the whole job timeout; full gtest
+      # runner-image upgrade cannot silently hollow this job out). Full gtest
       # output names every [ RUN ] test case so a hang points at its culprit.
+      #
+      # The tests run under a 15-minute watchdog: on expiry a FULL process
+      # dump is captured with Sysinternals procdump and uploaded as an
+      # artifact (with the exe+pdb) so the hang can be debugged locally
+      # (WinDbg: `~*k` for all thread stacks). The step timeout stays above
+      # the watchdog so the dump path always gets to run.
       - name: Integration tests (Windows engine)
         timeout-minutes: 25
-        run: ./build/ninja/bin/tc_integration_tests.exe
+        run: |
+          $p = Start-Process -FilePath ./build/ninja/bin/tc_integration_tests.exe -NoNewWindow -PassThru
+          if ($p.WaitForExit(15 * 60 * 1000)) {
+            exit $p.ExitCode
+          }
+          Write-Warning "integration tests still running after 15 min - capturing a full dump of PID $($p.Id)"
+          Invoke-WebRequest https://download.sysinternals.com/files/Procdump.zip -OutFile procdump.zip
+          Expand-Archive procdump.zip -DestinationPath procdump
+          ./procdump/procdump64.exe -accepteula -ma $p.Id hung-integration.dmp
+          Stop-Process -Id $p.Id -Force
+          exit 124
+
+      - name: Upload hang dump (exe + pdb + dmp)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-integration-hang-dump
+          path: |
+            hung-integration.dmp
+            build/ninja/bin/tc_integration_tests.exe
+            build/ninja/bin/tc_integration_tests.pdb
+          if-no-files-found: ignore
