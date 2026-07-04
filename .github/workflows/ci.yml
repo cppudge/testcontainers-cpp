@@ -1,4 +1,7 @@
-# Linux CI: build + unit + integration on every branch push.
+# CI on every branch push: build + unit + integration on Linux (gcc) and
+# Windows (MSVC, Windows containers), plus the static/dynamic analysis gates —
+# clang-format, clang-tidy, and an ASan+UBSan test run. CodeQL lives in its
+# own workflow (codeql.yml).
 #
 # Public repo => GitHub-hosted standard runners are free with no minute cap;
 # the only budgeted resource is the 10 GB Actions cache, which the project-
@@ -44,8 +47,10 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: conan-${{ runner.os }}-
 
+      # TC_WERROR hardens the project's -Wall -Wextra into errors on CI only
+      # (the option defaults OFF so new-compiler warnings never break users).
       - name: Configure
-        run: cmake --preset ninja
+        run: cmake --preset ninja -DTC_WERROR=ON
 
       - name: Build
         run: cmake --build build/ninja
@@ -92,7 +97,7 @@ jobs:
       # the objects — no compiler-PDB contention under ninja's parallelism.
       - name: Configure
         run: >
-          cmake --preset ninja
+          cmake --preset ninja -DTC_WERROR=ON
           "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Z7"
           "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/DEBUG /INCREMENTAL:NO"
 
@@ -149,3 +154,101 @@ jobs:
             build/ninja/bin/tc_integration_tests.exe
             build/ninja/bin/tc_integration_tests.pdb
           if-no-files-found: ignore
+
+  # Formatting gate: the tree must be byte-identical to what the PINNED
+  # clang-format produces (.clang-format documents the local install command).
+  # Seconds of runtime — no cache, no configure.
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format (pinned)
+        run: pipx install clang-format==22.1.5
+
+      - name: Check formatting
+        run: git ls-files '*.cpp' '*.hpp' | xargs clang-format --dry-run --Werror
+
+  # clang-tidy over the Ninja compile database with the checked-in .clang-tidy
+  # set (the same one clangd uses in-editor). The wheel pins the analyzer
+  # version so editor, this job, and a local run agree on findings. Configure
+  # only — the compile database (and the generated version header) exist
+  # without a build.
+  tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja + conan + clang-tidy (pinned)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          pipx install conan
+          pipx install clang-tidy==18.1.8
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: .conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake --preset ninja
+
+      # xargs exits 123 if any clang-tidy invocation fails, which
+      # --warnings-as-errors makes happen on any finding.
+      - name: Run clang-tidy
+        run: >
+          git ls-files 'src/*.cpp' 'tests/*.cpp' 'examples/*.cpp'
+          | xargs -P "$(nproc)" -n 2 clang-tidy -p build/ninja --quiet
+          --warnings-as-errors='*'
+
+  # ASan + UBSan over both test suites: HTTP parsing, tar building, and the
+  # log-demux framing are exactly where heap overflows and UB hide. The Conan
+  # dependencies stay plain Release (ASan tolerates uninstrumented code); only
+  # our objects are instrumented. -fno-sanitize-recover turns any UB finding
+  # into a hard failure.
+  sanitizers:
+    name: Linux (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja + conan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          pipx install conan
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: .conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Configure
+        run: >
+          cmake --preset ninja
+          "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+          "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build/ninja
+
+      - name: Unit tests (sanitized)
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./build/ninja/bin/tc_unit_tests --gtest_brief=1
+
+      - name: Integration tests (sanitized)
+        timeout-minutes: 30
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./build/ninja/bin/tc_integration_tests

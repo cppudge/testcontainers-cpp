@@ -1,0 +1,61 @@
+# CodeQL semantic analysis (free for public repos). Complements clang-tidy:
+# taint tracking and the security query pack, not lint-style checks. Runs on
+# main pushes / PRs into main / weekly (to pick up new queries) — not on every
+# feature-branch push, because the traced build makes it the slowest job.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze C++
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write   # upload the SARIF results
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja + conan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          pipx install conan
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: .conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      # The same preset build the CI jobs use; CodeQL traces the compiler
+      # invocations, so dependencies fetched by Conan are seen but only our
+      # sources are analyzed.
+      - name: Build (traced)
+        run: |
+          cmake --preset ninja
+          cmake --build build/ninja
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:c-cpp'

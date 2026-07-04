@@ -14,7 +14,9 @@ CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 > implemented, covered by ~300 unit + ~115 integration tests against a real daemon — green on
 > Windows (named pipe) and Linux (unix socket; CI runs the full suite in BOTH engine modes:
 > the Windows job drives real Windows containers — build/volumes/networks/exec/copy/ports/
-> waits/lifecycle each have a Windows mirror suite). The feature reference
+> waits/lifecycle each have a Windows mirror suite). CI also gates on `-Wall -Wextra`//W4
+> as errors, pinned clang-format + clang-tidy, an ASan+UBSan run of both test suites, and
+> CodeQL. The feature reference
 > with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a real
 > remote daemon is the main unverified gap.
 
@@ -305,6 +307,11 @@ dependencies (e.g. OpenSSL) from source.
    the VS developer environment automatically.
 3. clangd reads `build/ninja/compile_commands.json` (via the `.clangd` file) for accurate
    IntelliSense and diagnostics. Build / run tests from the CMake Tools status bar.
+
+Style and static analysis are enforced in CI: `.clang-format` (pinned wheel —
+`pip install clang-format==22.1.5`, run over `*.cpp *.hpp`) and `.clang-tidy`
+(`pip install clang-tidy==18.1.8`, run with `-p build/ninja`; clangd applies the same
+config in-editor as you type).
 
 > Note: `libarchive` is built with `with_iconv=False` — its `libiconv` dependency has no prebuilt
 > Windows/msvc-194 binary and fails to build from source (rc.exe flag mismatch); we don't need
