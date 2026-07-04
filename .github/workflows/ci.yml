@@ -60,15 +60,14 @@ jobs:
         run: ./build/ninja/bin/tc_integration_tests --gtest_brief=1
 
   windows:
-    name: Windows (MSVC, Release, unit)
+    name: Windows (MSVC, Release)
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       # The ninja preset needs cl.exe on PATH (the same MSVC dev-shell setup
-      # the local build uses); integration is Linux-only here — the runner's
-      # daemon runs Windows containers, so the whole suite would self-skip.
+      # the local build uses).
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64
@@ -91,3 +90,11 @@ jobs:
 
       - name: Unit tests
         run: ./build/ninja/bin/tc_unit_tests.exe --gtest_brief=1
+
+      # The runner's daemon (npipe transport) runs WINDOWS containers: the
+      # Linux-guarded suites self-skip, while WindowsContainer.* really runs —
+      # nanoserver:ltsc2022 is pre-cached on windows-2022 images, and the test
+      # resolves the tag from the daemon's build (an unknown build FAILS, so a
+      # runner-image upgrade cannot silently hollow this job out).
+      - name: Integration tests (Windows engine)
+        run: ./build/ninja/bin/tc_integration_tests.exe --gtest_brief=1
