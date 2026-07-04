@@ -12,8 +12,8 @@
 //   GenericImage.DefaultsTagAndTimeout - a freshly constructed image defaults to the "latest" tag and a 60s startup timeout.
 //   GenericImage.ExplicitTag - the two-argument constructor stores the given tag.
 //   GenericImage.GettersReflectBuilders - each with_* builder records into the matching getter.
-//   GenericImage.ConfigBuildersReflectGetters - entrypoint/working-dir/user/privileged/mount builders record into the matching getters.
-//   GenericImage.ConfigDefaults - a freshly constructed image has no entrypoint/working-dir/user/mounts and is not privileged.
+//   GenericImage.ConfigBuildersReflectGetters - entrypoint/working-dir/user/privileged/isolation/mount builders record into the matching getters.
+//   GenericImage.ConfigDefaults - a freshly constructed image has no entrypoint/working-dir/user/isolation/mounts and is not privileged.
 //   GenericImage.NetworkDefaults - a freshly constructed image has no network or container name set.
 //   GenericImage.NetworkBuildersReflectGetters - with_network and with_container_name record into the matching getters.
 //   GenericImage.PlatformDefaultsAndBuilder - platform is unset by default and with_platform records into the getter.
@@ -85,6 +85,7 @@ TEST(GenericImage, ConfigDefaults) {
     EXPECT_FALSE(img.working_dir().has_value());
     EXPECT_FALSE(img.user().has_value());
     EXPECT_FALSE(img.privileged());
+    EXPECT_FALSE(img.isolation().has_value());
     EXPECT_TRUE(img.mounts().empty());
 }
 
@@ -126,6 +127,7 @@ TEST(GenericImage, ConfigBuildersReflectGetters) {
         .with_working_dir("/tmp")
         .with_user("1000:1000")
         .with_privileged()
+        .with_isolation("process")
         .with_mount(Mount::tmpfs("/cache").with_tmpfs_size(1024))
         .with_mount(Mount::bind("/host", "/data").with_read_only());
 
@@ -135,6 +137,8 @@ TEST(GenericImage, ConfigBuildersReflectGetters) {
     ASSERT_TRUE(img.user().has_value());
     EXPECT_EQ(*img.user(), "1000:1000");
     EXPECT_TRUE(img.privileged());
+    ASSERT_TRUE(img.isolation().has_value());
+    EXPECT_EQ(*img.isolation(), "process");
 
     ASSERT_EQ(img.mounts().size(), 2u);
     EXPECT_EQ(img.mounts()[0].type(), MountType::Tmpfs);

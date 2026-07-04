@@ -109,6 +109,9 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.network) {
         host_config["NetworkMode"] = *spec.network;
     }
+    if (spec.isolation) {
+        host_config["Isolation"] = *spec.isolation;
+    }
     if (spec.memory_bytes) {
         host_config["Memory"] = *spec.memory_bytes;
     }

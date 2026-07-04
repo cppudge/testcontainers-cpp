@@ -65,7 +65,8 @@ void Volume::populate(const std::vector<CopyToContainer>& sources, const std::st
     // A throwaway helper with THIS volume mounted at `mount_path`; copying into
     // that path writes through to the volume, which persists when the helper is
     // removed. The helper carries the testcontainers labels so it is reaped if we
-    // crash mid-seed.
+    // crash mid-seed. Linux daemons only: a Windows daemon extracts the archive
+    // into the helper's layer, silently bypassing the mount (see the header).
     CreateContainerSpec spec;
     spec.image = helper_image;
     // We START the helper before copying. Empirically (see VolumeTest) copying to

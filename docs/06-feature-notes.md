@@ -185,8 +185,27 @@ label sweep), so moves/destruction need no hand-written member lists and a faile
 **Windows containers** (docs/04) — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the
 Windows engine (RAII + AutoRemove only — testcontainers-dotnet parity). copy-to still
-Unix-normalizes entry paths, so `C:\...` targets are unhandled. The nanoserver test image tag
-is host-build-locked (`ltsc2025` on build 26100).
+Unix-normalizes entry paths, so `C:\...` targets are unhandled — target `/x.txt` (= `C:\x.txt`
+to the daemon). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100;
+`tcit::WindowsEngineTest` in tests/integration/WindowsEngine.hpp resolves it from the daemon).
+
+**Isolation (`with_isolation`)** — `HostConfig.Isolation` ("process"/"hyperv"), Windows daemons
+only. Docker Desktop defaults Windows containers to Hyper-V isolation, under which the daemon
+rejects filesystem operations against a RUNNING container (`copy_to`/`read_file` → HTTP 500)
+and hides host DNS quirks; the Windows integration suites pin "process" (valid because the
+image build is host-matched). Not set = daemon default; never send it to a Linux daemon.
+
+**Windows-engine test mirrors** — WindowsBuildImage / WindowsVolumes / WindowsNetworks /
+WindowsExec / WindowsCopy fixtures live NEXT to their Linux twins in the same test files.
+Windows-daemon facts they encode (all verified live): (a) archive uploads (`PUT .../archive`,
+`docker cp` alike) land in the container LAYER and silently bypass volume mounts, so
+`Volume::populate` is Linux-only — seed Windows volumes by exec'ing writes in a container
+that mounts them; (b) whether HNS serves single-label DNS names to process-isolated
+containers is environment-dependent (a host DNS-suffix search list breaks it), so the network
+tests assert daemon-side registration (DNSNames/Aliases in inspect) + ICMP to the peer's
+network IP instead of in-container name resolution; (c) nanoserver's volume-dir ACLs require
+`ContainerAdministrator`; (d) exec-stdin has no `cat` — pipe a script into `cmd /q`; (e) a
+Windows Dockerfile RUN needs `USER ContainerAdministrator` to write to `C:\`.
 
 **TTY containers** — `with_tty()` sets `Tty=true`; `logs()` / `follow_logs()` and the log wait
 handle the raw stream automatically (`Container` remembers its TTY-ness). No interactive

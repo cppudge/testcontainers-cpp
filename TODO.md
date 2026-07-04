@@ -76,7 +76,11 @@ when it lands (adding a short note there if it needs one).
   socat ambassador for UNPUBLISHED ports, and Ryuk-reaping of compose containers (they carry no
   session label) are all unsupported.
 - **Windows containers** — copy-to Unix-normalizes entry paths, so `C:\...` targets aren't
-  handled.
+  handled (use `/x.txt` = `C:\x.txt`). `Volume::populate` cannot seed a Windows volume — the
+  daemon extracts archives into the container LAYER, bypassing mounts (`docker cp` shares the
+  blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.
+  No Windows-mode integration coverage for published ports / non-exit wait strategies —
+  nanoserver ships no listener binary, a tiny Windows server image would unlock it.
 - **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
   are not consumed, only the `Host` endpoint; only `docker.host` is read from
   `~/.testcontainers.properties`. (`src/docker/HostResolve.hpp`)

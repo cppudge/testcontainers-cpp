@@ -16,8 +16,10 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "WindowsEngine.hpp"
 
-// Tests in this file (integration; require a Docker daemon):
+// Tests in this file (integration; require a Docker daemon — Linux mode for the
+// Copy suite, Windows mode for the WindowsCopy mirror):
 //   Copy.CopyAtStartData - with_copy_to(content) lands the bytes in the container so a `cat` of the target prints them.
 //   Copy.CopyAtStartHostFile - with_copy_to(host_file) copies a host file's contents into the container.
 //   Copy.CopyIntoRunningContainer - Container::copy_to writes a file into an already-running container.
@@ -25,6 +27,13 @@
 //   Copy.LargeFileRoundTrip - a >1 MiB file copied in is read back byte-exact, proving the lifted response body limit.
 //   Copy.CopyFileFromWritesHost - copy_file_from writes the container file's contents to a host path.
 //   Copy.ReadFileRejectsDirectory - read_file on a directory throws DockerError (not a single regular file).
+//   WindowsCopy.CopyAtStartData - the same copy-at-start round-trip into a Windows container (targets live at the C: root — extraction runs as the daemon, no parent-dir assumptions).
+//   WindowsCopy.CopyAtStartHostFile - with_copy_to(host_file) into a Windows container.
+//   WindowsCopy.CopyIntoRunningContainer - Container::copy_to against a running Windows container.
+//   WindowsCopy.ReadFileRoundTrip - copy_to then read_file over the Windows daemon returns the exact bytes.
+//   WindowsCopy.LargeFileRoundTrip - a 2 MiB round-trip against a Windows daemon (named-pipe transport on CI).
+//   WindowsCopy.CopyFileFromWritesHost - copy_file_from a Windows container to a host path.
+//   WindowsCopy.ReadFileRejectsDirectory - read_file on a (freshly mkdir'd, empty) directory throws DockerError.
 
 using namespace testcontainers;
 
@@ -157,4 +166,116 @@ TEST_F(Copy, ReadFileRejectsDirectory) {
     // /tmp is a directory: its archive has no single regular file, so read_file
     // must reject it.
     EXPECT_THROW(c.read_file("/tmp"), DockerError);
+}
+
+// The Windows mirror. All targets live at the filesystem root ("/x.txt" is
+// C:\x.txt to the daemon): the copy endpoint extracts as the daemon, not the
+// container user, so no writable-parent-directory assumptions are needed and
+// no directory has to pre-exist in nanoserver.
+class WindowsCopy : public tcit::WindowsEngineTest {
+protected:
+    /// A running nanoserver container to copy into/out of.
+    testcontainers::Container start_keep_alive() {
+        return nanoserver().with_cmd(keep_alive_cmd()).start();
+    }
+};
+
+TEST_F(WindowsCopy, CopyAtStartData) {
+    Container c = nanoserver()
+                      .with_copy_to(CopyToContainer::content("hello-copy-win", "/copied.txt"))
+                      .with_cmd(keep_alive_cmd())
+                      .start();
+
+    const ExecResult res = c.exec({"cmd", "/c", "type C:\\copied.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("hello-copy-win"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
+TEST_F(WindowsCopy, CopyAtStartHostFile) {
+    const std::string content = "contents-from-host-file-win";
+    const TempFile file(content);
+
+    Container c = nanoserver()
+                      .with_copy_to(CopyToContainer::host_file(file.string(), "/fromfile.txt"))
+                      .with_cmd(keep_alive_cmd())
+                      .start();
+
+    const ExecResult res = c.exec({"cmd", "/c", "type C:\\fromfile.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find(content), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
+TEST_F(WindowsCopy, CopyIntoRunningContainer) {
+    Container c = start_keep_alive();
+
+    c.copy_to(CopyToContainer::content("runtime-win", "/rt.txt"));
+
+    const ExecResult res = c.exec({"cmd", "/c", "type C:\\rt.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("runtime-win"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
+TEST_F(WindowsCopy, ReadFileRoundTrip) {
+    Container c = start_keep_alive();
+
+    // CRLF on purpose: the bytes must survive verbatim, no newline translation.
+    const std::string original = "round-trip-bytes\r\nwith two lines\r\n";
+    c.copy_to(CopyToContainer::content(original, "/rt.txt"));
+
+    const std::string read_back = c.read_file("/rt.txt");
+    EXPECT_EQ(read_back, original);
+}
+
+TEST_F(WindowsCopy, LargeFileRoundTrip) {
+    Container c = start_keep_alive();
+
+    // 2 MiB — comfortably over Beast's default 1 MiB body limit; on CI this
+    // also rides the named-pipe transport rather than a socket.
+    std::string big(2 * 1024 * 1024, 'x');
+    big[big.size() - 3] = 'A';
+    big[big.size() - 2] = 'B';
+    big[big.size() - 1] = 'C';
+    c.copy_to(CopyToContainer::content(big, "/big.bin"));
+
+    const std::string read_back = c.read_file("/big.bin");
+    ASSERT_EQ(read_back.size(), big.size());
+    EXPECT_EQ(read_back, big);
+}
+
+TEST_F(WindowsCopy, CopyFileFromWritesHost) {
+    Container c = start_keep_alive();
+
+    const std::string content = "to-the-host-win\r\n";
+    c.copy_to(CopyToContainer::content(content, "/h.txt"));
+
+    static std::atomic<unsigned> counter{0};
+    const std::filesystem::path dest =
+        std::filesystem::temp_directory_path() /
+        ("tc_copyfrom_win_" + std::to_string(counter.fetch_add(1))) / "out.txt";
+
+    c.copy_file_from("/h.txt", dest.string());
+
+    std::ifstream in(dest, std::ios::binary);
+    ASSERT_TRUE(in.good());
+    const std::string on_host((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+    EXPECT_EQ(on_host, content);
+
+    std::error_code ec;
+    std::filesystem::remove_all(dest.parent_path(), ec);
+}
+
+TEST_F(WindowsCopy, ReadFileRejectsDirectory) {
+    Container c = start_keep_alive();
+
+    // A freshly created, guaranteed-empty directory: its archive has no single
+    // regular file, so read_file must reject it. (No pre-existing nanoserver
+    // directory is used — one stray desktop.ini would turn this into a pass.)
+    const ExecResult mk = c.exec({"cmd", "/c", "mkdir C:\\tc-empty"});
+    ASSERT_EQ(mk.exit_code, 0) << "stderr: " << mk.stderr_data;
+
+    EXPECT_THROW(c.read_file("/tc-empty"), DockerError);
 }

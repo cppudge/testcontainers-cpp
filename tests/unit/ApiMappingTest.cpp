@@ -22,6 +22,7 @@
 //   ApiMapping.BuildCreateBodyProcessConfigOmittedByDefault - entrypoint/working dir/user are absent when unset.
 //   ApiMapping.BuildCreateBodyTty - the tty flag maps to a top-level "Tty":true (sibling of Cmd/User, not under HostConfig) and is absent by default.
 //   ApiMapping.BuildCreateBodyPrivileged - the privileged flag maps to HostConfig.Privileged.
+//   ApiMapping.BuildCreateBodyIsolation - the isolation field maps to HostConfig.Isolation and is absent by default.
 //   ApiMapping.BuildCreateBodyAutoRemove - the auto_remove flag maps to HostConfig.AutoRemove and is absent by default.
 //   ApiMapping.BuildCreateBodyBindMount - a read-only bind mount maps to a HostConfig.Mounts entry with Type/Source/Target/ReadOnly and no TmpfsOptions.
 //   ApiMapping.BuildCreateBodyVolumeMount - a volume mount maps to a HostConfig.Mounts entry with Type=volume and Source set to the volume name.
@@ -210,6 +211,21 @@ TEST(ApiMapping, BuildCreateBodyPrivileged) {
     const auto body = build_create_body(spec);
     ASSERT_TRUE(body.contains("HostConfig"));
     EXPECT_TRUE(body["HostConfig"]["Privileged"].get<bool>());
+}
+
+TEST(ApiMapping, BuildCreateBodyIsolation) {
+    CreateContainerSpec spec;
+    spec.image = "mcr.microsoft.com/windows/nanoserver:ltsc2022";
+    spec.isolation = "process";
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    EXPECT_EQ(body["HostConfig"]["Isolation"].get<std::string>(), "process");
+
+    // Unset by default: Linux daemons must never see an Isolation field.
+    CreateContainerSpec plain;
+    plain.image = "alpine:3.20";
+    EXPECT_FALSE(build_create_body(plain).contains("HostConfig"));
 }
 
 TEST(ApiMapping, BuildCreateBodyAutoRemove) {

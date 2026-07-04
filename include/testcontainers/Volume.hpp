@@ -113,6 +113,12 @@ public:
     /// "/seed.txt" within the volume. File-source modes are preserved. The helper
     /// carries the testcontainers session labels (so it is reaped if we crash
     /// mid-seed) and is always force-removed afterwards; the volume persists.
+    ///
+    /// Linux daemons only. A Windows daemon extracts archive uploads into the
+    /// container's LAYER, not its live filesystem view, so the copy silently
+    /// bypasses the volume mounted in the helper (`docker cp` has the same
+    /// blind spot there). Seed a Windows volume by mounting it and writing
+    /// from inside a container (exec) instead.
     void populate(const std::vector<CopyToContainer>& sources,
                   const std::string& mount_path = "/__tc_seed",
                   const std::string& helper_image = "alpine:3.20") const;

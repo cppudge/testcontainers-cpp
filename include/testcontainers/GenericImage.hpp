@@ -86,6 +86,18 @@ public:
         return *this;
     }
 
+    /// Container isolation technology (`HostConfig.Isolation`) — Windows
+    /// daemons only: "process" or "hyperv". Docker Desktop defaults Windows
+    /// containers to Hyper-V isolation, under which some operations are
+    /// unavailable (e.g. copying files into a RUNNING container); "process"
+    /// lifts that but requires the image build to match the host build.
+    /// Leave unset on Linux daemons — they REJECT any non-default value at
+    /// create time ("Invalid isolation: ... Unix only supports 'default'").
+    GenericImage& with_isolation(std::string isolation) {
+        spec_.isolation = std::move(isolation);
+        return *this;
+    }
+
     /// Allocate a pseudo-TTY for the container (`Tty=true`). The log stream is
     /// then raw/unframed (no multiplex header) with no separate stderr channel —
     /// `Container::logs()` / `follow_logs()` read it without demuxing. Note a TTY
@@ -316,6 +328,7 @@ public:
     const std::optional<std::string>& working_dir() const noexcept { return spec_.working_dir; }
     const std::optional<std::string>& user() const noexcept { return spec_.user; }
     bool privileged() const noexcept { return spec_.privileged; }
+    const std::optional<std::string>& isolation() const noexcept { return spec_.isolation; }
     bool tty() const noexcept { return spec_.tty; }
     const std::vector<Mount>& mounts() const noexcept { return spec_.mounts; }
     const std::vector<CopyToContainer>& copy_to_sources() const noexcept {

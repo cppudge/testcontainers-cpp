@@ -42,6 +42,7 @@ struct CreateContainerSpec {
     std::vector<std::string> cap_add;                        ///< HostConfig.CapAdd
     std::vector<std::string> cap_drop;                       ///< HostConfig.CapDrop
     std::vector<std::string> extra_hosts;                    ///< HostConfig.ExtraHosts ("host:ip")
+    std::optional<std::string> isolation;                    ///< HostConfig.Isolation ("process"/"hyperv"; Windows daemons)
     std::string create_body_patch;                           ///< raw JSON object deep-merged into the create body (escape hatch); empty = none
 };
 
