@@ -1,12 +1,19 @@
+#define _CRT_SECURE_NO_WARNINGS // _putenv_s / std::getenv on MSVC
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "Process.hpp"
 
@@ -19,7 +26,9 @@
 //   Process.RunProcessCapturesStderr - the child's stderr lands in the same captured output (the merged-pipe contract).
 //   Process.RunProcessReportsExitCode - a child exiting non-zero reports that exit code.
 //   Process.RunProcessAppliesEnvWithoutTouchingParent - env overrides are visible to the child while the parent's environment stays untouched.
+//   Process.RunProcessInheritsParentEnvAndOverlays - the child gets the parent's variables as the base, with overrides REPLACING (not shadow-appending) an existing parent value.
 //   Process.RunProcessConcurrentEnvStaysIsolated - two concurrent runs overriding the SAME variable each see their own value (the explicit-env-block guarantee).
+//   Process.RunProcessDoesNotLeakUnrelatedHandlesIntoChildren - (Windows) a child inherits ONLY its own std handles, so an unrelated pipe's EOF is not held hostage for the child's lifetime (the concurrent-run_process hazard in miniature).
 //   Process.RunProcessAppliesWorkingDir - working_dir becomes the child's working directory.
 //   Process.RunProcessFeedsStdin - stdin_data reaches the child's stdin via the temp-file redirection.
 
@@ -96,6 +105,19 @@ TEST(Process, RunProcessReportsExitCode) {
 
 namespace {
 
+/// Set / unset a variable in THIS process (the parent side of the env tests).
+void set_host_env(const char* key, const char* value) {
+#if defined(_WIN32)
+    _putenv_s(key, value ? value : ""); // empty value removes it
+#else
+    if (value) {
+        setenv(key, value, 1);
+    } else {
+        unsetenv(key);
+    }
+#endif
+}
+
 /// Run a child that prints the given environment variable.
 testcontainers::detail::ProcessResult
 child_print_env(const std::string& name,
@@ -122,6 +144,39 @@ TEST(Process, RunProcessAppliesEnvWithoutTouchingParent) {
     EXPECT_NE(result.output.find("visible-in-child"), std::string::npos) << result.output;
     // The override went into the CHILD's environment block only.
     EXPECT_EQ(std::getenv("TC_PROC_TEST_ENV"), nullptr);
+}
+
+TEST(Process, RunProcessInheritsParentEnvAndOverlays) {
+    // The child's environment block is the PARENT's variables with the
+    // overrides overlaid — this is what carries PATH / DOCKER_HOST to
+    // docker/compose. Pin both halves: an untouched parent variable is
+    // inherited, and an override REPLACES an existing parent value (rather
+    // than appending a duplicate entry the child may or may not pick).
+    ASSERT_EQ(std::getenv("TC_PROC_BASE_ENV"), nullptr);
+    ASSERT_EQ(std::getenv("TC_PROC_OVR_ENV"), nullptr);
+    set_host_env("TC_PROC_BASE_ENV", "from-parent");
+    set_host_env("TC_PROC_OVR_ENV", "parent-value");
+
+#if defined(_WIN32)
+    const auto result = run_process(
+        {"powershell", "-NoProfile", "-Command",
+         "Write-Output ($env:TC_PROC_BASE_ENV + '|' + $env:TC_PROC_OVR_ENV)"},
+        std::nullopt, {{"TC_PROC_OVR_ENV", "child-value"}});
+#else
+    const auto result =
+        run_process({"sh", "-c", "printf '%s|%s' \"$TC_PROC_BASE_ENV\" \"$TC_PROC_OVR_ENV\""},
+                    std::nullopt, {{"TC_PROC_OVR_ENV", "child-value"}});
+#endif
+    EXPECT_EQ(result.exit_code, 0) << "output was: " << result.output;
+    EXPECT_NE(result.output.find("from-parent|child-value"), std::string::npos)
+        << result.output;
+    // The parent's own value survived the run.
+    const char* parent_value = std::getenv("TC_PROC_OVR_ENV");
+    ASSERT_NE(parent_value, nullptr);
+    EXPECT_STREQ(parent_value, "parent-value");
+
+    set_host_env("TC_PROC_BASE_ENV", nullptr);
+    set_host_env("TC_PROC_OVR_ENV", nullptr);
 }
 
 TEST(Process, RunProcessConcurrentEnvStaysIsolated) {
@@ -168,6 +223,58 @@ TEST(Process, RunProcessAppliesWorkingDir) {
               std::filesystem::weakly_canonical(dir))
         << result.output;
 }
+
+#if defined(_WIN32)
+TEST(Process, RunProcessDoesNotLeakUnrelatedHandlesIntoChildren) {
+    // An inheritable pipe UNRELATED to the spawn stands in for a CONCURRENT
+    // run_process's pipe write end: with plain bInheritHandles=TRUE the child
+    // would inherit a copy and hold the pipe's EOF hostage for its whole
+    // lifetime (a short credential-helper run blocking on a long compose up).
+    // PROC_THREAD_ATTRIBUTE_HANDLE_LIST must keep it out of the child.
+    SECURITY_ATTRIBUTES inheritable{};
+    inheritable.nLength = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+    HANDLE read_end = nullptr;
+    HANDLE write_end = nullptr;
+    ASSERT_NE(::CreatePipe(&read_end, &write_end, &inheritable, 0), 0);
+
+    // A child that signals it is running (flag file) and then outlives the
+    // EOF probe below by a wide margin.
+    const std::string flag =
+        (std::filesystem::temp_directory_path() /
+         ("tc-proc-flag-" + std::to_string(::GetCurrentProcessId()) + ".tmp"))
+            .string();
+    std::filesystem::remove(flag);
+    std::thread runner([&flag] {
+        run_process({"powershell", "-NoProfile", "-Command",
+                     "New-Item -ItemType File -Path '" + flag +
+                         "' | Out-Null; Start-Sleep -Seconds 3"});
+    });
+    const auto spawn_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!std::filesystem::exists(flag)) {
+        ASSERT_LT(std::chrono::steady_clock::now(), spawn_deadline)
+            << "the flag-file child never started";
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    // Drop OUR only write handle. If the child holds no inherited copy, the
+    // read sees EOF immediately; a copy in the child delays it until the
+    // child exits (~3s) — the cross-run hang in miniature.
+    ::CloseHandle(write_end);
+    const auto start = std::chrono::steady_clock::now();
+    char buf[8];
+    DWORD n = 0;
+    const BOOL got_data = ::ReadFile(read_end, buf, sizeof(buf), &n, nullptr);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    ::CloseHandle(read_end);
+    runner.join();
+    std::filesystem::remove(flag);
+
+    EXPECT_TRUE(got_data == 0 && n == 0) << "expected EOF, got data";
+    EXPECT_LT(elapsed, std::chrono::milliseconds(1500))
+        << "the child inherited an unrelated handle and held EOF hostage";
+}
+#endif
 
 TEST(Process, RunProcessFeedsStdin) {
     // Mirrors the real stdin consumer shape (an exe + argument, like

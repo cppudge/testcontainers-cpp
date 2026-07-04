@@ -1,3 +1,9 @@
+// posix_spawn_file_actions_addchdir_np is declared under _GNU_SOURCE on glibc;
+// libstdc++ happens to define it first, but don't rely on header order.
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include "Process.hpp"
 
 #include <cstddef>
@@ -19,7 +25,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -141,11 +146,14 @@ std::wstring build_environment_block(
             entries.push_back(entry);
         }
     }
-    // Whole-entry compare sorts by name ('=' < any name character), which is
-    // all the required name ordering needs.
+    // Sort case-insensitively by NAME. Comparing whole entries would misorder
+    // a name that prefixes another ("FOO2=..." before "FOO=..." since
+    // '2' < '='), so compare the name parts.
     std::sort(entries.begin(), entries.end(),
               [](const std::wstring& a, const std::wstring& b) {
-                  return ::_wcsicmp(a.c_str(), b.c_str()) < 0;
+                  const std::wstring a_name = a.substr(0, a.find(L'=', 1));
+                  const std::wstring b_name = b.substr(0, b.find(L'=', 1));
+                  return ::_wcsicmp(a_name.c_str(), b_name.c_str()) < 0;
               });
     std::wstring block;
     for (const std::wstring& entry : entries) {
@@ -183,9 +191,11 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     inheritable.nLength = sizeof(inheritable);
     inheritable.bInheritHandle = TRUE;
 
-    // One pipe carries both stdout and stderr (the old `2>&1`); only the write
-    // end may be inherited, or the child's copy of the read end would keep the
-    // pipe open past its exit and our read loop would never see EOF.
+    // One pipe carries both stdout and stderr (the old `2>&1`). EOF on the
+    // read side arrives only once every WRITE handle is closed — ours is
+    // dropped right after the spawn, and the attribute list below keeps other
+    // processes from ever holding a copy. Clearing inherit on the read end is
+    // just hygiene.
     HandleGuard out_read;
     HandleGuard out_write;
     if (::CreatePipe(&out_read.h, &out_write.h, &inheritable, 0) == 0) {
@@ -204,20 +214,42 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
                           (stdin_file.has_value() ? *stdin_file : std::string("NUL")) + "')");
     }
 
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = in.h;
-    si.hStdOutput = out_write.h;
-    si.hStdError = out_write.h;
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = in.h;
+    si.StartupInfo.hStdOutput = out_write.h;
+    si.StartupInfo.hStdError = out_write.h;
+
+    // Restrict inheritance to EXACTLY the two child-side handles. Plain
+    // bInheritHandles=TRUE grabs every inheritable handle process-wide, so a
+    // CONCURRENT run_process's child could inherit our pipe write end and hold
+    // EOF hostage until that sibling child exits — the cross-run interference
+    // this rewrite exists to eliminate.
+    HANDLE inherit_list[2] = {out_write.h, in.h};
+    SIZE_T attrs_size = 0;
+    ::InitializeProcThreadAttributeList(nullptr, 1, 0, &attrs_size);
+    std::vector<unsigned char> attrs_buf(attrs_size);
+    const auto attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrs_buf.data());
+    if (::InitializeProcThreadAttributeList(attrs, 1, 0, &attrs_size) == 0) {
+        throw DockerError("run_process: InitializeProcThreadAttributeList failed");
+    }
+    if (::UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit_list,
+                                    sizeof(inherit_list), nullptr, nullptr) == 0) {
+        ::DeleteProcThreadAttributeList(attrs);
+        throw DockerError("run_process: UpdateProcThreadAttribute failed");
+    }
+    si.lpAttributeList = attrs;
 
     PROCESS_INFORMATION pi{};
     const BOOL ok = ::CreateProcessW(
         /*application*/ nullptr, command_line.data(), nullptr, nullptr,
-        /*inherit handles*/ TRUE, CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
-        const_cast<wchar_t*>(env_block.c_str()), cwd.empty() ? nullptr : cwd.c_str(), &si,
-        &pi);
+        /*inherit handles*/ TRUE,
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+        const_cast<wchar_t*>(env_block.c_str()), cwd.empty() ? nullptr : cwd.c_str(),
+        &si.StartupInfo, &pi);
     const DWORD create_error = ::GetLastError();
+    ::DeleteProcThreadAttributeList(attrs);
     // Drop OUR copies of the child-side handles either way; with them open the
     // pipe would never report EOF.
     out_write.reset();
@@ -240,7 +272,9 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
 
     ::WaitForSingleObject(process.h, INFINITE);
     DWORD code = 0;
-    ::GetExitCodeProcess(process.h, &code);
+    if (::GetExitCodeProcess(process.h, &code) == 0) {
+        throw DockerError("run_process: GetExitCodeProcess failed");
+    }
     result.exit_code = static_cast<int>(code);
     return result;
 }
@@ -285,24 +319,34 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     }
     cargv.push_back(nullptr);
 
+    // CLOEXEC keeps our ends out of OTHER children spawned concurrently (they
+    // would delay our EOF); the file actions below re-open 1/2 for THIS child
+    // before its exec.
     int pipefd[2];
+#if defined(__linux__)
+    if (::pipe2(pipefd, O_CLOEXEC) != 0) { // atomic — no window for a racing spawn
+        throw DockerError("run_process: pipe2() failed");
+    }
+#else
     if (::pipe(pipefd) != 0) {
         throw DockerError("run_process: pipe() failed");
     }
-    // Keep our ends out of OTHER children spawned concurrently; the file
-    // actions below re-open 1/2 for this child before its exec.
     ::fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
     ::fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
+#endif
 
     posix_spawn_file_actions_t actions;
     ::posix_spawn_file_actions_init(&actions);
     ::posix_spawn_file_actions_addopen(
         &actions, 0, stdin_file.has_value() ? stdin_file->c_str() : "/dev/null", O_RDONLY, 0);
+    // If a std fd was closed in the parent and pipe() handed us 1 or 2, the
+    // equal-fd dup2 relies on POSIX.1-2008 TC2: adddup2(fd, fd) clears
+    // FD_CLOEXEC rather than no-op'ing (glibc >= 2.29 / macOS comply).
     ::posix_spawn_file_actions_adddup2(&actions, pipefd[1], 1); // stdout
     ::posix_spawn_file_actions_adddup2(&actions, pipefd[1], 2); // stderr (the old 2>&1)
     if (working_dir.has_value()) {
 #if (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))) || \
-    defined(__APPLE__)
+    defined(__APPLE__) // macOS 10.15+
         ::posix_spawn_file_actions_addchdir_np(&actions, working_dir->c_str());
 #else
         ::posix_spawn_file_actions_destroy(&actions);
@@ -314,16 +358,15 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     }
 
     pid_t pid = -1;
-    const int rc =
-        ::posix_spawnp(&pid, argv.empty() ? "" : argv[0].c_str(), &actions, nullptr,
-                       cargv.data(), envp.data());
+    const int rc = ::posix_spawnp(&pid, argv[0].c_str(), &actions, nullptr, cargv.data(),
+                                  envp.data());
     ::posix_spawn_file_actions_destroy(&actions);
     ::close(pipefd[1]);
     if (rc != 0) {
-        ::close(pipefd[0]);
-        throw DockerError("run_process: posix_spawnp failed for '" +
-                          (argv.empty() ? std::string() : argv[0]) + "': " +
-                          std::string(::strerror(rc)));
+        // errno number, not strerror(): its static buffer races concurrent
+        // spawn failures.
+        throw DockerError("run_process: posix_spawnp failed for '" + argv[0] + "' (errno " +
+                          std::to_string(rc) + ")");
     }
 
     ProcessResult result;
@@ -342,7 +385,15 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     ::close(pipefd[0]);
 
     int status = 0;
-    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    pid_t waited = -1;
+    while ((waited = ::waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+    }
+    if (waited < 0) {
+        // Typically ECHILD because the embedder set SIGCHLD to SIG_IGN and
+        // the child was auto-reaped: the exit status is unobtainable, and
+        // reporting 0 would turn a failed compose up into silent success.
+        throw DockerError("run_process: waitpid failed (errno " + std::to_string(errno) +
+                          "); is SIGCHLD set to SIG_IGN?");
     }
     result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     return result;

@@ -51,8 +51,10 @@ when it lands (adding a short note there if it needs one).
   and `.bat`/`.cmd` scripts are not runnable (every caller passes a real executable: docker,
   compose, docker-credential-<helper>). On POSIX, `working_dir` needs
   `posix_spawn_file_actions_addchdir_np` (glibc 2.29+ / macOS; throws elsewhere — callers pass
-  nullopt today). Output is fully buffered until child exit (no streaming consumer).
-  (`src/Process.cpp`)
+  nullopt today). Output is fully buffered until child exit (no streaming consumer). On
+  Windows, narrow→wide conversion uses CP_ACP (parity with `path::string()`), so argv/env/paths
+  not representable in the ANSI code page won't round-trip — switch to UTF-8 end to end if it
+  ever bites. (`src/Process.cpp`)
 - **`server_os()` cache race is benign but unrealized** — the mutex is released between the
   cache read and the `GET /version`, so two threads can both issue the first request
   (idempotent, harmless). `std::call_once` would realize the double-checked intent.

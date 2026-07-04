@@ -55,6 +55,10 @@ std::string build_command_line(const std::vector<std::string>& argv);
 /// stdin (deleted best-effort after the run) — a file cannot deadlock against
 /// the output pipe the way a stdin pipe could. When nullopt the child reads
 /// EOF (NUL / /dev/null); no library child reads stdin outside `stdin_data`.
+///
+/// POSIX: observing the exit status requires that the embedder has NOT set
+/// SIGCHLD to SIG_IGN (auto-reaped children make waitpid fail; run_process
+/// then throws rather than misreport success).
 ProcessResult run_process(const std::vector<std::string>& argv,
                           const std::optional<std::string>& working_dir = std::nullopt,
                           const std::vector<std::pair<std::string, std::string>>& env = {},
