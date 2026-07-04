@@ -1,407 +1,117 @@
 # TODO / Backlog
 
-Running list of known limitations, tech debt, and future work. Items found during
-review are recorded here so they aren't lost between milestones.
+Actionable work only. What is already implemented — and its known, ACCEPTED limits — is
+documented in [docs/06-feature-notes.md](docs/06-feature-notes.md); an item leaves this list
+when it lands (adding a short note there if it needs one).
 
-## Known limitations / tech debt
-- **Transport I/O timeouts (done), with known residuals** — every transport now runs `async_*`
-  ops on its private `io_context` bounded by `run_for` + cancel: `TransportTimeouts.connect`
-  budgets the whole establishment (resolve + connect + TLS handshake / busy-pipe wait, default
-  10s) and `TransportTimeouts.io` deadlines EACH read/write (an idle deadline, default 60s;
-  `nullopt` disables). A timed-out op fails with `asio::error::timed_out` and the connection is
-  discarded. `DockerClient::set_transport_timeouts` configures a client; `stop` widens the io
-  deadline past its grace period, `build` past silent build steps (10 min), and the streaming
-  call sites (`follow_logs`, exec attach reads) disable it after the response header — waiting
-  there is intended. TLS `close()` caps the close_notify exchange at 5s. Also bounded (review
-  round): the WaitStrategies `http_probe`/`tcp_probe` run on a `beast::tcp_stream` with a
-  per-probe `expires_after` (min(time left, 5s) — a mapped port that ACCEPTS but never answers
-  is an ordinary startup state and used to hang `wait_for_http` forever; the 5s cap must absorb
-  Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost"), and the Reaper's Ryuk
-  handshake is deadline-bounded too (per-attempt connect against the 20s budget, 5s per
-  write/ACK leg — it runs under the Reaper mutex on the first start of every session).
-  **Non-obvious constraint:** cancelling a MULTI-ENDPOINT `asio::async_connect` on deadline
-  does NOT abort it — the composed op treats a cancelled attempt as "try the next endpoint"
-  and only stops when the socket is closed; expiry must `close()` the socket, not `cancel()`
-  it (single-op read/write/handshake cancels are fine). IP literals skip the resolver
-  entirely; `resolver.cancel()` cannot interrupt an in-flight getaddrinfo (inherent to Asio),
-  so the connect budget is soft for the resolve leg of DNS names. Unit-tested against loopback
-  TCP + named-pipe servers incl. TLS-handshake timeout and a mid-body stall through
-  `DockerClient::request` (`tests/unit/TransportTimeoutTest.cpp`). Residual gaps:
-  (a) ~~typed timeout error~~ DONE — deadline expiry now throws `TransportTimeoutError`
-  (see the error-model item below);
-  (b) deadlines are per-operation (idle), so a malicious/trickling peer can extend a response
-  indefinitely — fine for a trusted daemon; a whole-request cap would need a second budget;
-  (c) `pull_image` keeps the default 60s idle deadline (progress streaming is chatty, but the
-  extraction of a very large layer could in principle stay silent longer — widen like `build`
-  if it ever bites);
-  (d) `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded,
-  not forever) — port it to the bounded probe if compose waits ever misbehave.
-  (`src/docker/Transport.*`, `include/testcontainers/docker/Timeouts.hpp`,
-  `src/WaitStrategies.cpp`, `src/Reaper.cpp`)
-- **Structured error hierarchy (done), with known residuals** — `DockerError` carries
-  `status_code()` (the daemon's HTTP status; nullopt for transport failures) and
-  `resource_id()` (the container/image/network/volume/exec the call was about). Subtypes:
-  `NotFoundError` (every 404 status site, via one `throw_status_error` helper in
-  DockerClient.cpp), `TransportTimeoutError` (deadline expiry — connect budget, io deadline,
-  Ryuk handshake budget; mapped from `asio::error::timed_out` by
-  `docker::throw_transport_error`), and `StartupTimeoutError` for wait-strategy / compose
-  readiness timeouts — deliberately derives `Error`, NOT `DockerError` (readiness of the app
-  is not a daemon failure; `catch (DockerError)` no longer swallows it) and carries the
-  container id / compose service as `resource_id()`. ALL parse entry points are guarded now
-  (`guard_parse` in ApiMapping.cpp wraps nlohmann failures with the operation name and a 2 KiB
-  `body_excerpt` — an HTML page through a 200 neither escapes as `json::parse_error` nor
-  floods the message). Unit-tested incl. a canned loopback HTTP responder (404/500/HTML-200,
-  create→pull→retry) and an integration test pinning the StartupTimeoutError contract.
-  Known limits / one-line notes:
-  (a) `resource_id` is best-effort: empty on parse-layer and generic-`request()` transport
-  failures, and names the PRIMARY resource on two-resource calls (`connect_network` → the
-  network; create_container's post-pull 404 could actually be a missing network but reports
-  the image);
-  (b) no `ConflictError` (dispatch on `status_code()==409`); the DockerError doc explicitly
-  reserves the right to add status subtypes later, so callers must not assume exact dynamic
-  types of non-404 errors;
-  (c) non-timeout wait failures (exited-with-wrong-code, unhealthy, no-healthcheck,
-  port-not-published) stay `DockerError` (with the container id) — a dedicated
-  `ContainerStartError` was considered and deferred;
-  (d) a pull `NotFoundError` can also mean "authentication required" — registries answer 404
-  for private images requested without credentials (noted in the class doc).
-  (`include/testcontainers/Error.hpp`, `src/docker/DockerClient.cpp`, `src/docker/ApiMapping.*`,
-  `src/docker/Transport.*`, `src/WaitStrategies.cpp`)
-- **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
-  credential-helper path) mutate process-global env via `_putenv_s`/`setenv` around the child
-  run; two compose stacks torn down concurrently (destructors on different threads) can
-  cross-contaminate env. Serialize with a static mutex, or move to `CreateProcessW`/`posix_spawn`
-  with an explicit environment block. (`src/Process.cpp`)
-- **`Process.cpp` Windows-quoting of embedded `"` is fragile** — `quote_arg` backslash-escapes
-  embedded `"`, which cmd.exe does not honor (POSIX/MSVCRT-argv convention only); currently
-  safe because all input is library-controlled (compose flags + paths never carry quotes).
-  `quote_arg`/`build_command_line` are now exposed and unit-tested (`tests/unit/ProcessTest.cpp`,
-  incl. real run_process round-trips for output/exit-code/env/stdin). Found while testing: a
-  nested `cmd /c "<script>"` argv shape does NOT survive the quoting on Windows (cmd re-applies
-  its quote-stripping to the inner quoted script) — only "exe + arguments" argv is supported,
-  which is what every real caller uses (now stated in `run_process`'s doc comment). Remaining
-  work: (a) cmd.exe-correct `"` escaping if untrusted input ever reaches the argv; (b) the
-  `working_dir` prefix uses `cd` without `/d`, so on Windows a dir on ANOTHER DRIVE is silently
-  not switched to — harmless today (every caller passes nullopt; compose uses absolute `-f`
-  paths + `--project-directory`), but emit `cd /d` under `_WIN32` before anyone relies on it.
-  (`src/Process.cpp`)
+## Next candidates
+- **Named-pipe half-close for exec-stdin** — moby creates the daemon pipe in message mode, and
+  go-winio's `CloseWrite` signals EOF with a zero-length message (`WriteFile(h, buf, 0, ...)`) —
+  exactly how `docker exec -i` works on Windows. Implement on the Asio `stream_handle` via
+  `native_handle()`; exec-stdin then works on the PRIMARY local transport and `Exec.FeedsStdin`
+  un-skips there, leaving the up-front throw a TLS-only edge case (Go's `tls.Conn` has no
+  `CloseWrite` either — even the docker CLI hangs there, so throwing beats the reference).
+  (`src/docker/Transport.cpp`)
 - **`DockerComposeContainer` moves are 17-member hand-written** — the move ctor/assign must
   manually zero `temp_file_`/`started_`/`stopped_` and copy every field; the next added field
-  will silently be dropped from the move (the unit tests only guard the temp-file case). Fix
-  direction: a small RAII `TempFile` member (delete-on-destroy, moveable) + an owning "torn
-  down" flag type, then `= default` both moves — rule of zero makes the whole failure class
-  impossible and the move tests shrink to trivia. (`src/DockerComposeContainer.cpp`)
-- **No Docker API version pinned** — all targets are unversioned (`/containers/create`), relying
-  on the daemon's default API version; nothing negotiates or pins `/v1.NN`. Behavior can shift
-  across daemon upgrades. (`src/docker/DockerClient.cpp`)
+  will silently be dropped from the move. Fix direction: a small RAII `TempFile` member
+  (delete-on-destroy, moveable) + an owning "torn down" flag type, then `= default` both moves —
+  rule of zero makes the whole failure class impossible. (`src/DockerComposeContainer.cpp`)
+- **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
+  credential-helper path) mutate process-global env around the child run; two compose stacks
+  torn down concurrently can cross-contaminate env. Serialize with a static mutex, or move to
+  `CreateProcessW`/`posix_spawn` with an explicit environment block. (`src/Process.cpp`)
+
+## Tech debt
+- **No Docker API version pinned** — all targets are unversioned (`/containers/create`),
+  relying on the daemon's default API version; behavior can shift across daemon upgrades.
+  Negotiate or pin `/v1.NN`. (`src/docker/DockerClient.cpp`)
+- **Error model residuals** — no `ConflictError` (dispatch on `status_code()==409`) and no
+  `ContainerStartError` for non-timeout wait failures (both considered and deferred; the
+  DockerError doc reserves the right to add status subtypes, so callers must not assume exact
+  dynamic types of non-404 errors). `resource_id` stays best-effort (empty on parse-layer /
+  generic-`request()` failures; names the primary resource on two-resource calls).
+- **Transport deadline residuals** — deadlines are per-operation (idle), so a trickling peer
+  can extend a response indefinitely (fine for a trusted daemon; a whole-request cap would need
+  a second budget). `pull_image` keeps the default 60s idle deadline (a very large layer
+  extraction could in principle stay silent longer — widen like `build` if it ever bites).
+  `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded).
+  (`src/docker/Transport.*`, `src/WaitStrategies.cpp`)
+- **Ryuk gaps** — images never get the session label (future image resources must be tagged to
+  be reaped); no graceful in-process reaper shutdown (relies on process-exit closing the
+  socket); the process-global reaper binds to the FIRST daemon it starts against — a second
+  daemon used later in the same process gets labels but no crash-safe reaping (a per-daemon
+  reaper map would be the full fix). A real Windows Ryuk (named-pipe mount + Windows reaper
+  image) is unexplored — see docs/04. (`src/Reaper.*`)
+- **Log path costs** — the log wait re-fetches the full `tail=all` snapshot every 200ms;
+  reimplement on `follow_logs` (scan chunks incrementally, stop via the consumer).
+  `LogDemuxer::feed` does `pending_.erase(0, pos)` per chunk — O(n²) on many small chunks;
+  switch to a consumed offset / ring buffer. Wait probes open a fresh TCP connection +
+  `io_context` per probe (fine at 200ms polling; noted in case frequency increases).
+  (`src/WaitStrategies.cpp`, `src/docker/LogDemux.cpp`)
+- **follow_logs / streaming exec are blocking, cooperative-stop only** — the consumer must
+  return false to stop, and only when a next chunk arrives. A background-thread RAII log handle
+  with socket-level cancellation is not provided. (`src/docker/DockerClient.cpp`)
+- **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec.
+- **`Process.cpp` quoting residuals** — embedded-`"` escaping follows the MSVCRT-argv
+  convention, which cmd.exe does not honor (safe today: all input is library-controlled); only
+  "exe + arguments" argv shapes survive on Windows (documented). `working_dir` uses `cd`
+  without `/d`, so a Windows dir on another drive would silently not switch (every caller
+  passes nullopt today) — emit `cd /d` under `_WIN32` before anyone relies on it.
 - **`server_os()` cache race is benign but unrealized** — the mutex is released between the
-  cache read and the `GET /version`, so two threads can both issue the request on first use
-  (idempotent, harmless). `std::call_once` or holding the lock across the miss would realize
-  the double-checked intent. (`src/docker/DockerClient.cpp`)
-- **Remaining test gaps** — the review's gaps are closed (Process quoting + run_process
-  end-to-end, properties_reuse_enabled, compose shell_quote + the assembled
-  build_env_wrapped_script, count_occurrences, DockerComposeContainer moves are all
-  unit-tested now); still open: the WaitStrategies Duration-clamp-to-deadline branch is
-  only exercised via the integration `WaitStrategiesTest` (the ~5-line clamp could be
-  extracted as a pure `clamped_wait_plan(now, value, deadline)` if it ever regresses).
-- **`LogDemuxer` streaming cost** — `feed()` does `pending_.erase(0, pos)` on every
-  call: O(n) per chunk → O(n²) for many small chunks. Fine for `demux_all` (single
-  feed); switch to a consumed-offset / ring buffer when the follow/streaming path
-  lands. (`src/docker/LogDemux.cpp`)
-- **TTY containers supported (raw log path)** — `GenericImage::with_tty()` sets top-level
-  `Tty=true`; `LogOptions.tty` selects a raw/unframed decode path so `logs()` / `follow_logs()` skip
-  `demux_all` (a TTY stream has no 8-byte frame header and no separate stderr channel). The `Container`
-  handle remembers its TTY-ness (`has_tty()`) and the log-wait honors it (`wait_until_ready(..., tty)`),
-  so `wait_for::log` works on a TTY container. `ContainerInspect.tty` surfaces `Config.Tty`. Known
-  limits: (a) a pseudo-TTY emits `\r\n` line endings (cooked mode) — match substrings, not exact bytes;
-  (b) no interactive attach loop (that's the exec stdin/hijack path); (c) the low-level
-  `DockerClient::logs`/`follow_logs` need `opts.tty` set by the caller — only the high-level `Container`
-  sets it automatically. (`src/docker/DockerClient.cpp`, `include/testcontainers/docker/Logs.hpp`)
-- **lifecycle hooks + startup retry** — `GenericImage` has `with_created_hook`/`with_starting_hook`/
-  `with_started_hook`/`with_stopping_hook` (`LifecycleHook = std::function<void(DockerClient&, const
-  std::string&)>`, so a hook gets the full low-level client + id) and `with_startup_attempts(n)`
-  (retries the whole create→start→wait, removing each failed partial; the reuse-ADOPT path is not
-  retried). created/starting/started fire inside the Runner's try (a throwing hook cleans up the partial
-  container); stopping fires once from `Container` on `stop()`/auto-removing `drop()` (never on a
-  persistent/reusable handle), swallowing exceptions in the noexcept teardown. Known limits / one-line
-  notes: (a) no distinct `containerIsStopped` (only "stopping"), and stopping does NOT fire for a
-  reused/persistent handle's drop; (b) no inter-attempt backoff/delay (immediate retry); (c) hooks get
-  `(DockerClient&, id)` — there is no richer per-container facade (use the client's exec/copy/inspect by
-  id). (`include/testcontainers/Lifecycle.hpp`, `src/Runner.cpp`, `src/Container.cpp`)
-- **follow logs: blocking + cooperative-stop only** — `DockerClient::follow_logs` /
-  `Container::follow_logs` stream incrementally (`read_some` + `LogDemuxer`) and stop when
-  the consumer returns false, but it is BLOCKING: run it on your own `std::thread` for
-  background consumption. A background-thread RAII log handle with socket-level cancellation
-  (stop even when no new bytes arrive) is not provided yet. (`src/docker/DockerClient.cpp`)
-- **log-wait still polls snapshots** — the log wait in `src/WaitStrategies.cpp` re-fetches the
-  full `tail=all` snapshot every 200ms; it could now be reimplemented on `follow_logs` (scan
-  chunks, return false from the consumer once the substring count is reached).
-- **TLS (https) transport implemented** — `connect()` returns a `TlsTransport` (Asio
-  `ssl::stream`) for the `https://` / `tcp+tls` scheme; TLS materials (ca/cert/key) resolve from
-  `DOCKER_CERT_PATH` (falling back to `~/.docker` when `DOCKER_TLS_VERIFY` is set) via the pure
-  `TlsConfig` helpers. The cert-resolution logic is unit-tested (`TlsConfigTest`); the end-to-end
-  `TlsTransportTest` needs a reachable remote TLS daemon (skipped otherwise), so it is not exercised
-  in CI. (`src/docker/Transport.cpp`, `src/docker/TlsConfig.hpp`)
-- **Docker host resolution: full order, endpoint-only** — `DockerHost::resolve` now does the
-  testcontainers order (first hit wins): `DOCKER_HOST` → `docker.host` in
-  `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT`/`currentContext`/`default`,
-  reading `Endpoints.docker.Host` from `~/.docker/contexts/meta/<sha256(name)>/meta.json`) → default
-  socket with rootless fallbacks (`$XDG_RUNTIME_DIR/docker.sock`, `$HOME/.docker/run/docker.sock`,
-  else `/var/run/docker.sock`; Windows named pipe). Pure parsers + a vendored SHA-256 (no OpenSSL)
-  live in `src/docker/HostResolve.hpp` + `DockerHost.cpp`; steps 2-4 never throw on a malformed file.
-  Known limits / one-line notes:
-  (a) docker-context TLS materials (the context can carry ca/cert/key paths) are NOT consumed — only
-  the `Host` endpoint;
-  (b) `~/.testcontainers.properties` — only `docker.host` is read (not `tc.host` or other props);
-  (c) `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` ARE handled now — by the TLS transport
-  (`src/docker/TlsConfig.hpp`, see the TLS item), not by host resolution itself.
-  (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
-- **Connection reuse: scoped keep-alive sessions (done), no global pool (by decision)** —
-  `request()` still opens/closes a transport per call by default, but `DockerClient::Session`
-  (RAII, per instance) opts consecutive **idempotent GET** requests into reusing one
-  kept-alive connection; `wait_until_ready` wraps its whole polling loop in one, so the ~200ms
-  readiness polls stop paying a fresh connect (a TCP/TLS handshake on remote daemons) each tick.
-  Staleness handling: a reused connection that died while idle (failed write, or EOF/reset
-  before a complete response — an EOF on a never-populated parser must NOT masquerade as an
-  empty success) is retried ONCE on a fresh connection; a `TransportTimeoutError` is never
-  retried (it would double the io budget); non-GET requests always use a fresh connection, so
-  a retry can never replay a side effect (double-create). Unit-tested against a multi-response
-  canned server (`tests/unit/DockerClientSessionTest.cpp`).
-  **Decision rationale (2026-07-04, from reading the reference implementations):**
-  testcontainers-rs/bollard deliberately POOLS NOTHING (`pool_max_idle_per_host(0)` on every
-  connector) — connection-per-request is the reference-validated correctness-first default;
-  testcontainers-java/docker-java runs an unbounded shared HttpClient5 pool with stale
-  validation OFF (`validateAfterInactivity=-1`), which is exactly the source of its podman
-  stale-socket breakage (testcontainers-java#7310) and idle-fd growth (moby#45539). dockerd
-  itself never idle-closes (only `ReadHeaderTimeout` is set in moby), but intermediaries
-  (Docker Desktop proxy, NAT, podman's ~5s idle close) do — hence retry-once + GET-only reuse.
-  A full shared pool (option B: keyed by endpoint behind a shared_ptr, ~90s idle TTL, 4-8 idle
-  per endpoint, retry-once-only-on-unsent) is DEFERRED until a real remote-TCP/TLS use case
-  shows up; sessions capture most of the practical win with a fraction of the risk.
-  Residual: a Session makes that one instance non-thread-safe while active (documented; copies
-  stay independent). (`include/testcontainers/docker/DockerClient.hpp`,
-  `src/docker/DockerClient.cpp`, `src/WaitStrategies.cpp`)
-- **port + inspect getters (done, uncached)** — `Container` now has `get_host_port` (IPv4-preferred),
-  explicit `get_host_port_ipv4`/`get_host_port_ipv6` (throw if that family isn't published),
-  `first_mapped_port()` (the FIRST exposed port via the order recorded by `start()`, else the
-  lowest-numbered published port), `inspect()` (structured `ContainerInspect`) and `inspect_raw()` (the
-  full inspect JSON string for fields we don't model). The binding-selection logic is a pure, unit-tested
-  helper (`src/docker/Ports.hpp`: `select_host_port`/`lowest_published_host_port`). Known limits:
-  (a) every getter re-inspects the container (no caching of the published ports);
-  (b) `first_mapped_port`'s exposed-order is only known for handles
-  returned by `start()` (adopted/manual handles fall back to lowest-numbered).
-  (`src/Container.cpp`, `src/docker/Ports.hpp`)
-- **Log-wait polling cost** — the log wait re-fetches the full `tail=all` snapshot
-  every 200ms; switch to an incremental follow-stream scan (ties to the follow-logs
-  item above). (`src/WaitStrategies.cpp`)
-- **Wait probes open a fresh TCP connection + `io_context` per probe** — fine for ~200ms
-  polling; noted in case probe frequency ever increases. (`src/WaitStrategies.cpp`)
-- **`wait::Port` probes only the externally mapped host port** — `wait_for::listening_port` resolves
-  the published host port and does a TCP connect; it does NOT do the in-container `/proc/net/tcp`
-  listening check that testcontainers-java additionally performs (`tcp_probe` in
-  `src/WaitStrategies.cpp`). Adequate for "is the service reachable from the host", which is what tests
-  need, but a container whose port is published before the process binds could read as ready early.
-- **msvc-preset configure noise** — under the Visual Studio (multi-config) preset, CMake prints
-  non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release` errors for OpenSSL/zlib because Conan
-  installs Release-only; the Release build and tests still succeed. The default `ninja` preset is
-  unaffected. (Install both configs, or filter the message, if it becomes annoying.)
-- **exec: options + streaming + stdin (half-close-gated)** — `exec` now takes `ExecOptions`
-  (env / working_dir / user / privileged / tty / stdin_data) and has a streaming overload
-  (`exec(cmd, opts, LogConsumer)`, incremental `read_some` + `LogDemuxer`, consumer returns false to
-  stop; the result's stdout/stderr are empty — output went to the consumer). `tty=true` reads the raw
-  unframed stream into `stdout_data` (stderr empty). Known limits / one-line notes:
-  (a) **stdin only works on a half-closable transport** — feeding `stdin_data` writes the bytes onto
-  the hijacked connection then calls `ITransport::shutdown_send()` so the in-container reader sees EOF;
-  TCP and unix sockets implement it, but the Windows **named pipe** and **TLS** transports cannot
-  half-close (their `shutdown_send()` is a documented no-op), so exec **throws DockerError up front**
-  on those transports (`ITransport::supports_half_close()`, checked BEFORE exec-create) instead of
-  letting a reader like `cat` hang forever — `Exec.FeedsStdin` SKIPS there (so the happy path is
-  unproven on this named-pipe host, though the create-body + write path is unit-tested and the
-  throw is integration-tested). **The named-pipe half is FIXABLE**: moby creates the daemon pipe
-  in message mode, and go-winio's `CloseWrite` signals EOF with a zero-length message
-  (`WriteFile(h, buf, 0, ...)`) — exactly how `docker exec -i` works on Windows. Implementable on
-  the Asio `stream_handle` via `native_handle()`; that would make exec-stdin work on the PRIMARY
-  local transport, leaving the throw a TLS-only edge case (Go's `tls.Conn` has no `CloseWrite`
-  either — even the docker CLI hangs there, so throwing beats the reference behavior);
-  (b) no exec **TTY resize** (`POST /exec/{id}/resize`) / window size;
-  (c) still one fresh connection per exec, and the streaming overload has the same blocking +
-  cooperative-stop-only nature as `follow_logs` (no socket-level cancellation).
-  (`src/docker/DockerClient.cpp`, `include/testcontainers/ExecOptions.hpp`, `src/docker/Transport.cpp`)
-- **richer networks: builder + aliases + connect-existing, with limits** — `Network::builder()`
-  exposes driver / internal / attachable / EnableIPv6 / IPAM subnet+gateway / driver options /
-  labels (`build_network_create_body` in `src/docker/ApiMapping.cpp`); `GenericImage::with_network_alias`
-  emits per-network DNS aliases (`NetworkingConfig`, requires `with_network`); `Network::connect`
-  attaches an already-running container (`POST /networks/{id}/connect`, optional aliases). Known
-  limits / one-line notes: (a) there is NO network inspect, and no connect-to-existing-by-name beyond
-  the id-based `connect_network`; (b) IPAM supports a single Subnet/Gateway pair only (no multiple
-  pools / IPRange / aux addresses); (c) `Network` still has no process-wide dedup — each `create()`
-  (and each `builder().create()`) makes a brand-new network.
-  (`include/testcontainers/Network.hpp`, `src/Network.cpp`, `src/docker/DockerClient.cpp`)
-- **Ryuk coverage & lifecycle** — containers, networks, and named volumes (incl. the transient
-  volume-seed helper container) now get the session-id label; **images** still don't, so future
-  image resources must also be tagged to be reaped. The global `Reaper` has
-  no graceful in-process shutdown (relies on process-exit closing the socket); the Ryuk container is
-  `AutoRemove`d on exit. Image pinned to `testcontainers/ryuk:0.11.0`.
-- **Registry credential helpers: get-only, uncached** — `resolve_auth_for_image` now resolves
-  `credsStore` (global) / `credHelpers` (per-registry) by shelling out to `docker-credential-<helper>
-  get` (the default on Docker Desktop), with plaintext `auths` still taking precedence
-  (`select_credential_helper` / `parse_credential_helper_output` / `auth_from_credential_helper` in
-  `src/docker/Auth.cpp`, via the moved `src/Process.*` with stdin-redirect support). Known limits /
-  one-line notes: (a) the helper output is NOT cached — it is re-invoked on every pull, alongside the
-  existing per-pull config re-read from disk; (b) only the `get` verb is used (no `store`/`erase`/`list`);
-  (c) end-to-end private-registry pull via a helper still isn't integration-tested against a real
-  private registry (needs a reachable authenticated registry; flaky on Docker Desktop). The smoke test
-  only proves the subprocess+parse path runs without throwing.
-- **copy-to-container: USTAR + one PUT per source** — `build_tar` uses USTAR, which caps entry path
-  length (100 chars, 255 with prefix); very long container paths would need the pax format. Each
-  `with_copy_to` source is a separate tar + `PUT .../archive` (not batched into one). The target's
-  parent directory must already exist in the container.
-- **copy-from-container: single-file helpers only** — `Container::read_file` / `copy_file_from` (and
-  the low-level `copy_from_container` + `docker::extract_tar`) cover a single regular file. Directory-tree
-  extraction from `copy_from_container` is not exposed via a high-level helper yet; use `extract_tar`
-  directly on the raw tar bytes for trees.
-- **build-from-Dockerfile (`GenericBuildableImage`): no .dockerignore, buffered output, unreaped
-  images** — `GenericBuildableImage(name, tag)` builds from a Dockerfile + a build context of
-  `CopyToContainer` entries: `with_dockerfile`(host path) / `with_dockerfile_string`(inline) for the
-  Dockerfile, `with_file`(host file/dir, walked recursively — no `.dockerignore` filtering) and
-  `with_data`(in-memory bytes) for context; `build()` builds the image tagged `<name>:<tag>` and
-  returns a runnable `GenericImage`. `DockerClient::build_image` buffers the entire build-output
-  stream (no live build-log streaming/consumer — could reuse the `follow_logs` chunked-read approach).
-  Built images carry no Ryuk session-id label, so they are NOT auto-reaped (only containers/networks
-  are); `with_no_cache`/`with_pull`/`with_target`/`with_build_arg` are supported, but secrets, ssh,
-  cache-from, squash, and platform on build are not. The build query always sends `forcerm=1`:
-  without it the legacy builder KEEPS a failed step's intermediate container "for debugging"
-  (`rm=1`, the default, removes them only on success), and that container carries no
-  testcontainers labels, so Ryuk cannot reap it — every failed-build test leaked one container.
-  (`src/GenericBuildableImage.cpp`, `src/docker/ApiMapping.cpp`)
-- **HostConfig: typed subset + escape hatch** — `GenericImage` has typed setters for memory, shm_size,
-  ulimits, cap_add/cap_drop, extra_hosts; everything else goes through `with_create_body_patch` (a raw
-  `/containers/create` JSON fragment deep-merged via RFC-7386 AFTER our fields, so it overrides them; nest
-  HostConfig fields under `"HostConfig"`). No typed setters yet for cpu limits, restart policy, dns,
-  sysctls, devices, pids-limit (use the patch). `ContainerInspect` still doesn't surface Memory/CpuQuota/etc.,
-  so those can't be asserted via inspect. (`src/docker/ApiMapping.cpp`)
-- **Windows containers: dotnet-parity only** — the engine mode is detected (`is_windows_engine()`) and
-  Ryuk is skipped on the Windows engine, so there is **no crash-safe reaping** on Windows (RAII /
-  AutoRemove only), matching testcontainers-dotnet. `copy-to-container` still Unix-normalizes the entry
-  path, so `C:\...` targets aren't handled yet. Wait strategies are OS-agnostic (no PowerShell
-  command-wait). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100).
-  A real Windows Ryuk (named-pipe mount + Windows reaper image) is unexplored — see `docs/04`.
-
-- **image pull policy + name substitution: minimal** — `GenericImage` supports
-  `with_image_pull_policy(ImagePullPolicy::Always|Default)` and
-  `with_image_name_substitutor(fn)`. Known limits / one-line notes:
-  (a) only the Hub-prefix env substitutor (`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX`,
-  via `docker::substitute_image_name`/`apply_hub_image_prefix`) plus a custom hook
-  are provided — there is NO "pull if older than N" / time-based pull policy;
-  (b) substitution is applied at the `GenericImage` layer only —
-  `GenericBuildableImage` / Compose / raw `DockerClient` calls are NOT substituted;
-  (c) `ImagePullPolicy::Always` re-pulls on every `start()` (no pull-pause / dedup).
-  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/Runner.cpp`,
-  `src/docker/Auth.cpp`)
-- **Docker Compose: three client modes (rust parity), published-ports-only** —
-  `DockerComposeContainer` now has THREE client modes (`ComposeClientKind`): Local (DEFAULT —
-  shells out to the host `docker compose` CLI; the documented compose-only exception to the
-  "no docker CLI" rule), Containerised (a long-lived `docker:26.1-cli` container with the host
-  docker socket bind-mounted; `up`/`down` are `exec`'d in, files copied to
-  `/docker-compose-<i>.yml`), and Auto (probe `docker compose version`, else fall back to
-  Containerised). Readiness uses compose v2 `--wait --wait-timeout` (default 60s) PLUS the
-  per-`with_exposed_service` TCP probe. Multi-file `-f`, `with_env`/`with_env_vars`,
-  `with_build`/`with_pull`, `with_remove_volumes`/`with_remove_images` are supported. Discovery
-  is still by the `com.docker.compose.project` label; teardown is `down` + a project-label sweep
-  + RAII. Internal split: pure arg-builders in `src/compose/ComposeCommand.*` (unit-tested), a
-  popen-based subprocess helper in `src/Process.*` (`testcontainers::detail`, shared with the
-  credential-helper path), and the client implementations + factory in `src/compose/ComposeClients.*`.
-  Known limits / one-line notes:
-  (a) Local mode shells out to the host `docker compose` (the documented compose-only exception
-  to "no docker CLI" — strictly inside `LocalComposeClient`);
-  (b) local-mode env vars are set on the CHILD PROCESS only (saved/restored around the run via
-  `_putenv_s`/`setenv`), not on the daemon or this process persistently; containerised mode
-  passes them via a `/bin/sh -c "KEY=VALUE ... docker compose ..."` exec wrapper;
-  (c) still unsupported: `--profile`, service scaling (`--scale`), per-service log streaming,
-  socat ambassador for UNPUBLISHED ports, build contexts / host-relative volumes / `.env`
-  beyond what `--project-directory` (parent of the first file, local mode) covers, and the
-  compose stack is still NOT Ryuk-reaped (compose containers carry no session-id label).
-  (`src/DockerComposeContainer.cpp`, `src/compose/*`)
-
-- **reusable containers (`with_reuse`): exact-config hash, never auto-removed** —
-  `GenericImage::with_reuse(true)` adopts an already-running container matching a stable
-  reuse-hash label (`org.testcontainers.reuse.hash`, FNV-1a over the create body + copy-to
-  descriptors); safety-gated on `TESTCONTAINERS_REUSE_ENABLE` / `testcontainers.reuse.enable=true`
-  in `~/.testcontainers.properties`, degrading to a normal container otherwise. Reuse containers
-  carry no session-id label (so Ryuk won't reap them) and the handle is persistent (no remove on
-  drop). Known limits / one-line notes:
-  (a) the reuse hash covers the create body + copy-to descriptors, but for HOST-FILE copies it
-  hashes the host PATH, not the bytes — a changed file at the same path still reuses the old container;
-  (b) reuse containers are NEVER auto-removed and NOT reaped — callers / CI must prune them
-  (e.g. `docker container prune` or a label sweep on `org.testcontainers.reuse.hash`);
-  (c) there is no "reuse enabled" marker label and no reuse-across-different-images dedup beyond
-  the exact-config hash (any config difference yields a different hash → a fresh container).
-  (`include/testcontainers/GenericImage.hpp`, `src/Runner.cpp`, `src/Reuse.cpp`,
-  `include/testcontainers/Container.hpp`)
-- **expose-host-ports NOT implemented (Tier 2.8, deferred by decision)** — there is no
-  `Testcontainers::expose_host_ports(...)` yet (letting a container reach a service on the HOST at
-  `host.testcontainers.internal:<port>`). The intended implementation mirrors testcontainers: an
-  `testcontainers/sshd` sidecar container + an SSH **reverse tunnel** (`-R <port>:localhost:<port>`)
-  established from this process via **libssh2** (ConanCenter), with `host.testcontainers.internal`
-  resolving to the sshd container. **libssh2 should be an OPTIONAL dependency** — the feature compiles/
-  links only when it's available (e.g. a CMake option / `find_package` guard), so the core library keeps
-  no hard SSH dependency. Interim workaround that already works today: a container can reach the host via
-  `GenericImage(...).with_extra_host("host.docker.internal", "host-gateway")` (Docker Desktop, or Linux
-  20.10+ with host-gateway) — but that exposes the whole host and has no per-port control.
-
-- **named volumes (create/inspect/remove + seed), with limits** — `Volume` move-only RAII (mirrors
-  `Network`): `Volume::create()`/`create(name)` (generated `tc-<hex>`) + a `Builder`
-  (driver/driver_opt/label), best-effort remove on drop, session-labeled for Ryuk. Low-level
-  `DockerClient::create_volume`/`inspect_volume`/`remove_volume` + `build_volume_create_body`/
-  `parse_volume_inspect`. `Volume::populate(sources, mount_path="/__tc_seed", helper_image="alpine:3.20")`
-  seeds data by mounting the volume into a throwaway helper container and copying the (rebased,
-  volume-relative) sources through; the helper is started before the archive PUT (portable: not every
-  daemon materializes the write on the mountpoint of a created-only container) and always force-removed.
-  Known limits / one-line notes: (a) NO `list_volumes` / prune, and no anonymous-volume management;
-  (b) `populate` spins up + tears down a real helper container per call (no batching), pulls
-  `alpine:3.20` if absent, and host-file sources hash/copy by path at call time; (c) `inspect_volume`
-  surfaces only Name/Driver/Mountpoint/Scope/Labels/Options (no UsageData / status);
-  (d) the volume's own RAII drop fails (409) if a container still has it mounted — tear down mounting
-  containers first (the high-level handles already drop in reverse-declaration order).
-  (`include/testcontainers/Volume.hpp`, `src/Volume.cpp`, `src/docker/DockerClient.cpp`)
-
-- **`start()` split into `ContainerRequest` + `Runner` (done), with known residuals** — the whole
-  container lifecycle orchestration (reuse lookup → startup-attempt retry → create → copy-to →
-  created/starting hooks → start → wait-until-ready → started hooks → handle construction) now
-  lives in `detail::Runner::run(DockerClient&, const ContainerRequest&)` (`src/Runner.*`),
-  mirroring testcontainers-rs. `ContainerRequest` (public,
-  `include/testcontainers/ContainerRequest.hpp`) is the "what to run" value: the fully-translated
-  `CreateContainerSpec` plus waits / copy-to sources / the four hook vectors / registry auth /
-  pull policy / reuse / startup attempts / declared ports; `ImagePullPolicy` moved there
-  (`GenericImage.hpp` re-exports it by include — no source break). Public free `run(request)`
-  (environment client) and `run(client, request)` (caller-supplied client) bootstrap the Reaper
-  and delegate; `GenericImage::start()` is now a thin `run(to_request())` with `to_request()`
-  public. The core deliberately skips reaper bootstrap so unit tests drive it against a canned
-  loopback responder (`tests/unit/RunnerTest.cpp`: happy path incl. session labels on the create
-  body, hook order around copy-to, partial-container cleanup on failed start / throwing hook,
-  retry + exhaustion, pull-policy Always, wait-timeout retry semantics, both reuse paths).
-  Known limits / one-line notes:
-  (a) the process-global Reaper binds to the FIRST daemon it starts against —
-  `run(client, request)` boots it on THAT client's daemon (not the environment one, fixed in
-  review), but a second daemon used later in the same process gets labels and NO crash-safe
-  reaping (a per-daemon reaper map would be the full fix; not warranted yet);
-  (b) a hand-built `ContainerRequest` owns the consistency of the port trio — typed
-  `exposed_ports` order vs the rendered `spec.exposed_ports` strings vs
-  `spec.publish_all_ports`; `to_request()` keeps them in sync (stated in the struct doc);
-  (c) modules (Postgres/Redis/…) remain planned as COMPOSITION over `GenericImage`;
-  `to_request()`/`run()` are only an option for run-level tweaks, not a module framework.
-  (`src/Runner.*`, `include/testcontainers/ContainerRequest.hpp`, `src/GenericImage.cpp`,
-  `src/Reaper.*`)
+  cache read and the `GET /version`, so two threads can both issue the first request
+  (idempotent, harmless). `std::call_once` would realize the double-checked intent.
+  (`src/docker/DockerClient.cpp`)
+- **Credential helpers** — output is not cached (the helper is re-invoked on every pull,
+  alongside the per-pull config re-read); no end-to-end private-registry integration test
+  against a real authenticated registry. (`src/docker/Auth.cpp`)
+- **copy-to / copy-from** — USTAR caps entry path length (100/255 chars; pax would lift it);
+  one tar + PUT per source (no batching); no directory-tree copy-from helper (use
+  `extract_tar` on the raw bytes).
+- **Build from Dockerfile** — no `.dockerignore` filtering on `with_file` directory walks;
+  build output is fully buffered (no live streaming consumer — could reuse the `follow_logs`
+  chunked-read approach); built images are not session-labeled (not reaped). No secrets / ssh /
+  cache-from / squash / platform-on-build.
+- **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
+  still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
+  surface Memory/CpuQuota/etc., so those can't be asserted via inspect.
+- **Networks** — no network inspect; IPAM supports a single Subnet/Gateway pair (no multiple
+  pools / IPRange / aux addresses); no process-wide dedup (each `create()` makes a new network).
+- **Volumes** — no `list_volumes` / prune / anonymous-volume management; `populate` spins up a
+  real helper container per call (no batching).
+- **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, a
+  socat ambassador for UNPUBLISHED ports, and Ryuk-reaping of compose containers (they carry no
+  session label) are all unsupported.
+- **Windows containers** — copy-to Unix-normalizes entry paths, so `C:\...` targets aren't
+  handled.
+- **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
+  are not consumed, only the `Host` endpoint; only `docker.host` is read from
+  `~/.testcontainers.properties`. (`src/docker/HostResolve.hpp`)
+- **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
+  `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
+  time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
+- **Test gaps** — the WaitStrategies duration-clamp-to-deadline branch is only exercised via
+  the integration `WaitStrategiesTest` (extract a pure `clamped_wait_plan(now, value, deadline)`
+  if it ever regresses).
+- **msvc-preset configure noise** — non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release`
+  messages for OpenSSL/zlib under the Visual Studio preset (Conan installs Release-only); the
+  default `ninja` preset is unaffected.
 
 ## Open / not yet built
-- **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an
-  optional libssh2 dependency). See the tech-debt item above.
-- **Full connection pool (option B)** — deferred by decision until a real remote-TCP/TLS use
-  case appears; scoped keep-alive sessions cover the polling hot path today. See the
-  "Connection reuse" item above for the parameters to build it with.
-- **TLS end-to-end verification in CI** — the transport is implemented but unproven against a real
-  remote TLS daemon. See the TLS item above.
+- **`expose_host_ports` (Tier 2.8)** — let a container reach a HOST service at
+  `host.testcontainers.internal:<port>`: an `testcontainers/sshd` sidecar + a reverse SSH
+  tunnel (`-R`) established via **libssh2** as an OPTIONAL dependency (CMake option /
+  `find_package` guard — the core keeps no hard SSH dependency). Interim workaround:
+  `with_extra_host("host.docker.internal", "host-gateway")` (Docker Desktop / Linux 20.10+),
+  but that exposes the whole host with no per-port control.
+- **Full connection pool (option B)** — deferred until a real remote-TCP/TLS use case appears;
+  scoped keep-alive sessions cover the polling hot path today (decision record in docs/06).
+  Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,
+  4–8 idle per endpoint, retry-once-only-on-unsent, streaming excluded.
+- **TLS end-to-end in CI** — the transport is implemented and the cert resolution unit-tested,
+  but `TlsTransportTest` needs a reachable remote TLS daemon (skipped otherwise), so the path
+  is unproven end to end.
 
-> The earlier roadmap milestones (richer container config, `Mount`, RAII + Ryuk reaper, networks,
-> mounts/volumes, copy-to/from, exec, Docker Compose) are all implemented — their current state and
-> known limits live in the tech-debt list above.
+> Implemented milestones (container config, wait strategies, exec, networks, volumes, compose,
+> reuse, hooks, Ryuk, auth, build-from-Dockerfile, …) are documented with their known limits in
+> [docs/06-feature-notes.md](docs/06-feature-notes.md).

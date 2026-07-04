@@ -4,10 +4,13 @@ Native C++ port of [Testcontainers](https://testcontainers.com/) — spin up rea
 containers from your integration tests and tear them down automatically. **No Rust, no `docker`
 CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 
-> **Status:** alpha. The Docker client and the high-level API — `GenericImage` / `Container` /
-> `Network`, five wait strategies, `exec`, copy-to-container, the Ryuk crash-safety reaper, and
-> registry auth — are implemented and covered by ~120 unit + ~24 integration tests against a real
-> daemon. TLS-to-remote-Docker is the main remaining gap. See the roadmap below.
+> **Status:** alpha, feature-complete core. `GenericImage` / `GenericBuildableImage` /
+> `Container` / `Network` / `Volume` / `DockerComposeContainer`, six wait strategies, exec
+> (stdin / tty / streaming), copy to/from container, lifecycle hooks, container reuse, the Ryuk
+> crash-safety reaper, registry auth incl. credential helpers, and the TLS transport are
+> implemented, covered by ~290 unit + ~65 integration tests against a real daemon. The feature
+> reference with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a
+> real remote daemon is the main unverified gap.
 
 This is a from-scratch rewrite. A previous attempt (`testcontainers-cxx/`, in this repo for
 reference) wrapped the Rust `testcontainers` library over a cxx FFI bridge; this project drops
@@ -179,8 +182,8 @@ src/  src/docker/            implementation: transport, endpoints, tar, auth, lo
 examples/                    tc_smoke (links all deps), tc_ping (GET /_ping)
 tests/unit/  tests/integration/   GoogleTest — unit (no Docker) + integration (real daemon)
 cmake/cmake-conan/           vendored cmake-conan provider
-docs/                        design docs (01 architecture, 02 deps, 03 interface audit) + conventions
-TODO.md                      backlog / known limitations
+docs/                        design + feature docs (01–06) + conventions
+TODO.md                      actionable backlog (implemented features + limits: docs/06)
 _research/testcontainers-rs/ cloned Rust reference sources (gitignored)
 testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignored)
 ```
@@ -241,6 +244,13 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignore
       `tests/integration/EngineGuard.hpp`), with a dedicated `WindowsContainer` suite running
       a real `mcr.microsoft.com/windows/nanoserver` container end to end (echo+logs and exec).
       Covered by 6 unit tests.
+- [x] **Everything since** — transport I/O deadlines + structured errors, TLS transport, full
+      Docker host resolution, follow/streaming logs, exec stdin/tty/streaming, TTY containers,
+      lifecycle hooks + startup retry, build-from-Dockerfile, image pull policy + name
+      substitution, credential helpers, container reuse, named volumes, richer networks,
+      Docker Compose (three client modes), the `ContainerRequest`/`Runner` split, and scoped
+      keep-alive sessions. Current state and known limits per feature:
+      [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
 
 ## Build
 
