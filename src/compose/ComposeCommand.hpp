@@ -18,15 +18,15 @@ namespace testcontainers::compose {
 
 /// A `docker compose ... up -d` invocation, described abstractly.
 struct ComposeUpCommand {
-    std::string project_name;             ///< --project-name <p>
-    std::vector<std::string> files;       ///< each emitted as `-f <file>`
+    std::string project_name;       ///< --project-name <p>
+    std::vector<std::string> files; ///< each emitted as `-f <file>`
     /// Environment passed to the child process (local) / exec (containerised).
     /// Not part of the argv — recorded here so the clients can read it.
     std::vector<std::pair<std::string, std::string>> env;
-    long long wait_timeout_secs = 60;     ///< --wait-timeout <secs> (when wait)
-    bool build = false;                   ///< --build
-    bool pull = false;                    ///< --pull always
-    bool wait = true;                     ///< --wait --wait-timeout <secs>
+    long long wait_timeout_secs = 60; ///< --wait-timeout <secs> (when wait)
+    bool build = false;               ///< --build
+    bool pull = false;                ///< --pull always
+    bool wait = true;                 ///< --wait --wait-timeout <secs>
 };
 
 /// A `docker compose ... down` invocation, described abstractly.
@@ -36,7 +36,7 @@ struct ComposeDownCommand {
     /// the same vars as `up`, so a compose file that interpolates env resolves
     /// to the same project definition at teardown. Not part of the argv.
     std::vector<std::pair<std::string, std::string>> env;
-    bool volumes = true;      ///< --volumes
+    bool volumes = true;        ///< --volumes
     bool remove_images = false; ///< --rmi all
 };
 
@@ -66,8 +66,7 @@ std::string shell_quote_assignment(const std::string& key, const std::string& va
 /// `KEY1='v1' KEY2='v2' 'argv0' 'argv1' ...` — every value and argv token
 /// shell-quoted. With an empty `env` it degrades to just the quoted argv.
 /// Pure — unit-testable without a daemon.
-std::string build_env_wrapped_script(
-    const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& env);
+std::string build_env_wrapped_script(const std::vector<std::string>& argv,
+                                     const std::vector<std::pair<std::string, std::string>>& env);
 
 } // namespace testcontainers::compose

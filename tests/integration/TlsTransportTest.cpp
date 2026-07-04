@@ -64,8 +64,7 @@ bool write_self_signed_cert(const std::filesystem::path& dir) {
     if (!pctx) {
         goto done;
     }
-    if (EVP_PKEY_keygen_init(pctx) <= 0 ||
-        EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0 ||
+    if (EVP_PKEY_keygen_init(pctx) <= 0 || EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0 ||
         EVP_PKEY_keygen(pctx, &pkey) <= 0) {
         goto done;
     }
@@ -195,8 +194,8 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
 
     // The server: bind an ephemeral port, accept one TLS connection, echo bytes.
     asio::io_context server_ioc;
-    asio::ip::tcp::acceptor acceptor(server_ioc,
-                                     asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    asio::ip::tcp::acceptor acceptor(
+        server_ioc, asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
     const std::uint16_t port = acceptor.local_endpoint().port();
 
     asio::ssl::context server_ctx(asio::ssl::context::tls_server);

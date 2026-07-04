@@ -71,20 +71,20 @@
 using namespace testcontainers;
 using namespace std::chrono_literals;
 using testcontainers::docker::build_build_query;
+using testcontainers::docker::build_connect_network_body;
 using testcontainers::docker::build_create_body;
 using testcontainers::docker::build_create_query;
 using testcontainers::docker::build_exec_create_body;
-using testcontainers::docker::build_connect_network_body;
 using testcontainers::docker::build_network_create_body;
 using testcontainers::docker::build_volume_create_body;
-using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::BuildOptions;
+using testcontainers::docker::expect_string_field;
 using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_server_os;
+using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::split_image;
-using testcontainers::docker::expect_string_field;
 using testcontainers::docker::throw_if_build_error;
 using testcontainers::docker::throw_if_pull_error;
 
@@ -149,8 +149,7 @@ TEST(ApiMapping, BuildCreateBodyHealthcheck) {
     const auto& health = body["Healthcheck"];
     EXPECT_EQ(health["Test"], nlohmann::json({"CMD-SHELL", "exit 0"}));
     // Durations are int64 nanoseconds.
-    EXPECT_EQ(health["Interval"].get<std::int64_t>(),
-              std::chrono::nanoseconds(500ms).count());
+    EXPECT_EQ(health["Interval"].get<std::int64_t>(), std::chrono::nanoseconds(500ms).count());
     EXPECT_EQ(health["Timeout"].get<std::int64_t>(), std::chrono::nanoseconds(1s).count());
     EXPECT_EQ(health["StartPeriod"].get<std::int64_t>(), 0);
     EXPECT_EQ(health["Retries"].get<int>(), 3);
@@ -620,7 +619,7 @@ TEST(ApiMapping, ParseInspectExtractsStateAndPorts) {
     EXPECT_EQ(info.ports.at("6379/tcp")[0].host_port, 32768);
     EXPECT_EQ(info.ports.at("6379/tcp")[1].host_port, 32769);
     EXPECT_TRUE(info.ports.at("80/tcp").empty()); // null bindings -> empty
-    EXPECT_FALSE(info.health_status.has_value());  // no Health section here
+    EXPECT_FALSE(info.health_status.has_value()); // no Health section here
 }
 
 TEST(ApiMapping, ParseInspectTty) {
@@ -720,11 +719,10 @@ TEST(ApiMapping, PullErrorThrows) {
 }
 
 TEST(ApiMapping, PullSuccessDoesNotThrow) {
-    const std::string stream =
-        R"({"status":"Pulling from library/alpine"})"
-        "\n"
-        R"({"status":"Download complete"})"
-        "\n";
+    const std::string stream = R"({"status":"Pulling from library/alpine"})"
+                               "\n"
+                               R"({"status":"Download complete"})"
+                               "\n";
     EXPECT_NO_THROW(throw_if_pull_error(stream, "alpine:3.20"));
 }
 
@@ -732,29 +730,26 @@ TEST(ApiMapping, PullNonStringErrorThrows) {
     // ANY "error" key is the daemon reporting a failed pull (docker's jsonmessage
     // errors on any non-nil error); a non-string payload is dumped, never
     // swallowed — and it must surface as DockerError, not raw json::type_error.
-    const std::string stream =
-        R"({"status":"Pulling from library/alpine"})"
-        "\n"
-        R"({"error":{"code":500}})"
-        "\n";
+    const std::string stream = R"({"status":"Pulling from library/alpine"})"
+                               "\n"
+                               R"({"error":{"code":500}})"
+                               "\n";
     EXPECT_THROW(throw_if_pull_error(stream, "alpine:3.20"), DockerError);
 }
 
 TEST(ApiMapping, BuildErrorThrows) {
-    const std::string stream =
-        R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
-        "\n"
-        R"({"errorDetail":{"message":"boom"},"error":"boom"})"
-        "\n";
+    const std::string stream = R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
+                               "\n"
+                               R"({"errorDetail":{"message":"boom"},"error":"boom"})"
+                               "\n";
     EXPECT_THROW(throw_if_build_error(stream), DockerError);
 }
 
 TEST(ApiMapping, BuildSuccessDoesNotThrow) {
-    const std::string stream =
-        R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
-        "\n"
-        R"({"stream":"Successfully built abc123"})"
-        "\n";
+    const std::string stream = R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
+                               "\n"
+                               R"({"stream":"Successfully built abc123"})"
+                               "\n";
     EXPECT_NO_THROW(throw_if_build_error(stream));
 }
 

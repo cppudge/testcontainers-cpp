@@ -113,7 +113,7 @@ TEST(TlsConfig, DockerCertPathReturnsEnvWhenSet) {
 }
 
 TEST(TlsConfig, DockerCertPathEmptyWhenUnsetAndNoVerify) {
-    ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt); // unset
+    ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt);    // unset
     ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt); // unset -> no ~/.docker fallback
     EXPECT_TRUE(docker_cert_path().empty());
 }

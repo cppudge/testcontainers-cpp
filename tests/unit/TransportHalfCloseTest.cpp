@@ -57,11 +57,10 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
     // then still WRITE a reply the client must be able to read — proving the
     // half-close closed only the client->server direction.
     const std::string name = pipe_name("msg");
-    const HANDLE pipe =
-        ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                           /*default timeout*/ 0, /*security*/ nullptr);
+    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
+                                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                                           /*default timeout*/ 0, /*security*/ nullptr);
     ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
 
     std::promise<std::string> payload_promise;
@@ -133,11 +132,10 @@ TEST(NamedPipeHalfClose, PeerCloseWriteReadsAsEof) {
     // reporting it as a bare (0 bytes, success) makes every read-to-EOF loop
     // re-issue the read and block forever on the still-open pipe.
     const std::string name = pipe_name("peer-eof");
-    const HANDLE pipe =
-        ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                           /*default timeout*/ 0, /*security*/ nullptr);
+    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
+                                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                                           /*default timeout*/ 0, /*security*/ nullptr);
     ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
 
     std::promise<void> done;
@@ -182,11 +180,10 @@ TEST(NamedPipeHalfClose, ByteModePipeReportsNoHalfClose) {
     // guard then throws loudly instead of hanging the in-container reader),
     // and shutdown_send() must be a harmless no-op.
     const std::string name = pipe_name("byte");
-    const HANDLE pipe =
-        ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                           /*default timeout*/ 0, /*security*/ nullptr);
+    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
+                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                                           /*default timeout*/ 0, /*security*/ nullptr);
     ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
 
     std::promise<void> stop;

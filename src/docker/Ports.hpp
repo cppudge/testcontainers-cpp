@@ -29,9 +29,9 @@ inline bool is_ipv6_host_ip(const std::string& host_ip) {
 
 /// The published host port for `key` ("6379/tcp") under `family`, or nullopt if
 /// no matching binding exists. (Pure; operates on an already-parsed ports map.)
-inline std::optional<std::uint16_t> select_host_port(
-    const std::map<std::string, std::vector<PortBinding>>& ports,
-    const std::string& key, HostPortFamily family) {
+inline std::optional<std::uint16_t>
+select_host_port(const std::map<std::string, std::vector<PortBinding>>& ports,
+                 const std::string& key, HostPortFamily family) {
     const auto it = ports.find(key);
     if (it == ports.end() || it->second.empty()) {
         return std::nullopt;
@@ -70,8 +70,9 @@ inline std::optional<std::uint16_t> select_host_port(
 /// container port, or nullopt if nothing is published. Used for first_mapped_port
 /// when the exposed-port order is unknown. Parses the numeric port out of each
 /// "NNN/proto" key to find the lowest.
-inline std::optional<std::uint16_t> lowest_published_host_port(
-    const std::map<std::string, std::vector<PortBinding>>& ports, HostPortFamily family) {
+inline std::optional<std::uint16_t>
+lowest_published_host_port(const std::map<std::string, std::vector<PortBinding>>& ports,
+                           HostPortFamily family) {
     std::optional<std::uint16_t> best;
     std::optional<long> best_container_port;
     for (const auto& [key, bindings] : ports) {

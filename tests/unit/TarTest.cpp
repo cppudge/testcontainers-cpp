@@ -127,8 +127,7 @@ TEST(Tar, HostFileRoundTrips) {
 }
 
 TEST(Tar, ModeIsReflected) {
-    const std::string tar =
-        build_tar(CopyToContainer::content("x", "/tmp/secret").with_mode(0600));
+    const std::string tar = build_tar(CopyToContainer::content("x", "/tmp/secret").with_mode(0600));
     const ReadEntry e = read_first_entry(tar);
     EXPECT_EQ(e.mode, 0600);
 }

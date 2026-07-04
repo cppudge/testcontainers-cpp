@@ -275,8 +275,10 @@ void Reaper::start_locked(DockerClient& client) {
         // on THAT, not on whichever ec the last attempt happened to leave
         // (a refused/reset final attempt is still an exhausted budget).
         throw TransportTimeoutError("Could not complete the Ryuk handshake at " + ep.host + ":" +
-                                    std::to_string(ep.port) + " within the handshake budget"
-                                    " (last error: " + ec.message() + ")");
+                                    std::to_string(ep.port) +
+                                    " within the handshake budget"
+                                    " (last error: " +
+                                    ec.message() + ")");
     }
 
     // Ryuk replies "ACK" per accepted line (tolerate a trailing CR). Anything

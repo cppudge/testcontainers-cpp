@@ -15,8 +15,8 @@ int main() {
         DockerClient client{host};
         const Response res = client.request("GET", "/_ping");
 
-        std::cout << "GET /_ping -> " << res.status_code << ' ' << res.reason
-                  << " (body: \"" << res.body << "\")\n";
+        std::cout << "GET /_ping -> " << res.status_code << ' ' << res.reason << " (body: \""
+                  << res.body << "\")\n";
         std::cout << "  Api-Version:  " << res.header("Api-Version") << '\n';
         std::cout << "  OSType:       " << res.header("OSType") << '\n';
         std::cout << "  Builder:      " << res.header("Builder-Version") << '\n';

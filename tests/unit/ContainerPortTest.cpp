@@ -40,8 +40,8 @@ TEST(ContainerPort, ToStringFormatsPortAndProto) {
 
 TEST(ContainerPort, Equality) {
     EXPECT_EQ(tcp(6379), tcp(6379));
-    EXPECT_NE(tcp(6379), udp(6379));  // same port, different proto
-    EXPECT_NE(tcp(6379), tcp(6380));  // same proto, different port
+    EXPECT_NE(tcp(6379), udp(6379));       // same port, different proto
+    EXPECT_NE(tcp(6379), tcp(6380));       // same proto, different port
     EXPECT_EQ(ContainerPort{80}, tcp(80)); // default proto is Tcp
 }
 

@@ -164,8 +164,7 @@ std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_js
         auth.identity_token = token->get<std::string>();
     }
 
-    if (const auto encoded = entry->find("auth");
-        encoded != entry->end() && encoded->is_string()) {
+    if (const auto encoded = entry->find("auth"); encoded != entry->end() && encoded->is_string()) {
         const std::string decoded = base64_decode(encoded->get<std::string>());
         if (const std::size_t colon = decoded.find(':'); colon != std::string::npos) {
             auth.username = decoded.substr(0, colon);
@@ -283,8 +282,7 @@ std::optional<RegistryAuth> auth_from_credential_helper(const std::string& helpe
 }
 
 std::string read_docker_auth_config() {
-    if (const char* inline_cfg = std::getenv("DOCKER_AUTH_CONFIG");
-        inline_cfg && *inline_cfg) {
+    if (const char* inline_cfg = std::getenv("DOCKER_AUTH_CONFIG"); inline_cfg && *inline_cfg) {
         return inline_cfg;
     }
 

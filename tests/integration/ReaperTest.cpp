@@ -110,13 +110,11 @@ TEST_F(Reaper, RyukReapsOnDisconnect) {
         {
             const std::string line = detail::ryuk_filter_line(key, value);
             boost::system::error_code ec;
-            const auto deadline =
-                std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
             bool handshaken = false;
             while (std::chrono::steady_clock::now() < deadline) {
                 tcp::resolver resolver(io);
-                const auto endpoints =
-                    resolver.resolve(ryuk.host, std::to_string(ryuk.port), ec);
+                const auto endpoints = resolver.resolve(ryuk.host, std::to_string(ryuk.port), ec);
                 if (!ec) {
                     socket = tcp::socket(io);
                     asio::connect(socket, endpoints, ec);

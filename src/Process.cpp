@@ -106,8 +106,8 @@ std::wstring widen(const std::string& s) {
     if (s.empty()) {
         return {};
     }
-    const int n = ::MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()),
-                                        nullptr, 0);
+    const int n =
+        ::MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
     std::wstring w(static_cast<std::size_t>(n), L'\0');
     ::MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
     return w;
@@ -116,8 +116,7 @@ std::wstring widen(const std::string& s) {
 /// The child's environment block: the parent's variables with `env` overlaid
 /// (replace by case-insensitive name, else append), re-sorted case-
 /// insensitively as the CreateProcess docs require, double-NUL terminated.
-std::wstring build_environment_block(
-    const std::vector<std::pair<std::string, std::string>>& env) {
+std::wstring build_environment_block(const std::vector<std::pair<std::string, std::string>>& env) {
     std::vector<std::wstring> entries;
     {
         LPWCH raw = ::GetEnvironmentStringsW();
@@ -137,8 +136,7 @@ std::wstring build_environment_block(
             // Find the separator from position 1: hidden per-drive entries
             // ("=C:=C:\...") legitimately START with '='.
             const std::size_t eq = existing.find(L'=', 1);
-            if (eq == name.size() &&
-                ::_wcsnicmp(existing.c_str(), name.c_str(), eq) == 0) {
+            if (eq == name.size() && ::_wcsnicmp(existing.c_str(), name.c_str(), eq) == 0) {
                 existing = entry;
                 replaced = true;
                 break;
@@ -151,12 +149,11 @@ std::wstring build_environment_block(
     // Sort case-insensitively by NAME. Comparing whole entries would misorder
     // a name that prefixes another ("FOO2=..." before "FOO=..." since
     // '2' < '='), so compare the name parts.
-    std::sort(entries.begin(), entries.end(),
-              [](const std::wstring& a, const std::wstring& b) {
-                  const std::wstring a_name = a.substr(0, a.find(L'=', 1));
-                  const std::wstring b_name = b.substr(0, b.find(L'=', 1));
-                  return ::_wcsicmp(a_name.c_str(), b_name.c_str()) < 0;
-              });
+    std::sort(entries.begin(), entries.end(), [](const std::wstring& a, const std::wstring& b) {
+        const std::wstring a_name = a.substr(0, a.find(L'=', 1));
+        const std::wstring b_name = b.substr(0, b.find(L'=', 1));
+        return ::_wcsicmp(a_name.c_str(), b_name.c_str()) < 0;
+    });
     std::wstring block;
     for (const std::wstring& entry : entries) {
         block += entry;
@@ -257,9 +254,8 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     out_write.reset();
     in.reset();
     if (ok == 0) {
-        throw DockerError("run_process: CreateProcessW failed for '" +
-                          build_command_line(argv) + "' (error " +
-                          std::to_string(create_error) + ")");
+        throw DockerError("run_process: CreateProcessW failed for '" + build_command_line(argv) +
+                          "' (error " + std::to_string(create_error) + ")");
     }
     HandleGuard process;
     process.reset(pi.hProcess);
@@ -347,7 +343,7 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     ::posix_spawn_file_actions_adddup2(&actions, pipefd[1], 1); // stdout
     ::posix_spawn_file_actions_adddup2(&actions, pipefd[1], 2); // stderr (the old 2>&1)
     if (working_dir.has_value()) {
-#if (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))) || \
+#if (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))) ||        \
     defined(__APPLE__) // macOS 10.15+
         ::posix_spawn_file_actions_addchdir_np(&actions, working_dir->c_str());
 #else
@@ -360,8 +356,8 @@ ProcessResult spawn_and_capture(const std::vector<std::string>& argv,
     }
 
     pid_t pid = -1;
-    const int rc = ::posix_spawnp(&pid, argv[0].c_str(), &actions, nullptr, cargv.data(),
-                                  envp.data());
+    const int rc =
+        ::posix_spawnp(&pid, argv[0].c_str(), &actions, nullptr, cargv.data(), envp.data());
     ::posix_spawn_file_actions_destroy(&actions);
     ::close(pipefd[1]);
     if (rc != 0) {

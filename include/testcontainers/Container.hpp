@@ -58,13 +58,13 @@ public:
     Container& operator=(const Container&) = delete;
 
     Container(Container&& other) noexcept
-        : client_(std::move(other.client_)), id_(std::move(other.id_)),
-          dropped_(other.dropped_), remove_on_drop_(other.remove_on_drop_), tty_(other.tty_),
+        : client_(std::move(other.client_)), id_(std::move(other.id_)), dropped_(other.dropped_),
+          remove_on_drop_(other.remove_on_drop_), tty_(other.tty_),
           exposed_ports_(std::move(other.exposed_ports_)),
           stopping_hooks_(std::move(other.stopping_hooks_)),
           stopping_fired_(other.stopping_fired_) {
-        other.dropped_ = true;         // the moved-from handle owns nothing
-        other.stopping_fired_ = true;  // ...and must never fire the stopping hooks
+        other.dropped_ = true;        // the moved-from handle owns nothing
+        other.stopping_fired_ = true; // ...and must never fire the stopping hooks
     }
 
     Container& operator=(Container&& other) noexcept {
@@ -220,7 +220,8 @@ private:
     bool dropped_ = false;
     bool remove_on_drop_ = true; ///< false for persistent (reusable) handles
     bool tty_ = false;           ///< container was created with Tty=true (raw log stream)
-    std::vector<ContainerPort> exposed_ports_;  ///< exposed ports in declared order (for first_mapped_port)
+    /// Exposed ports in declared order (for first_mapped_port).
+    std::vector<ContainerPort> exposed_ports_;
     std::vector<LifecycleHook> stopping_hooks_; ///< fired once at teardown
     bool stopping_fired_ = false;               ///< guard: stopping hooks fired exactly once
 };

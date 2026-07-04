@@ -196,13 +196,13 @@ private:
         explicit Conn(asio::io_context& io) : sock(io) {}
         LIBSSH2_CHANNEL* ch = nullptr;
         tcp::socket sock;
-        std::string to_sock;        ///< channel -> local service, pending bytes
-        std::string to_ch;          ///< local service -> channel, pending bytes
-        bool ch_eof = false;        ///< remote client half-closed
-        bool sock_eof = false;      ///< local service half-closed
+        std::string to_sock;   ///< channel -> local service, pending bytes
+        std::string to_ch;     ///< local service -> channel, pending bytes
+        bool ch_eof = false;   ///< remote client half-closed
+        bool sock_eof = false; ///< local service half-closed
         bool sock_send_shut = false;
         bool ch_eof_sent = false;
-        bool done = false;          ///< both directions finished; free the channel
+        bool done = false; ///< both directions finished; free the channel
     };
 
     /// select() on the SSH socket (used to wait out EAGAIN while holding mu_).
@@ -451,8 +451,7 @@ std::string ip_on_network(DockerClient& client, const std::string& container_id,
         ip = nets.begin().value().value("IPAddress", "");
     }
     if (ip.empty()) {
-        throw DockerError("the host-access sidecar has no IP address on network '" + network +
-                          "'");
+        throw DockerError("the host-access sidecar has no IP address on network '" + network + "'");
     }
     return ip;
 }
@@ -490,8 +489,7 @@ HostPortForwarder& HostPortForwarder::instance() {
 
 HostPortForwarder::~HostPortForwarder() = default;
 
-void HostPortForwarder::release_network(DockerClient& client,
-                                        const std::string& network) noexcept {
+void HostPortForwarder::release_network(DockerClient& client, const std::string& network) noexcept {
     try {
         std::lock_guard<std::mutex> lk(mutex_);
         if (!state_) {
@@ -591,8 +589,7 @@ std::unique_ptr<HostPortForwarder::State> HostPortForwarder::make_state(DockerCl
     // reference emplace() returns keeps the accesses below provably engaged.
     Container& sidecar = state->sidecar.emplace(Runner::run(client, request));
     state->sidecar_id = sidecar.id();
-    state->bridge_ip =
-        ip_on_network(client, state->sidecar_id, "bridge", /*fallback_first*/ true);
+    state->bridge_ip = ip_on_network(client, state->sidecar_id, "bridge", /*fallback_first*/ true);
 
     // Retry the WHOLE connect+handshake+auth: a userland proxy can accept on
     // the published port before sshd actually listens (the Ryuk lesson), and

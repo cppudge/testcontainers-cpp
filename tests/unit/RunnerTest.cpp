@@ -113,15 +113,20 @@ TEST(Runner, CreateStartWaitReturnsHandle) {
     // The normal path tags the create body so Ryuk (and tooling) can find the
     // container. (The session-id label depends on TESTCONTAINERS_RYUK_DISABLED,
     // so only the unconditional label is pinned here.)
-    EXPECT_NE(requests[0].find("org.testcontainers.managed-by"), std::string::npos)
-        << requests[0];
+    EXPECT_NE(requests[0].find("org.testcontainers.managed-by"), std::string::npos) << requests[0];
 }
 
 TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {
     const std::string no_logs = http_response(200, "OK", "");
     CannedHttpServer server({
-        created("one"), started(), no_logs, removed(), // attempt 1: wait times out
-        created("two"), started(), no_logs, removed(), // attempt 2: same
+        created("one"),
+        started(),
+        no_logs,
+        removed(), // attempt 1: wait times out
+        created("two"),
+        started(),
+        no_logs,
+        removed(), // attempt 2: same
     });
     testcontainers::DockerClient client{server.host()};
 
@@ -149,8 +154,7 @@ TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {
 
 TEST(Runner, ReuseAdoptsRunningMatch) {
     const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
-    CannedHttpServer server(
-        http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])"));
+    CannedHttpServer server(http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])"));
 
     ContainerRequest request = busybox_request();
     request.reuse = true;
@@ -187,12 +191,9 @@ TEST(Runner, ReuseCreateBodyCarriesHashNotSessionLabel) {
     ASSERT_EQ(requests.size(), 3u); // list, create, start — and no DELETE on drop
     // The create body is tagged for reuse discovery but NEVER session-labeled
     // (Ryuk would reap the container it is supposed to outlive).
-    EXPECT_NE(requests[1].find("org.testcontainers.reuse.hash"), std::string::npos)
-        << requests[1];
-    EXPECT_NE(requests[1].find("org.testcontainers.managed-by"), std::string::npos)
-        << requests[1];
-    EXPECT_EQ(requests[1].find("org.testcontainers.session-id"), std::string::npos)
-        << requests[1];
+    EXPECT_NE(requests[1].find("org.testcontainers.reuse.hash"), std::string::npos) << requests[1];
+    EXPECT_NE(requests[1].find("org.testcontainers.managed-by"), std::string::npos) << requests[1];
+    EXPECT_EQ(requests[1].find("org.testcontainers.session-id"), std::string::npos) << requests[1];
 }
 
 TEST(Runner, HooksFireInOrderAroundCopy) {
@@ -255,10 +256,9 @@ TEST(Runner, ThrowingCreatedHookRemovesContainer) {
     testcontainers::DockerClient client{server.host()};
 
     ContainerRequest request = busybox_request();
-    request.created_hooks.emplace_back(
-        [](testcontainers::DockerClient&, const std::string&) {
-            throw std::runtime_error("hook boom");
-        });
+    request.created_hooks.emplace_back([](testcontainers::DockerClient&, const std::string&) {
+        throw std::runtime_error("hook boom");
+    });
 
     EXPECT_THROW(Runner::run(client, request), std::runtime_error);
 
@@ -269,9 +269,12 @@ TEST(Runner, ThrowingCreatedHookRemovesContainer) {
 
 TEST(Runner, RetryCreatesFreshContainer) {
     CannedHttpServer server({
-        created("one"), server_error("first attempt fails"), removed(), // attempt 1
-        created("two"), started(),                                      // attempt 2
-        removed(),                                                      // drop
+        created("one"),
+        server_error("first attempt fails"),
+        removed(), // attempt 1
+        created("two"),
+        started(), // attempt 2
+        removed(), // drop
     });
     ContainerRequest request = busybox_request();
     request.startup_attempts = 2;
@@ -291,8 +294,12 @@ TEST(Runner, RetryCreatesFreshContainer) {
 
 TEST(Runner, RetryExhaustionRethrowsLast) {
     CannedHttpServer server({
-        created("one"), server_error("first", 500), removed(),
-        created("two"), server_error("second", 409), removed(),
+        created("one"),
+        server_error("first", 500),
+        removed(),
+        created("two"),
+        server_error("second", 409),
+        removed(),
     });
     testcontainers::DockerClient client{server.host()};
 

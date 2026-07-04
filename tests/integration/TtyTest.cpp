@@ -80,6 +80,5 @@ TEST_F(Tty, FollowLogsDeliversRaw) {
         },
         LogOptions{});
 
-    EXPECT_NE(collected.find("follow-tty"), std::string::npos)
-        << "collected: " << collected;
+    EXPECT_NE(collected.find("follow-tty"), std::string::npos) << "collected: " << collected;
 }

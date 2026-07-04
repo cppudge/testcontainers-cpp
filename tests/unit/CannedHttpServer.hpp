@@ -50,8 +50,8 @@ public:
     /// Full script: connections[i] is the ordered response list served on the
     /// i-th accepted connection.
     explicit CannedHttpServer(std::vector<std::vector<std::string>> connections)
-        : acceptor_(ioc_, boost::asio::ip::tcp::endpoint(
-                              boost::asio::ip::make_address("127.0.0.1"), 0)),
+        : acceptor_(ioc_,
+                    boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)),
           port_(acceptor_.local_endpoint().port()),
           thread_([this, connections = std::move(connections)] {
               namespace asio = boost::asio;
@@ -72,9 +72,8 @@ public:
                   // round-trip on another, which a serial loop would deadlock
                   // on. `connections` outlives the workers (joined below).
                   workers.emplace_back([this, socket = std::move(socket),
-                                        &responses = connections[i], i]() mutable {
-                      serve_connection(socket, responses, i);
-                  });
+                                        &responses = connections[i],
+                                        i]() mutable { serve_connection(socket, responses, i); });
               }
               for (std::thread& worker : workers) {
                   worker.join();
@@ -175,8 +174,8 @@ private:
         socket.close(ignore);
     }
 
-    static std::vector<std::vector<std::string>> to_connections(
-        std::vector<std::string> responses) {
+    static std::vector<std::vector<std::string>>
+    to_connections(std::vector<std::string> responses) {
         std::vector<std::vector<std::string>> connections;
         connections.reserve(responses.size());
         for (std::string& response : responses) {
@@ -217,11 +216,10 @@ private:
 };
 
 /// A full HTTP/1.1 response with a JSON content type and the right Content-Length.
-inline std::string http_response(int status, const std::string& reason,
-                                 const std::string& body) {
+inline std::string http_response(int status, const std::string& reason, const std::string& body) {
     return "HTTP/1.1 " + std::to_string(status) + " " + reason +
-           "\r\nContent-Type: application/json\r\nContent-Length: " +
-           std::to_string(body.size()) + "\r\n\r\n" + body;
+           "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) +
+           "\r\n\r\n" + body;
 }
 
 /// A body-less response (204/304 style — no Content-Length on purpose).

@@ -30,8 +30,7 @@ namespace testcontainers::docker {
 class ITransport {
 public:
     virtual ~ITransport() = default;
-    virtual std::size_t read_some(void* data, std::size_t size,
-                                  boost::system::error_code& ec) = 0;
+    virtual std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) = 0;
     virtual std::size_t write_some(const void* data, std::size_t size,
                                    boost::system::error_code& ec) = 0;
     /// Replace the per-operation io deadline for subsequent reads/writes;
@@ -118,8 +117,7 @@ private:
 /// Open a fresh transport connection to the given Docker host, applying
 /// `timeouts.connect` to the connection establishment and `timeouts.io` as the
 /// per-operation deadline of the returned transport.
-std::unique_ptr<ITransport> connect(const DockerHost& host,
-                                    const TransportTimeouts& timeouts = {});
+std::unique_ptr<ITransport> connect(const DockerHost& host, const TransportTimeouts& timeouts = {});
 
 /// Throw the typed error for a failed transport/HTTP operation:
 /// TransportTimeoutError when `ec` says the operation hit its deadline

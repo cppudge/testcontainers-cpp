@@ -115,8 +115,7 @@ TEST(GenericImage, PlatformDefaultsAndBuilder) {
     EXPECT_EQ(*img.platform(), "windows/amd64");
 
     // Chains on a temporary rvalue too.
-    const GenericImage chained =
-        GenericImage("alpine", "3.20").with_platform("linux/arm64");
+    const GenericImage chained = GenericImage("alpine", "3.20").with_platform("linux/arm64");
     ASSERT_TRUE(chained.platform().has_value());
     EXPECT_EQ(*chained.platform(), "linux/arm64");
 }
@@ -298,8 +297,7 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     EXPECT_TRUE(req.spec.publish_all_ports);
     // The snapshot carries EXACTLY the builder's labels: the session/reuse
     // labels are layered on by run() (they depend on the run, not the request).
-    EXPECT_EQ(req.spec.labels,
-              (std::vector<std::pair<std::string, std::string>>{{"owner", "tc"}}));
+    EXPECT_EQ(req.spec.labels, (std::vector<std::pair<std::string, std::string>>{{"owner", "tc"}}));
 
     // The orchestration fields mirror the builders one-to-one.
     EXPECT_EQ(req.exposed_ports, (std::vector<ContainerPort>{tcp(6379)}));

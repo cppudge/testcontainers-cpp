@@ -157,18 +157,17 @@ TEST(Process, RunProcessInheritsParentEnvAndOverlays) {
     set_host_env("TC_PROC_OVR_ENV", "parent-value");
 
 #if defined(_WIN32)
-    const auto result = run_process(
-        {"powershell", "-NoProfile", "-Command",
-         "Write-Output ($env:TC_PROC_BASE_ENV + '|' + $env:TC_PROC_OVR_ENV)"},
-        std::nullopt, {{"TC_PROC_OVR_ENV", "child-value"}});
+    const auto result =
+        run_process({"powershell", "-NoProfile", "-Command",
+                     "Write-Output ($env:TC_PROC_BASE_ENV + '|' + $env:TC_PROC_OVR_ENV)"},
+                    std::nullopt, {{"TC_PROC_OVR_ENV", "child-value"}});
 #else
     const auto result =
         run_process({"sh", "-c", "printf '%s|%s' \"$TC_PROC_BASE_ENV\" \"$TC_PROC_OVR_ENV\""},
                     std::nullopt, {{"TC_PROC_OVR_ENV", "child-value"}});
 #endif
     EXPECT_EQ(result.exit_code, 0) << "output was: " << result.output;
-    EXPECT_NE(result.output.find("from-parent|child-value"), std::string::npos)
-        << result.output;
+    EXPECT_NE(result.output.find("from-parent|child-value"), std::string::npos) << result.output;
     // The parent's own value survived the run.
     const char* parent_value = std::getenv("TC_PROC_OVR_ENV");
     ASSERT_NE(parent_value, nullptr);
@@ -192,8 +191,7 @@ TEST(Process, RunProcessConcurrentEnvStaysIsolated) {
     const auto worker = [&](const std::string& value) {
         for (int i = 0; i < kRounds && !mismatch; ++i) {
             const auto result = child_print_env("TC_PROC_RACE_ENV", {{"TC_PROC_RACE_ENV", value}});
-            if (result.exit_code != 0 ||
-                result.output.find(value) == std::string::npos) {
+            if (result.exit_code != 0 || result.output.find(value) == std::string::npos) {
                 mismatch = true;
             }
         }
@@ -218,8 +216,7 @@ TEST(Process, RunProcessAppliesWorkingDir) {
     // weakly_canonical on both sides: temp paths routinely differ by symlink
     // (macOS /tmp) or 8.3 short names (Windows).
     const auto reported = result.output.substr(0, result.output.find_first_of("\r\n"));
-    EXPECT_EQ(std::filesystem::weakly_canonical(reported),
-              std::filesystem::weakly_canonical(dir))
+    EXPECT_EQ(std::filesystem::weakly_canonical(reported), std::filesystem::weakly_canonical(dir))
         << result.output;
 }
 
@@ -239,15 +236,14 @@ TEST(Process, RunProcessDoesNotLeakUnrelatedHandlesIntoChildren) {
 
     // A child that signals it is running (flag file) and then outlives the
     // EOF probe below by a wide margin.
-    const std::string flag =
-        (std::filesystem::temp_directory_path() /
-         ("tc-proc-flag-" + std::to_string(::GetCurrentProcessId()) + ".tmp"))
-            .string();
+    const std::string flag = (std::filesystem::temp_directory_path() /
+                              ("tc-proc-flag-" + std::to_string(::GetCurrentProcessId()) + ".tmp"))
+                                 .string();
     std::filesystem::remove(flag);
     std::thread runner([&flag] {
-        run_process({"powershell", "-NoProfile", "-Command",
-                     "New-Item -ItemType File -Path '" + flag +
-                         "' | Out-Null; Start-Sleep -Seconds 3"});
+        run_process(
+            {"powershell", "-NoProfile", "-Command",
+             "New-Item -ItemType File -Path '" + flag + "' | Out-Null; Start-Sleep -Seconds 3"});
     });
     const auto spawn_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
     while (!std::filesystem::exists(flag)) {

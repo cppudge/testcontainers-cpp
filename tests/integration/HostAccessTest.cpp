@@ -122,8 +122,7 @@ TEST_F(HostAccess, ContainerReachesHostServiceOnDefaultBridge) {
                       .start();
 
     const ExecResult res = fetch_from_host(c, server.port());
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
     EXPECT_NE(res.stdout_data.find("hello-from-the-host"), std::string::npos)
         << "stdout: " << res.stdout_data;
     EXPECT_GE(server.connections(), 1);
@@ -146,8 +145,8 @@ TEST_F(HostAccess, ContainerReachesHostServiceOnCustomNetwork) {
                           .start();
 
         const ExecResult res = fetch_from_host(c, server.port());
-        EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                    << " stderr: " << res.stderr_data;
+        EXPECT_EQ(res.exit_code, 0)
+            << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
         EXPECT_NE(res.stdout_data.find("hello-across-networks"), std::string::npos)
             << "stdout: " << res.stdout_data;
 

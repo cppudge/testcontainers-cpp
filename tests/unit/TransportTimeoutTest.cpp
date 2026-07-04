@@ -63,8 +63,7 @@ public:
 
     explicit LoopbackServer(Session session = {})
         : acceptor_(ioc_, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0)),
-          port_(acceptor_.local_endpoint().port()),
-          thread_([this, session = std::move(session)] {
+          port_(acceptor_.local_endpoint().port()), thread_([this, session = std::move(session)] {
               boost::system::error_code ec;
               tcp::socket socket(ioc_);
               acceptor_.accept(socket, ec);
@@ -101,8 +100,8 @@ private:
 };
 
 std::chrono::milliseconds elapsed_since(std::chrono::steady_clock::time_point start) {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start);
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                 start);
 }
 
 } // namespace
@@ -217,8 +216,7 @@ TEST(TransportTimeout, ConnectRefusedFailsWithDockerError) {
             try {
                 testcontainers::docker::connect(host, timeouts);
             } catch (const DockerError& e) {
-                EXPECT_NE(std::string(e.what()).find("Cannot connect to Docker"),
-                          std::string::npos)
+                EXPECT_NE(std::string(e.what()).find("Cannot connect to Docker"), std::string::npos)
                     << e.what();
                 throw;
             }
@@ -230,8 +228,7 @@ TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
     LoopbackServer server; // accepts, never answers the ClientHello
     TransportTimeouts timeouts;
     timeouts.connect = 500ms;
-    const DockerHost host =
-        DockerHost::parse("https://127.0.0.1:" + std::to_string(server.port()));
+    const DockerHost host = DockerHost::parse("https://127.0.0.1:" + std::to_string(server.port()));
 
     const auto start = std::chrono::steady_clock::now();
     try {
@@ -278,11 +275,10 @@ TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     // the primary Windows transport must time the read out, not hang.
     const std::string pipe_name =
         R"(\\.\pipe\tc-timeout-test-)" + std::to_string(::GetCurrentProcessId());
-    const HANDLE pipe =
-        ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                           /*default timeout*/ 0, /*security*/ nullptr);
+    const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                                           /*default timeout*/ 0, /*security*/ nullptr);
     ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
 
     std::promise<void> stop;
@@ -295,8 +291,8 @@ TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     timeouts.io = 250ms;
     // DockerHost::parse keeps the npipe path with forward slashes; the
     // transport converts back to backslashes.
-    const DockerHost host = DockerHost::parse(
-        "npipe:////./pipe/tc-timeout-test-" + std::to_string(::GetCurrentProcessId()));
+    const DockerHost host = DockerHost::parse("npipe:////./pipe/tc-timeout-test-" +
+                                              std::to_string(::GetCurrentProcessId()));
     const auto transport = testcontainers::docker::connect(host, timeouts);
 
     char byte = 0;
@@ -321,11 +317,10 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
     // primary Windows transport.
     const std::string pipe_name =
         R"(\\.\pipe\tc-timeout-req-test-)" + std::to_string(::GetCurrentProcessId());
-    const HANDLE pipe =
-        ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                           /*default timeout*/ 0, /*security*/ nullptr);
+    const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                                           /*default timeout*/ 0, /*security*/ nullptr);
     ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
 
     std::promise<void> stop;
@@ -334,8 +329,8 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
         stop.get_future().wait();          // never reads, never answers
     });
 
-    testcontainers::DockerClient client{DockerHost::parse(
-        "npipe:////./pipe/tc-timeout-req-test-" + std::to_string(::GetCurrentProcessId()))};
+    testcontainers::DockerClient client{DockerHost::parse("npipe:////./pipe/tc-timeout-req-test-" +
+                                                          std::to_string(::GetCurrentProcessId()))};
     TransportTimeouts timeouts;
     timeouts.io = 250ms;
     client.set_transport_timeouts(timeouts);

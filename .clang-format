@@ -1,0 +1,16 @@
+# Formatting contract for the repo; CI checks it with a PINNED clang-format
+# (see .github/workflows/ci.yml) — use the same major version locally
+# (`pip install clang-format==22.1.5`) to avoid version drift in edge cases.
+#
+# The options codify the style the codebase already uses: 4-space indent,
+# 100-column lines, attached braces, left-bound */&.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+PointerAlignment: Left
+DerivePointerAlignment: false
+AllowShortLambdasOnASingleLine: All
+# Comments are hand-wrapped: the "Tests in this file" index entries are one
+# line per test BY CONVENTION (docs/conventions.md) and must not be re-flowed.
+ReflowComments: false

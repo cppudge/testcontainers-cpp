@@ -69,9 +69,8 @@ std::string shell_quote_assignment(const std::string& key, const std::string& va
     return key + "=" + shell_quote(value);
 }
 
-std::string build_env_wrapped_script(
-    const std::vector<std::string>& argv,
-    const std::vector<std::pair<std::string, std::string>>& env) {
+std::string build_env_wrapped_script(const std::vector<std::string>& argv,
+                                     const std::vector<std::pair<std::string, std::string>>& env) {
     std::string script;
     for (const auto& [key, value] : env) {
         script += shell_quote_assignment(key, value);

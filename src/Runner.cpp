@@ -71,8 +71,7 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
 
             client.start_container(id);
 
-            detail::wait_until_ready(client, id, request.waits, request.startup_timeout,
-                                     spec.tty);
+            detail::wait_until_ready(client, id, request.waits, request.startup_timeout, spec.tty);
 
             // started hooks: after wait-until-ready, before constructing the handle.
             for (const LifecycleHook& hook : request.started_hooks) {

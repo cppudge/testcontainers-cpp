@@ -86,7 +86,8 @@ TEST_F(Lifecycle, StartupRetriesOnFailure) {
     int created_count = 0;
 
     GenericImage image = GenericImage::from_reference(kImage);
-    image.with_cmd({"sleep", "30"})
+    image
+        .with_cmd({"sleep", "30"})
         // An impossible wait forces every attempt to fail (the container never
         // logs this), so start() exhausts its attempts and throws.
         .with_wait(wait_for::log("THIS_NEVER_APPEARS"))

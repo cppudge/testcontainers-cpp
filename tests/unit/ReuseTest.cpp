@@ -56,8 +56,9 @@ TEST(Reuse, HashDiffersForDifferentInput) {
 }
 
 TEST(Reuse, HashIs16LowercaseHexChars) {
-    for (const std::string& in : {std::string(""), std::string("alpine"),
-                                  std::string("a much longer canonical config string \n\t with bytes")}) {
+    for (const std::string& in :
+         {std::string(""), std::string("alpine"),
+          std::string("a much longer canonical config string \n\t with bytes")}) {
         const std::string h = reuse_hash(in);
         EXPECT_EQ(h.size(), 16u) << "input: " << in;
         EXPECT_TRUE(is_lower_hex(h)) << "input: " << in << " -> " << h;

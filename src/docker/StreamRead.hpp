@@ -130,8 +130,8 @@ inline void stream_raw_to_consumer(ITransport& transport, std::string_view lefto
     boost::system::error_code ec;
     for (;;) {
         const std::size_t n = transport.read_some(buf.data(), buf.size(), ec);
-        if (n != 0 && !detail::deliver_chunk(demuxer, std::string_view(buf.data(), n), tty,
-                                             consumer)) {
+        if (n != 0 &&
+            !detail::deliver_chunk(demuxer, std::string_view(buf.data(), n), tty, consumer)) {
             return;
         }
         if (ec) {

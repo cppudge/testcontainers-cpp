@@ -95,10 +95,10 @@ TEST_F(BuildImage, DockerfilePathAndTargetStage) {
     // overwrite the marker, so seeing "stage-base" proves the target applied.
     // with_pull additionally refreshes the base image from the registry.
     const tcit::TempFile dockerfile("FROM alpine:3.20 AS base\n"
-                              "RUN echo stage-base > /stage.txt\n"
-                              "CMD [\"cat\", \"/stage.txt\"]\n"
-                              "FROM base AS extra\n"
-                              "RUN echo stage-extra > /stage.txt\n");
+                                    "RUN echo stage-base > /stage.txt\n"
+                                    "CMD [\"cat\", \"/stage.txt\"]\n"
+                                    "FROM base AS extra\n"
+                                    "RUN echo stage-extra > /stage.txt\n");
 
     GenericImage image = GenericBuildableImage("tc-build-target", "latest")
                              .with_dockerfile(dockerfile.path())
@@ -129,12 +129,12 @@ TEST_F(WindowsBuildImage, BuildsAndRunsInlineDockerfile) {
     // file lands at C:\built.txt without any backslashes in the Dockerfile
     // (backslash is its escape character). nanoserver's default user
     // (ContainerUser) cannot write to C:\, hence USER ContainerAdministrator.
-    GenericImage image = GenericBuildableImage("tc-build-test-win", "latest")
-                             .with_dockerfile_string(from_line() +
-                                                     "USER ContainerAdministrator\n"
-                                                     "RUN echo built-content> built.txt\n"
-                                                     "CMD [\"cmd\", \"/c\", \"type built.txt\"]")
-                             .build();
+    GenericImage image =
+        GenericBuildableImage("tc-build-test-win", "latest")
+            .with_dockerfile_string(from_line() + "USER ContainerAdministrator\n"
+                                                  "RUN echo built-content> built.txt\n"
+                                                  "CMD [\"cmd\", \"/c\", \"type built.txt\"]")
+            .build();
 
     Container c = image.with_wait(wait_for::exit()).start();
 

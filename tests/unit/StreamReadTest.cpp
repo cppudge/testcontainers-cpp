@@ -107,11 +107,11 @@ run_stream(std::vector<std::string> chunks, bool tty,
     EXPECT_FALSE(ec) << ec.message();
 
     std::vector<std::pair<LogSource, std::string>> out;
-    docker::stream_body_to_consumer(
-        stream, buffer, parser, tty, [&](LogSource source, std::string_view data) {
-            out.emplace_back(source, std::string(data));
-            return keep_going ? keep_going(out.size()) : true;
-        });
+    docker::stream_body_to_consumer(stream, buffer, parser, tty,
+                                    [&](LogSource source, std::string_view data) {
+                                        out.emplace_back(source, std::string(data));
+                                        return keep_going ? keep_going(out.size()) : true;
+                                    });
     return out;
 }
 

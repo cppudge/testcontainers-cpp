@@ -66,7 +66,7 @@ GenericImage GenericBuildableImage::build() const {
     const std::string context_tar = docker::build_context_tar(files);
 
     docker::BuildOptions options;
-    options.tag = descriptor();      // "<name>:<tag>"
+    options.tag = descriptor();        // "<name>:<tag>"
     options.dockerfile = "Dockerfile"; // with_dockerfile* always target "Dockerfile"
     options.build_args = build_args_;
     options.target = target_;

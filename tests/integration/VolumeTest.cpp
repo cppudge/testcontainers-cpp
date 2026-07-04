@@ -98,8 +98,7 @@ TEST_F(Volumes, PopulateThenReadBack) {
                       .start();
 
     const ExecResult res = c.exec({"cat", "/data/seed.txt"});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
     EXPECT_NE(res.stdout_data.find("hello-volume"), std::string::npos)
         << "seeded data did not appear in the volume; stdout: " << res.stdout_data;
 
@@ -145,9 +144,9 @@ TEST_F(WindowsVolumes, DataPersistsAcrossContainers) {
                                .with_mount(Mount::volume(v.name(), "C:/data"))
                                .start();
 
-        const ExecResult wr = writer.exec({"cmd", "/c", "echo hello-volume-win> C:\\data\\seed.txt"});
-        ASSERT_EQ(wr.exit_code, 0) << "stdout: " << wr.stdout_data
-                                   << " stderr: " << wr.stderr_data;
+        const ExecResult wr =
+            writer.exec({"cmd", "/c", "echo hello-volume-win> C:\\data\\seed.txt"});
+        ASSERT_EQ(wr.exit_code, 0) << "stdout: " << wr.stdout_data << " stderr: " << wr.stderr_data;
         // RAII removes the writer here; the volume (and the file) persist.
     }
 
@@ -159,8 +158,7 @@ TEST_F(WindowsVolumes, DataPersistsAcrossContainers) {
                            .start();
 
     const ExecResult res = reader.exec({"cmd", "/c", "type C:\\data\\seed.txt"});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
     EXPECT_NE(res.stdout_data.find("hello-volume-win"), std::string::npos)
         << "seeded data did not appear in the volume; stdout: " << res.stdout_data;
 

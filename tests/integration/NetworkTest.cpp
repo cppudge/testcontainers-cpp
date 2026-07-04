@@ -42,13 +42,12 @@ TEST_F(Networks, ResolvesPeerByContainerName) {
     Network net = Network::create();
     ASSERT_FALSE(net.name().empty());
 
-    Container redis =
-        GenericImage("redis", "7.2")
-            .with_network(net.name())
-            .with_container_name("redis-srv")
-            .with_exposed_port(tcp(6379))
-            .with_wait(wait_for::stdout_message("Ready to accept connections"))
-            .start();
+    Container redis = GenericImage("redis", "7.2")
+                          .with_network(net.name())
+                          .with_container_name("redis-srv")
+                          .with_exposed_port(tcp(6379))
+                          .with_wait(wait_for::stdout_message("Ready to accept connections"))
+                          .start();
 
     // A long-running client container on the same network; no readiness signal,
     // so no wait strategy is needed.
@@ -58,8 +57,7 @@ TEST_F(Networks, ResolvesPeerByContainerName) {
     // busybox `nc -z` proves both DNS-by-name and TCP connectivity on the
     // user-defined network.
     const ExecResult res = client.exec({"sh", "-c", "nc -z -w 3 redis-srv 6379"});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
 
     // Containers and the network are torn down by RAII at scope exit, in reverse
     // construction order (client, redis, then net).
@@ -95,8 +93,7 @@ TEST_F(Networks, AliasResolvesOnCustomNetwork) {
         GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
 
     const ExecResult res = client.exec({"getent", "hosts", "db"});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                               << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
     EXPECT_FALSE(res.stdout_data.empty()) << "alias 'db' did not resolve to an address";
 
     // Containers and the network are torn down by RAII at scope exit, in reverse
@@ -132,8 +129,7 @@ TEST_F(Networks, ConnectAttachesRunningContainerWithAlias) {
     // The alias resolves from a peer on the same network — proving the attach
     // (and its alias) took effect daemon-side, not just returned 200.
     const ExecResult res = peer.exec({"getent", "hosts", "late-alias"});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
     EXPECT_FALSE(res.stdout_data.empty()) << "alias 'late-alias' did not resolve";
 }
 
@@ -164,8 +160,7 @@ namespace {
 /// Assumes the endpoint's "IPAddress" key follows the network-name key in the
 /// body (true for every daemon we drive) and that the random network name
 /// collides with nothing else in it.
-std::string ip_on_network(DockerClient& client, const std::string& id,
-                          const std::string& network) {
+std::string ip_on_network(DockerClient& client, const std::string& id, const std::string& network) {
     const std::string body = client.request("GET", "/containers/" + id + "/json").body;
     const std::size_t net_at = body.find("\"" + network + "\"");
     if (net_at == std::string::npos) {
@@ -230,8 +225,7 @@ TEST_F(WindowsNetworks, PeerNameRegisteredAndReachable) {
     const std::string ip = ip_on_network(dc, srv.id(), net.name());
     ASSERT_FALSE(ip.empty()) << "no IPv4 address on " << net.name();
     const ExecResult res = client.exec({"cmd", "/c", "ping -4 -n 3 -w 2000 " + ip});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
 
     // Containers and the network are torn down by RAII at scope exit, in reverse
     // construction order (client, srv, then net).
@@ -264,8 +258,7 @@ TEST_F(WindowsNetworks, AliasRegisteredOnCustomNetwork) {
     const std::string ip = ip_on_network(dc, db.id(), net.name());
     ASSERT_FALSE(ip.empty()) << "no IPv4 address on " << net.name();
     const ExecResult res = client.exec({"cmd", "/c", "ping -4 -n 3 -w 2000 " + ip});
-    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
-                                << " stderr: " << res.stderr_data;
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
 
     // Containers and the network are torn down by RAII at scope exit, in reverse
     // construction order (client, db, then net).

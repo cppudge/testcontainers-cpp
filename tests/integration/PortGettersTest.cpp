@@ -92,10 +92,7 @@ TEST_F(PortGetters, FirstMappedPicksExposedOrder) {
 class WindowsPortGetters : public tcit::WindowsEngineTest {};
 
 TEST_F(WindowsPortGetters, PublishedPortResolvesMappedPort) {
-    Container c = nanoserver()
-                      .with_exposed_port(tcp(8080))
-                      .with_cmd(keep_alive_cmd())
-                      .start();
+    Container c = nanoserver().with_exposed_port(tcp(8080)).with_cmd(keep_alive_cmd()).start();
 
     const std::uint16_t mapped = c.get_host_port(tcp(8080));
     EXPECT_NE(mapped, 0);

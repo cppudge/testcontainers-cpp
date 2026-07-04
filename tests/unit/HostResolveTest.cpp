@@ -26,8 +26,7 @@ using testcontainers::docker::docker_host_from_properties;
 using testcontainers::docker::sha256_hex;
 
 TEST(HostResolve, Sha256EmptyVector) {
-    EXPECT_EQ(sha256_hex(""),
-              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    EXPECT_EQ(sha256_hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 }
 
 TEST(HostResolve, Sha256AbcVector) {
@@ -50,11 +49,10 @@ TEST(HostResolve, PropertiesReadsDockerHost) {
 }
 
 TEST(HostResolve, PropertiesToleratesCommentsBlanksSpaces) {
-    const std::string body =
-        "# a comment\n"
-        "\n"
-        "  docker.host =  tcp://5.6.7.8:2375  \n"
-        "other.key=ignored\n";
+    const std::string body = "# a comment\n"
+                             "\n"
+                             "  docker.host =  tcp://5.6.7.8:2375  \n"
+                             "other.key=ignored\n";
     const auto host = docker_host_from_properties(body);
     ASSERT_TRUE(host.has_value());
     EXPECT_EQ(*host, "tcp://5.6.7.8:2375");

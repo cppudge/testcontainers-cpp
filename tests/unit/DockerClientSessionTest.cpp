@@ -135,8 +135,8 @@ namespace {
 class SilentAfterFirstServer {
 public:
     explicit SilentAfterFirstServer(std::string first_response)
-        : acceptor_(ioc_, boost::asio::ip::tcp::endpoint(
-                              boost::asio::ip::make_address("127.0.0.1"), 0)),
+        : acceptor_(ioc_,
+                    boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)),
           port_(acceptor_.local_endpoint().port()),
           thread_([this, response = std::move(first_response)] {
               namespace asio = boost::asio;

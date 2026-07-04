@@ -30,11 +30,9 @@ TEST(Reaper, RyukFilterLine) {
 
 TEST(Reaper, LabelsContainManagedBy) {
     const auto labels = testcontainers_labels();
-    const bool has_managed_by =
-        std::any_of(labels.begin(), labels.end(), [](const auto& kv) {
-            return kv.first == "org.testcontainers.managed-by" &&
-                   kv.second == "testcontainers";
-        });
+    const bool has_managed_by = std::any_of(labels.begin(), labels.end(), [](const auto& kv) {
+        return kv.first == "org.testcontainers.managed-by" && kv.second == "testcontainers";
+    });
     EXPECT_TRUE(has_managed_by);
 }
 

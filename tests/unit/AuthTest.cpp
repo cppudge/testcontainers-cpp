@@ -77,8 +77,15 @@ TEST(Auth, Base64DecodeKnownVectors) {
 
 TEST(Auth, Base64RoundTrip) {
     const std::string inputs[] = {
-        "",        "a",        "ab",       "abc",      "abcd",
-        "abcde",   "abcdef",   "user:pass:with:colons", std::string("\x00\x01\x02\xFF\xFE", 5),
+        "",
+        "a",
+        "ab",
+        "abc",
+        "abcd",
+        "abcde",
+        "abcdef",
+        "user:pass:with:colons",
+        std::string("\x00\x01\x02\xFF\xFE", 5),
     };
     for (const auto& in : inputs) {
         EXPECT_EQ(base64_decode(base64_encode(in)), in);
@@ -229,7 +236,8 @@ TEST(Auth, ParseCredentialHelperOutputBasic) {
 
 TEST(Auth, ParseCredentialHelperOutputIdentityToken) {
     // A "<token>" username means Secret is an identity token, not a password.
-    const std::string out = R"({"ServerURL":"index.docker.io","Username":"<token>","Secret":"tok"})";
+    const std::string out =
+        R"({"ServerURL":"index.docker.io","Username":"<token>","Secret":"tok"})";
     const auto auth = parse_credential_helper_output(out, "index.docker.io");
     ASSERT_TRUE(auth.has_value());
     EXPECT_EQ(auth->identity_token, "tok");
@@ -303,6 +311,5 @@ TEST(Auth, ApplyHubImagePrefixEmptyIsNoOp) {
 
 TEST(Auth, ApplyHubImagePrefixNamespacedHub) {
     // "library/redis" has no dot/port in its first segment, so it is a Hub image.
-    EXPECT_EQ(apply_hub_image_prefix("library/redis", "mirror.corp/"),
-              "mirror.corp/library/redis");
+    EXPECT_EQ(apply_hub_image_prefix("library/redis", "mirror.corp/"), "mirror.corp/library/redis");
 }

@@ -87,10 +87,10 @@ void Volume::populate(const std::vector<CopyToContainer>& sources, const std::st
             // path inside the volume (e.g. "/seed.txt" -> "<mount_path>/seed.txt").
             const std::string rebased_target = mount_path + source.target();
             CopyToContainer rebased =
-                source.is_file()
-                    ? CopyToContainer::host_file(source.host_path(), rebased_target)
-                          .with_mode(source.mode())
-                    : CopyToContainer::content(source.bytes(), rebased_target).with_mode(source.mode());
+                source.is_file() ? CopyToContainer::host_file(source.host_path(), rebased_target)
+                                       .with_mode(source.mode())
+                                 : CopyToContainer::content(source.bytes(), rebased_target)
+                                       .with_mode(source.mode());
             client_.copy_to_container(helper_id, rebased);
         }
     } catch (...) {

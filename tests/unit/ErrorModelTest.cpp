@@ -163,8 +163,7 @@ TEST(ErrorModel, Http404BecomesNotFoundError) {
 }
 
 TEST(ErrorModel, Http500KeepsStatusOnDockerError) {
-    CannedHttpServer server(
-        http_response(500, "Internal Server Error", R"({"message":"boom"})"));
+    CannedHttpServer server(http_response(500, "Internal Server Error", R"({"message":"boom"})"));
     testcontainers::DockerClient client{server.host()};
 
     try {
@@ -187,8 +186,7 @@ TEST(ErrorModel, HtmlThrough200BecomesDockerError) {
         client.inspect_container("deadbeef");
         FAIL() << "expected DockerError";
     } catch (const DockerError& e) {
-        EXPECT_NE(std::string(e.what()).find("unexpected response from Docker"),
-                  std::string::npos)
+        EXPECT_NE(std::string(e.what()).find("unexpected response from Docker"), std::string::npos)
             << e.what();
     }
 }

@@ -122,9 +122,9 @@ TEST_F(Copy, CopyFileFromWritesHost) {
     c.copy_to(CopyToContainer::content(content, "/tmp/h.txt"));
 
     static std::atomic<unsigned> counter{0};
-    const std::filesystem::path dest =
-        std::filesystem::temp_directory_path() /
-        ("tc_copyfrom_" + std::to_string(counter.fetch_add(1))) / "out.txt";
+    const std::filesystem::path dest = std::filesystem::temp_directory_path() /
+                                       ("tc_copyfrom_" + std::to_string(counter.fetch_add(1))) /
+                                       "out.txt";
 
     c.copy_file_from("/tmp/h.txt", dest.string());
 
@@ -153,8 +153,7 @@ TEST_F(Copy, ModeAppliedToCopiedFile) {
 
     const ExecResult res = c.exec({"stat", "-c", "%a", "/tmp/m.sh"});
     EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
-    EXPECT_NE(res.stdout_data.find("755"), std::string::npos)
-        << "mode was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find("755"), std::string::npos) << "mode was: " << res.stdout_data;
 }
 
 // The Windows mirror. All targets live at the filesystem root ("/x.txt" is
@@ -241,9 +240,9 @@ TEST_F(WindowsCopy, CopyFileFromWritesHost) {
     c.copy_to(CopyToContainer::content(content, "/h.txt"));
 
     static std::atomic<unsigned> counter{0};
-    const std::filesystem::path dest =
-        std::filesystem::temp_directory_path() /
-        ("tc_copyfrom_win_" + std::to_string(counter.fetch_add(1))) / "out.txt";
+    const std::filesystem::path dest = std::filesystem::temp_directory_path() /
+                                       ("tc_copyfrom_win_" + std::to_string(counter.fetch_add(1))) /
+                                       "out.txt";
 
     c.copy_file_from("/h.txt", dest.string());
 

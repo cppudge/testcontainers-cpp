@@ -127,11 +127,10 @@ TEST(ExecWire, UpgradedStreamReadsRaw) {
     // The daemon honors the upgrade: 101, then the frames arrive RAW on the
     // connection (written here in one blob with the header, so part of the
     // stream lands in the client's header-parse buffer — the leftover path).
-    const std::string upgraded =
-        "HTTP/1.1 101 UPGRADED\r\n"
-        "Content-Type: application/vnd.docker.raw-stream\r\n"
-        "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n" +
-        frame(1, "out") + frame(2, "err");
+    const std::string upgraded = "HTTP/1.1 101 UPGRADED\r\n"
+                                 "Content-Type: application/vnd.docker.raw-stream\r\n"
+                                 "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n" +
+                                 frame(1, "out") + frame(2, "err");
     CannedHttpServer server(std::vector<std::vector<std::string>>{
         {upgraded, ""}, // "": absorb the client's stdin + EOF, then close
         {exec_created()},

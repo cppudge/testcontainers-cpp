@@ -115,10 +115,9 @@ inline std::string read_error_body(docker::TransportStream& stream,
 /// container / image / network / volume / exec instance the call was about
 /// ("" when the call has no single subject).
 [[noreturn]] void throw_status_error(const std::string& context, int status,
-                                     const std::string& body,
-                                     const std::string& resource_id = {}) {
-    const std::string msg = context + " failed: HTTP " + std::to_string(status) +
-                            (body.empty() ? "" : " " + body);
+                                     const std::string& body, const std::string& resource_id = {}) {
+    const std::string msg =
+        context + " failed: HTTP " + std::to_string(status) + (body.empty() ? "" : " " + body);
     if (status == 404) {
         throw NotFoundError(msg, resource_id);
     }
@@ -138,9 +137,8 @@ inline std::string read_error_body(docker::TransportStream& stream,
 /// throw_status_error with the daemon's drained error body appended).
 template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
-                    boost::beast::flat_buffer& buffer, Parser& parser,
-                    const std::string& context, const std::string& resource_id = {},
-                    bool accept_upgraded = false) {
+                    boost::beast::flat_buffer& buffer, Parser& parser, const std::string& context,
+                    const std::string& resource_id = {}, bool accept_upgraded = false) {
     boost::system::error_code ec;
     http::read_header(stream, buffer, parser, ec);
     if (ec == http::error::end_of_stream && !parser.is_header_done()) {
@@ -175,9 +173,7 @@ std::string Response::header(std::string_view name) const {
 
 DockerClient::DockerClient(DockerHost host) : host_(std::move(host)) {}
 
-DockerClient DockerClient::from_environment() {
-    return DockerClient(DockerHost::resolve());
-}
+DockerClient DockerClient::from_environment() { return DockerClient(DockerHost::resolve()); }
 
 Response DockerClient::request(std::string_view method, std::string_view target,
                                std::string_view body,
@@ -238,8 +234,8 @@ Response DockerClient::request_with_io_timeout(
             // EOF before a complete response. Without this check a stale
             // kept-alive connection (peer closed it while idle) would read a
             // never-populated parser and masquerade as an empty success.
-            throw DockerError("Failed to read response from Docker (" + std::string(method) +
-                              " " + std::string(target) +
+            throw DockerError("Failed to read response from Docker (" + std::string(method) + " " +
+                              std::string(target) +
                               "): connection closed before the response completed");
         }
         if (ec && ec != http::error::end_of_stream) {
@@ -313,9 +309,7 @@ void DockerClient::end_session() noexcept {
     }
 }
 
-bool DockerClient::ping() {
-    return request("GET", "/_ping").ok();
-}
+bool DockerClient::ping() { return request("GET", "/_ping").ok(); }
 
 std::string DockerClient::server_os() {
     // The engine mode (Linux vs Windows containers) is fixed for the life of the
@@ -359,8 +353,7 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
 
     // Use the explicit credentials if given, else auto-resolve from the Docker
     // config for this image's registry. No credentials -> a plain public pull.
-    const std::optional<RegistryAuth> cred =
-        auth ? auth : docker::resolve_auth_for_image(image);
+    const std::optional<RegistryAuth> cred = auth ? auth : docker::resolve_auth_for_image(image);
     std::vector<std::pair<std::string, std::string>> headers;
     if (cred) {
         headers.emplace_back("X-Registry-Auth", docker::encode_x_registry_auth(*cred));
@@ -442,8 +435,9 @@ ContainerInspect DockerClient::inspect_container(const std::string& id) {
     return docker::parse_inspect(inspect_container_raw(id));
 }
 
-std::vector<ContainerSummary> DockerClient::list_containers(
-    const std::vector<std::pair<std::string, std::string>>& label_filters, bool all) {
+std::vector<ContainerSummary>
+DockerClient::list_containers(const std::vector<std::pair<std::string, std::string>>& label_filters,
+                              bool all) {
     std::string target = "/containers/json?all=";
     target += all ? "1" : "0";
     if (!label_filters.empty()) {
@@ -476,8 +470,8 @@ void DockerClient::stop_container(const std::string& id, std::optional<int> time
         if (timeout_secs && *timeout_secs < 0) {
             io = std::nullopt;
         } else {
-            io = std::max(*io, std::chrono::milliseconds(std::chrono::seconds(
-                                   timeout_secs.value_or(10) + 30)));
+            io = std::max(*io, std::chrono::milliseconds(
+                                   std::chrono::seconds(timeout_secs.value_or(10) + 30)));
         }
     }
     if (timeout_secs) {
@@ -581,8 +575,8 @@ std::string exec_create(DockerClient& client, const std::string& id,
                         const std::string& create_body) {
     const std::vector<std::pair<std::string, std::string>> json_headers = {
         {"Content-Type", "application/json"}};
-    const Response res = client.request("POST", "/containers/" + id + "/exec", create_body,
-                                        json_headers);
+    const Response res =
+        client.request("POST", "/containers/" + id + "/exec", create_body, json_headers);
     if (res.status_code != 201) {
         throw_status_error("exec create on container " + id, res, id);
     }
@@ -657,8 +651,8 @@ void feed_stdin(docker::ITransport& transport, docker::TransportStream& stream,
     const std::string& in = *opts.stdin_data;
     std::size_t sent = 0;
     while (sent < in.size() && !ec) {
-        const std::size_t n = stream.write_some(
-            boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
+        const std::size_t n =
+            stream.write_some(boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
         if (n == 0 && !ec) {
             // Defensive: a 0-byte write without an error would spin forever.
             ec = boost::asio::error::broken_pipe;
@@ -792,8 +786,8 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         const auto leftover = buffer.data();
         docker::stream_raw_to_consumer(
             *transport,
-            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()),
-            opts.tty, consumer);
+            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()), opts.tty,
+            consumer);
     } else {
         docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
     }
@@ -814,8 +808,7 @@ void DockerClient::copy_to_container(const std::string& id, const CopyToContaine
     const std::string tar = docker::build_tar(source);
     // Always extract at the root with relative entry names (build_tar strips the
     // leading '/'), so the target's parent directory must already exist.
-    const std::string target =
-        "/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false";
+    const std::string target = "/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false";
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/x-tar"}};
 
@@ -841,8 +834,9 @@ std::string DockerClient::copy_from_container(const std::string& id,
     throw_status_error("copy_from_container(" + id + ", '" + container_path + "')", res, id);
 }
 
-std::string DockerClient::create_network(
-    const std::string& name, const std::vector<std::pair<std::string, std::string>>& labels) {
+std::string
+DockerClient::create_network(const std::string& name,
+                             const std::vector<std::pair<std::string, std::string>>& labels) {
     // A name+labels network is just a minimal spec; one construction path.
     NetworkCreateSpec spec;
     spec.name = name;

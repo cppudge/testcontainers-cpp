@@ -20,8 +20,8 @@ struct LogMessage {
     /// Which log stream(s) to scan.
     enum class Source { Stdout, Stderr, Either };
 
-    std::string text;             ///< substring to look for
-    int times = 1;                ///< required number of occurrences
+    std::string text; ///< substring to look for
+    int times = 1;    ///< required number of occurrences
     Source source = Source::Either;
 };
 
@@ -78,29 +78,19 @@ inline WaitFor log(std::string text, int times = 1) {
 }
 
 /// Wait a fixed number of seconds after start.
-inline WaitFor seconds(int s) {
-    return wait::Duration{std::chrono::seconds(s)};
-}
+inline WaitFor seconds(int s) { return wait::Duration{std::chrono::seconds(s)}; }
 
 /// Wait a fixed number of milliseconds after start.
-inline WaitFor millis(int ms) {
-    return wait::Duration{std::chrono::milliseconds(ms)};
-}
+inline WaitFor millis(int ms) { return wait::Duration{std::chrono::milliseconds(ms)}; }
 
 /// Wait until the container stops (with any exit code).
-inline WaitFor exit() {
-    return wait::Exit{};
-}
+inline WaitFor exit() { return wait::Exit{}; }
 
 /// Wait until the container stops with the given exit code.
-inline WaitFor exit_code(std::int64_t code) {
-    return wait::Exit{code};
-}
+inline WaitFor exit_code(std::int64_t code) { return wait::Exit{code}; }
 
 /// Wait until the container's Docker health becomes "healthy".
-inline WaitFor healthy() {
-    return wait::Healthcheck{};
-}
+inline WaitFor healthy() { return wait::Healthcheck{}; }
 
 /// Wait until an HTTP GET to `path` on the mapped host port for `port` returns
 /// `status`.

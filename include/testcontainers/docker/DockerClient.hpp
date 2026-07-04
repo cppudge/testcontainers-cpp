@@ -121,15 +121,12 @@ public:
     /// long-polling widen the io deadline internally (`stop` waits up to its
     /// grace period, `build` may have long silent steps); the streaming call
     /// sites (`follow_logs`, exec attach reads) disable it regardless.
-    void set_transport_timeouts(const docker::TransportTimeouts& timeouts) {
-        timeouts_ = timeouts;
-    }
+    void set_transport_timeouts(const docker::TransportTimeouts& timeouts) { timeouts_ = timeouts; }
     const docker::TransportTimeouts& transport_timeouts() const noexcept { return timeouts_; }
 
     /// Perform an HTTP request against the daemon and return the full response.
     /// `target` is the path (e.g. "/_ping", "/v1.43/containers/json").
-    Response request(std::string_view method, std::string_view target,
-                     std::string_view body = {},
+    Response request(std::string_view method, std::string_view target, std::string_view body = {},
                      const std::vector<std::pair<std::string, std::string>>& headers = {});
 
     /// `GET /_ping` — true if the daemon answers with a 2xx status.
@@ -182,8 +179,9 @@ public:
 
     /// `GET /containers/json` filtered by label equality. `all` includes stopped
     /// containers. `label_filters` become Docker's filters={"label":["k=v",...]}.
-    std::vector<ContainerSummary> list_containers(
-        const std::vector<std::pair<std::string, std::string>>& label_filters, bool all = true);
+    std::vector<ContainerSummary>
+    list_containers(const std::vector<std::pair<std::string, std::string>>& label_filters,
+                    bool all = true);
 
     /// `POST /containers/{id}/stop` (optional grace period in seconds).
     void stop_container(const std::string& id, std::optional<int> timeout_secs = std::nullopt);
@@ -292,10 +290,10 @@ public:
 private:
     /// request() with the per-operation io deadline overridden for this one
     /// call (the long-polling endpoints widen it; nullopt disables it).
-    Response request_with_io_timeout(std::string_view method, std::string_view target,
-                                     std::string_view body,
-                                     const std::vector<std::pair<std::string, std::string>>& headers,
-                                     std::optional<std::chrono::milliseconds> io_timeout);
+    Response
+    request_with_io_timeout(std::string_view method, std::string_view target, std::string_view body,
+                            const std::vector<std::pair<std::string, std::string>>& headers,
+                            std::optional<std::chrono::milliseconds> io_timeout);
 
     /// Drop the session state, gracefully closing the cached connection (on
     /// TLS that is the close_notify exchange; plain destruction would cut it

@@ -101,14 +101,13 @@ std::size_t bounded_io(asio::io_context& ioc,
 /// starting it), so the drain may overrun the budget by the OS resolver time.
 /// That is inherent to Asio — do not "fix" the cancel lambda.
 asio::ip::tcp::resolver::results_type resolve_endpoints(asio::io_context& ioc,
-                                                        const std::string& host,
-                                                        std::uint16_t port,
+                                                        const std::string& host, std::uint16_t port,
                                                         Clock::time_point deadline) {
     boost::system::error_code literal_ec;
     const asio::ip::address address = asio::ip::make_address(host, literal_ec);
     if (!literal_ec) {
-        return asio::ip::tcp::resolver::results_type::create(
-            asio::ip::tcp::endpoint(address, port), host, std::to_string(port));
+        return asio::ip::tcp::resolver::results_type::create(asio::ip::tcp::endpoint(address, port),
+                                                             host, std::to_string(port));
     }
 
     asio::ip::tcp::resolver resolver(ioc);
@@ -156,12 +155,12 @@ public:
 
         boost::system::error_code ec;
         bool done = false;
-        asio::async_connect(socket_, endpoints,
-                            [&](const boost::system::error_code& op_ec,
-                                const asio::ip::tcp::endpoint&) {
-                                done = true;
-                                ec = op_ec;
-                            });
+        asio::async_connect(
+            socket_, endpoints,
+            [&](const boost::system::error_code& op_ec, const asio::ip::tcp::endpoint&) {
+                done = true;
+                ec = op_ec;
+            });
         // Deadline expiry CLOSES the socket instead of cancelling it: the
         // multi-endpoint async_connect treats a cancelled per-endpoint attempt
         // as "try the next endpoint" and only stops when the socket is no
@@ -265,12 +264,12 @@ public:
 
         boost::system::error_code ec;
         bool done = false;
-        asio::async_connect(stream_.lowest_layer(), endpoints,
-                            [&](const boost::system::error_code& op_ec,
-                                const asio::ip::tcp::endpoint&) {
-                                done = true;
-                                ec = op_ec;
-                            });
+        asio::async_connect(
+            stream_.lowest_layer(), endpoints,
+            [&](const boost::system::error_code& op_ec, const asio::ip::tcp::endpoint&) {
+                done = true;
+                ec = op_ec;
+            });
         // Close-not-cancel on expiry: see TcpTransport — a cancelled range
         // connect just moves on to the next endpoint.
         run_pending(ioc_, remaining(deadline), done, ec, [&] {
@@ -435,9 +434,8 @@ public:
             }
             const DWORD err = ::GetLastError();
             if (err != ERROR_PIPE_BUSY) {
-                throw DockerError("Cannot open Docker named pipe '" + win_path +
-                                  "' (Win32 error " + std::to_string(err) +
-                                  "). Is Docker Desktop running?");
+                throw DockerError("Cannot open Docker named pipe '" + win_path + "' (Win32 error " +
+                                  std::to_string(err) + "). Is Docker Desktop running?");
             }
             // Busy: retry until the connect budget is spent (a WaitNamedPipe
             // wake-up does not guarantee THIS client wins the freed instance,
@@ -446,8 +444,8 @@ public:
                 throw TransportTimeoutError("Docker named pipe is busy: " + win_path +
                                             " (connect budget exhausted)");
             }
-            const DWORD busy_wait_ms = static_cast<DWORD>(
-                std::max<long long>(1, remaining(deadline).count()));
+            const DWORD busy_wait_ms =
+                static_cast<DWORD>(std::max<long long>(1, remaining(deadline).count()));
             ::WaitNamedPipeA(win_path.c_str(), busy_wait_ms);
         }
         boost::system::error_code ec;
@@ -530,9 +528,8 @@ public:
                 done = true;
                 ec = op_ec;
             });
-        const BOOL ok =
-            ::WriteFile(handle_.native_handle(), "", 0, /*bytes written*/ nullptr,
-                        overlapped.get());
+        const BOOL ok = ::WriteFile(handle_.native_handle(), "", 0, /*bytes written*/ nullptr,
+                                    overlapped.get());
         const DWORD last_error = ::GetLastError();
         if (!ok && last_error != ERROR_IO_PENDING) {
             // Failed to initiate: post the completion ourselves.

@@ -147,8 +147,7 @@ std::uint16_t mapped_host_port(DockerClient& client, const std::string& id,
     const ContainerInspect info = client.inspect_container(id);
     const std::string key = to_string(port);
 
-    const auto host_port =
-        docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    const auto host_port = docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
     if (!host_port) {
         throw DockerError("Container " + id + " has no published host port for " + key,
                           std::nullopt, id);
@@ -177,8 +176,8 @@ std::chrono::milliseconds probe_budget(Clock::time_point deadline) {
 /// GET `path`. Returns the response status, or std::nullopt if the
 /// connection/exchange failed or timed out (the caller treats that as "not
 /// ready yet").
-std::optional<int> http_probe(const std::string& host, std::uint16_t port,
-                              const std::string& path, std::chrono::milliseconds budget) {
+std::optional<int> http_probe(const std::string& host, std::uint16_t port, const std::string& path,
+                              std::chrono::milliseconds budget) {
     namespace asio = boost::asio;
     namespace beast = boost::beast;
     namespace http = boost::beast::http;
@@ -199,10 +198,8 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
         beast::tcp_stream stream(io);
         stream.expires_after(budget);
 
-        stream.async_connect(endpoints,
-                             [&](const boost::system::error_code& op_ec, const tcp::endpoint&) {
-                                 ec = op_ec;
-                             });
+        stream.async_connect(endpoints, [&](const boost::system::error_code& op_ec,
+                                            const tcp::endpoint&) { ec = op_ec; });
         io.run();
         if (ec) {
             return std::nullopt; // refused / unreachable / timed out -> not ready yet
@@ -214,9 +211,7 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
         req.keep_alive(false);
 
         http::async_write(stream, req,
-                          [&](const boost::system::error_code& op_ec, std::size_t) {
-                              ec = op_ec;
-                          });
+                          [&](const boost::system::error_code& op_ec, std::size_t) { ec = op_ec; });
         io.restart();
         io.run();
         if (ec) {
@@ -226,9 +221,7 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port,
         boost::beast::flat_buffer buffer;
         http::response<http::string_body> res;
         http::async_read(stream, buffer, res,
-                         [&](const boost::system::error_code& op_ec, std::size_t) {
-                             ec = op_ec;
-                         });
+                         [&](const boost::system::error_code& op_ec, std::size_t) { ec = op_ec; });
         io.restart();
         io.run();
         if (ec && ec != http::error::end_of_stream) {
@@ -264,10 +257,8 @@ bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::millise
 
         beast::tcp_stream stream(io);
         stream.expires_after(budget);
-        stream.async_connect(endpoints,
-                             [&](const boost::system::error_code& op_ec, const tcp::endpoint&) {
-                                 ec = op_ec;
-                             });
+        stream.async_connect(endpoints, [&](const boost::system::error_code& op_ec,
+                                            const tcp::endpoint&) { ec = op_ec; });
         io.run();
         if (ec) {
             return false; // refused / unreachable / timed out -> not ready yet
@@ -304,11 +295,11 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
         }
 
         if (Clock::now() >= deadline) {
-            throw StartupTimeoutError(
-                "Timed out waiting for HTTP " + std::to_string(cond.expected_status) + " from " +
-                    host + ":" + std::to_string(port) + cond.path + " (container " + id +
-                    ", last status " + std::to_string(last_status) + ")",
-                id);
+            throw StartupTimeoutError("Timed out waiting for HTTP " +
+                                          std::to_string(cond.expected_status) + " from " + host +
+                                          ":" + std::to_string(port) + cond.path + " (container " +
+                                          id + ", last status " + std::to_string(last_status) + ")",
+                                      id);
         }
         std::this_thread::sleep_for(interval);
     }

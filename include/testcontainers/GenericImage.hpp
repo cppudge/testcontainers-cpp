@@ -266,8 +266,7 @@ public:
     /// Override how the image reference is rewritten before create. When set this
     /// REPLACES the default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX);
     /// the function receives "name:tag" and returns the reference to actually use.
-    GenericImage& with_image_name_substitutor(
-        std::function<std::string(const std::string&)> fn) {
+    GenericImage& with_image_name_substitutor(std::function<std::string(const std::string&)> fn) {
         substitutor_ = std::move(fn);
         return *this;
     }
@@ -391,8 +390,10 @@ private:
 
     std::string image_;
     std::string tag_;
-    std::vector<ContainerPort> exposed_ports_; ///< domain ports (declared order); rendered at start()
-    std::vector<std::pair<std::string, std::string>> env_; ///< domain env; joined to "K=V" at start()
+    /// Domain ports (declared order); rendered at start().
+    std::vector<ContainerPort> exposed_ports_;
+    /// Domain env; joined to "K=V" at start().
+    std::vector<std::pair<std::string, std::string>> env_;
 
     /// Every verbatim create field (cmd, entrypoint, mounts, labels, host-config
     /// knobs, network, name, platform, …). Setters write here, getters read here,

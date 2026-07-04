@@ -28,13 +28,12 @@ std::string body_excerpt(const std::string& body) {
 /// unexpected shape/type) in a DockerError prefixed with `context`, so callers
 /// see one uniform error type instead of raw nlohmann exceptions (an HTML
 /// error page smuggled through a 200 must not escape as json::parse_error).
-template <class Fn>
-auto guard_parse(const char* context, const std::string& body, Fn&& fn) {
+template <class Fn> auto guard_parse(const char* context, const std::string& body, Fn&& fn) {
     try {
         return fn();
     } catch (const nlohmann::json::exception& e) {
-        throw DockerError(std::string(context) + ": unexpected response from Docker: " +
-                          e.what() + "; body: " + body_excerpt(body));
+        throw DockerError(std::string(context) + ": unexpected response from Docker: " + e.what() +
+                          "; body: " + body_excerpt(body));
     }
 }
 
@@ -388,8 +387,8 @@ static ContainerInspect parse_inspect_unguarded(const std::string& body) {
                             std::uint16_t hp = 0;
                             const auto [end, err] = std::from_chars(
                                 host_port.data(), host_port.data() + host_port.size(), hp);
-                            if (err != std::errc{} ||
-                                end != host_port.data() + host_port.size() || hp == 0) {
+                            if (err != std::errc{} || end != host_port.data() + host_port.size() ||
+                                hp == 0) {
                                 continue;
                             }
                             pb.host_port = hp;
@@ -431,7 +430,8 @@ static std::vector<ContainerSummary> parse_container_list_unguarded(const std::s
                 }
             }
         }
-        if (const auto labels = entry.find("Labels"); labels != entry.end() && labels->is_object()) {
+        if (const auto labels = entry.find("Labels");
+            labels != entry.end() && labels->is_object()) {
             for (const auto& [key, value] : labels->items()) {
                 if (value.is_string()) {
                     summary.labels.emplace(key, value.get<std::string>());
@@ -580,12 +580,10 @@ void throw_if_build_error(const std::string& build_stream, const std::string& ta
                                   std::nullopt, tag);
             }
             if (const auto detail = json.find("errorDetail"); detail != json.end()) {
-                const auto msg =
-                    detail->is_object() ? detail->find("message") : detail->end();
-                throw DockerError("image build failed: " +
-                                      (msg != detail->end() && msg->is_string()
-                                           ? msg->get<std::string>()
-                                           : detail->dump()),
+                const auto msg = detail->is_object() ? detail->find("message") : detail->end();
+                throw DockerError("image build failed: " + (msg != detail->end() && msg->is_string()
+                                                                ? msg->get<std::string>()
+                                                                : detail->dump()),
                                   std::nullopt, tag);
             }
         } catch (const nlohmann::json::parse_error&) {

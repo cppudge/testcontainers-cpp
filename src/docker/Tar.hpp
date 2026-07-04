@@ -31,9 +31,9 @@ std::string build_tar(const CopyToContainer& source);
 
 /// One file to place into a build-context tar.
 struct TarFile {
-    std::string name;   ///< path within the context (e.g. "Dockerfile", "app/x.txt")
-    std::string body;   ///< file contents (may be binary)
-    int mode = 0644;    ///< octal regular-file mode
+    std::string name; ///< path within the context (e.g. "Dockerfile", "app/x.txt")
+    std::string body; ///< file contents (may be binary)
+    int mode = 0644;  ///< octal regular-file mode
 };
 
 /// Build a USTAR archive holding all `files` as regular-file entries (names used

@@ -48,15 +48,14 @@ TEST_F(WaitStrategies, ExitCodeWaitSucceeds) {
 }
 
 TEST_F(WaitStrategies, HealthcheckWaitBecomesHealthy) {
-    Container c =
-        GenericImage("alpine", "3.20")
-            .with_cmd({"sleep", "60"})
-            .with_healthcheck(Healthcheck::cmd_shell("exit 0")
-                                  .with_interval(500ms)
-                                  .with_retries(3)
-                                  .with_start_period(0ms))
-            .with_wait(wait_for::healthy())
-            .start();
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cmd({"sleep", "60"})
+                      .with_healthcheck(Healthcheck::cmd_shell("exit 0")
+                                            .with_interval(500ms)
+                                            .with_retries(3)
+                                            .with_start_period(0ms))
+                      .with_wait(wait_for::healthy())
+                      .start();
     EXPECT_TRUE(c.is_running());
 }
 
@@ -107,10 +106,8 @@ TEST_F(WaitStrategies, TimeoutThrowsStartupTimeoutError) {
 class WindowsWaitStrategies : public tcit::WindowsEngineTest {};
 
 TEST_F(WindowsWaitStrategies, ExitCodeWaitSucceeds) {
-    Container c = nanoserver()
-                      .with_cmd({"cmd", "/c", "exit 7"})
-                      .with_wait(wait_for::exit_code(7))
-                      .start();
+    Container c =
+        nanoserver().with_cmd({"cmd", "/c", "exit 7"}).with_wait(wait_for::exit_code(7)).start();
     // The wait succeeded only because the container exited with code 7.
     EXPECT_FALSE(c.is_running());
 }
@@ -151,8 +148,8 @@ TEST_F(WindowsWaitStrategies, ListeningPortWaitOnServercore) {
     Container c =
         servercore()
             .with_cmd({"powershell", "-NoLogo", "-NoProfile", "-Command",
-                       // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one
-                       // PowerShell one-liner, split across adjacent literals.
+                       // One PowerShell one-liner, split across adjacent literals.
+                       // NOLINTNEXTLINE(bugprone-suspicious-missing-comma)
                        "$l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, "
                        "8080); $l.Start(); Write-Host tc-listening; "
                        "while ($true) { Start-Sleep -Seconds 1 }"})

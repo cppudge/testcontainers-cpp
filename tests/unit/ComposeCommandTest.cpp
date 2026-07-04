@@ -177,8 +177,8 @@ TEST(ComposeCommand, EnvWrappedScriptPrefixesAssignments) {
     // The exact /bin/sh -c script the containerised client execs: env
     // assignments first, then every argv token, all shell-quoted so values
     // with spaces and quotes survive the shell.
-    const std::string script = build_env_wrapped_script(
-        {"docker", "compose", "up"}, {{"FOO", "a b"}, {"Q", "it's"}});
+    const std::string script =
+        build_env_wrapped_script({"docker", "compose", "up"}, {{"FOO", "a b"}, {"Q", "it's"}});
     EXPECT_EQ(script, "FOO='a b' Q='it'\\''s' 'docker' 'compose' 'up'");
 }
 

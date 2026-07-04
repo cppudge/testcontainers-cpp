@@ -57,8 +57,8 @@ void parse_host_port(std::string rest, std::string& hostname, std::uint16_t& por
         std::uint32_t parsed = 0;
         const auto [end, err] =
             std::from_chars(port_str.data(), port_str.data() + port_str.size(), parsed);
-        if (err != std::errc{} || end != port_str.data() + port_str.size() ||
-            parsed < 1 || parsed > 65535) {
+        if (err != std::errc{} || end != port_str.data() + port_str.size() || parsed < 1 ||
+            parsed > 65535) {
             throw DockerError("Invalid port in Docker host: " + port_str);
         }
         port = static_cast<std::uint16_t>(parsed);
@@ -166,8 +166,14 @@ std::string sha256_hex(const std::string& data) {
             b = a;
             a = t1 + t2;
         }
-        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
-        h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+        h[5] += f;
+        h[6] += g;
+        h[7] += hh;
     }
 
     static constexpr char hex[] = "0123456789abcdef";
@@ -220,8 +226,7 @@ std::optional<std::string> current_context_from_config(const std::string& config
         if (!root.is_object()) {
             return std::nullopt;
         }
-        if (const auto ctx = root.find("currentContext");
-            ctx != root.end() && ctx->is_string()) {
+        if (const auto ctx = root.find("currentContext"); ctx != root.end() && ctx->is_string()) {
             return ctx->get<std::string>();
         }
     } catch (const nlohmann::json::parse_error&) {

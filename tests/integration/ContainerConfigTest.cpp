@@ -133,8 +133,7 @@ TEST_F(ContainerConfig, AlwaysPullPolicyStarts) {
                       .start();
 
     const ContainerLogs logs = c.logs();
-    EXPECT_NE(logs.stdout_data.find("ok"), std::string::npos)
-        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("ok"), std::string::npos) << "stdout was: " << logs.stdout_data;
 }
 
 TEST_F(ContainerConfig, BindMountReadOnly) {

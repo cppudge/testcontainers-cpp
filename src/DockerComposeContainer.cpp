@@ -42,11 +42,10 @@ using detail::random_hex;
 /// Resolve the published host port for `key` (e.g. "6379/tcp") in an inspect,
 /// preferring the IPv4 binding (same policy as Container::get_host_port).
 std::uint16_t published_host_port(const ContainerInspect& info, const std::string& key) {
-    const auto host_port =
-        docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    const auto host_port = docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
     if (!host_port) {
-        throw DockerError("Compose service container " + info.id +
-                          " published no host port for " + key);
+        throw DockerError("Compose service container " + info.id + " published no host port for " +
+                          key);
     }
     return *host_port;
 }
@@ -430,11 +429,10 @@ void DockerComposeContainer::start() {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         if (!connected) {
-            throw StartupTimeoutError("Compose service '" + service + "' host port " +
-                                          std::to_string(host_port) +
-                                          " did not accept a connection within the wait timeout: " +
-                                          ec.message(),
-                                      service);
+            throw StartupTimeoutError(
+                "Compose service '" + service + "' host port " + std::to_string(host_port) +
+                    " did not accept a connection within the wait timeout: " + ec.message(),
+                service);
         }
     }
 }

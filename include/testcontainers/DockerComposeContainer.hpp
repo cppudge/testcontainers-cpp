@@ -200,9 +200,7 @@ private:
     public:
         TempFile() = default;
         explicit TempFile(std::string path) noexcept : path_(std::move(path)) {}
-        TempFile(TempFile&& other) noexcept : path_(std::move(other.path_)) {
-            other.path_.clear();
-        }
+        TempFile(TempFile&& other) noexcept : path_(std::move(other.path_)) { other.path_.clear(); }
         TempFile& operator=(TempFile&& other) noexcept; // deletes the current file first
         TempFile(const TempFile&) = delete;
         TempFile& operator=(const TempFile&) = delete;
@@ -216,11 +214,11 @@ private:
         std::string path_;
     };
 
-    std::vector<std::string> compose_files_;         ///< host compose files
-    std::string project_;                            ///< compose project name
-    std::string compose_image_;                      ///< containerised ambassador image
+    std::vector<std::string> compose_files_; ///< host compose files
+    std::string project_;                    ///< compose project name
+    std::string compose_image_;              ///< containerised ambassador image
     ComposeClientKind client_kind_ = ComposeClientKind::Local;
-    std::map<std::string, std::string> env_;         ///< compose env vars
+    std::map<std::string, std::string> env_; ///< compose env vars
     bool build_ = false;
     bool pull_ = false;
     bool wait_ = true;

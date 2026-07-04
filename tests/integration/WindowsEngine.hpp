@@ -41,10 +41,14 @@ inline std::string nanoserver_tag_for(testcontainers::DockerClient& client) {
     }
     const long build = std::strtol(res.body.c_str() + at + marker.size(), nullptr, 10);
     switch (build) {
-    case 17763: return "ltsc2019";
-    case 20348: return "ltsc2022";
-    case 26100: return "ltsc2025";
-    default:    return "";
+    case 17763:
+        return "ltsc2019";
+    case 20348:
+        return "ltsc2022";
+    case 26100:
+        return "ltsc2025";
+    default:
+        return "";
     }
 }
 
@@ -61,10 +65,9 @@ protected:
         }
         testcontainers::DockerClient client = testcontainers::DockerClient::from_environment();
         tag_ = nanoserver_tag_for(client);
-        ASSERT_FALSE(tag_.empty())
-            << "no nanoserver tag known for this daemon's Windows build - "
-               "extend nanoserver_tag_for() (GET /version KernelVersion: "
-            << client.request("GET", "/version").body.substr(0, 512) << ")";
+        ASSERT_FALSE(tag_.empty()) << "no nanoserver tag known for this daemon's Windows build - "
+                                      "extend nanoserver_tag_for() (GET /version KernelVersion: "
+                                   << client.request("GET", "/version").body.substr(0, 512) << ")";
     }
 
     /// The build-matched nanoserver base, ready for with_* chaining. Pinned to

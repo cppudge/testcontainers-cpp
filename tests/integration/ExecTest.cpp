@@ -79,8 +79,7 @@ TEST_F(Exec, PassesEnv) {
     ExecOptions opts;
     opts.env = {"FOO=bar"};
     const ExecResult res = c.exec({"sh", "-c", "echo $FOO"}, opts);
-    EXPECT_NE(res.stdout_data.find("bar"), std::string::npos)
-        << "stdout was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find("bar"), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }
 
@@ -90,8 +89,7 @@ TEST_F(Exec, UsesWorkingDir) {
     ExecOptions opts;
     opts.working_dir = "/tmp";
     const ExecResult res = c.exec({"pwd"}, opts);
-    EXPECT_NE(res.stdout_data.find("/tmp"), std::string::npos)
-        << "stdout was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find("/tmp"), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }
 
@@ -101,8 +99,7 @@ TEST_F(Exec, RunsAsUser) {
     ExecOptions opts;
     opts.user = "0"; // root
     const ExecResult res = c.exec({"id", "-u"}, opts);
-    EXPECT_NE(res.stdout_data.find('0'), std::string::npos)
-        << "stdout was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find('0'), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }
 
@@ -124,11 +121,11 @@ TEST_F(Exec, StreamsOutputIncrementally) {
     Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
 
     std::string collected;
-    const ExecResult res = c.exec({"echo", "stream-me"}, ExecOptions{},
-                                  [&](LogSource, std::string_view data) {
-                                      collected.append(data);
-                                      return true; // keep receiving
-                                  });
+    const ExecResult res =
+        c.exec({"echo", "stream-me"}, ExecOptions{}, [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return true; // keep receiving
+        });
     EXPECT_NE(collected.find("stream-me"), std::string::npos) << "collected: " << collected;
     EXPECT_EQ(res.exit_code, 0);
     // The streaming overload delivers output to the consumer, not the result.
@@ -143,8 +140,8 @@ TEST_F(Exec, StreamingStopsWhenConsumerReturnsFalse) {
     // stops the stream early (the connection is closed). We should not hang.
     int chunks = 0;
     const ExecResult res =
-        c.exec({"sh", "-c", "for i in 1 2 3 4 5; do echo line$i; sleep 0.2; done"},
-               ExecOptions{}, [&](LogSource, std::string_view) {
+        c.exec({"sh", "-c", "for i in 1 2 3 4 5; do echo line$i; sleep 0.2; done"}, ExecOptions{},
+               [&](LogSource, std::string_view) {
                    ++chunks;
                    return false; // stop immediately
                });
@@ -173,8 +170,7 @@ TEST_F(Exec, FeedsStdin) {
     ExecOptions opts;
     opts.stdin_data = "ping\n";
     const ExecResult res = c.exec({"cat"}, opts);
-    EXPECT_NE(res.stdout_data.find("ping"), std::string::npos)
-        << "stdout was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find("ping"), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }
 
@@ -216,8 +212,7 @@ TEST_F(Exec, PrivilegedExecExpandsCapabilities) {
     // Privileged = a strict superset of the default exec's capabilities.
     EXPECT_EQ(priv_caps & plain_caps, plain_caps)
         << "privileged caps lost some default bits: " << priv.stdout_data;
-    EXPECT_NE(priv_caps, plain_caps)
-        << "privileged exec gained nothing: " << priv.stdout_data;
+    EXPECT_NE(priv_caps, plain_caps) << "privileged exec gained nothing: " << priv.stdout_data;
 }
 
 // The Windows mirror: every exec surface exercised above, but against a Windows
@@ -244,8 +239,7 @@ TEST_F(WindowsExec, PassesEnv) {
     ExecOptions opts;
     opts.env = {"FOO=bar"};
     const ExecResult res = c.exec({"cmd", "/c", "echo %FOO%"}, opts);
-    EXPECT_NE(res.stdout_data.find("bar"), std::string::npos)
-        << "stdout was: " << res.stdout_data;
+    EXPECT_NE(res.stdout_data.find("bar"), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }
 
@@ -311,12 +305,12 @@ TEST_F(WindowsExec, StreamingStopsWhenConsumerReturnsFalse) {
     // consumer returns false after the first chunk, which stops the stream
     // early (the connection is closed). We should not hang.
     int chunks = 0;
-    const ExecResult res = c.exec(
-        {"cmd", "/c", "for /L %i in (1,1,5) do (echo line%i & ping -n 2 127.0.0.1 >nul)"},
-        ExecOptions{}, [&](LogSource, std::string_view) {
-            ++chunks;
-            return false; // stop immediately
-        });
+    const ExecResult res =
+        c.exec({"cmd", "/c", "for /L %i in (1,1,5) do (echo line%i & ping -n 2 127.0.0.1 >nul)"},
+               ExecOptions{}, [&](LogSource, std::string_view) {
+                   ++chunks;
+                   return false; // stop immediately
+               });
     EXPECT_GE(chunks, 1);
     // Exit code is still read from the exec inspect (it may be 0 or non-zero
     // depending on how far the command got before we closed the stream); the key

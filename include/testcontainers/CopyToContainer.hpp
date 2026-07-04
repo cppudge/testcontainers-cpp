@@ -62,8 +62,8 @@ private:
     bool is_file_ = false;
     std::filesystem::path host_path_; ///< set when is_file_ (host filesystem path)
     std::string bytes_;               ///< set when !is_file_ (may be binary)
-    std::string target_;    ///< absolute path inside the container
-    int mode_ = 0644;       ///< octal regular-file mode
+    std::string target_;              ///< absolute path inside the container
+    int mode_ = 0644;                 ///< octal regular-file mode
 };
 
 } // namespace testcontainers
