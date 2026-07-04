@@ -106,6 +106,27 @@ jobs:
           if ($svc.Status -ne 'Running') { Start-Service docker }
           docker version --format 'daemon os: {{.Server.Os}}'
 
+      # DIAGNOSTIC (2026-07-05): WindowsContainer.ExecRunsInRunningContainer
+      # hangs on these runners (daemon 29.1.5) while the same test is solid on
+      # a 29.6.1 daemon. This step replays the exact scenario through the
+      # docker CLI: if THIS hangs too, the daemon's exec stream never closes
+      # (a daemon-side regression, not our client) — fail fast with the
+      # verdict either way so one run answers the question.
+      - name: Probe daemon exec via docker CLI (diagnostic)
+        run: |
+          docker run -d --name tc-exec-probe mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c ping -n 60 127.0.0.1
+          $job = Start-Job { docker exec tc-exec-probe cmd /c echo probe-ok }
+          if (Wait-Job $job -Timeout 90) {
+            Receive-Job $job
+            Write-Output "VERDICT: CLI exec completed - the daemon exec path works; suspect the client read path"
+          } else {
+            Stop-Job $job
+            docker rm -f tc-exec-probe
+            Write-Error "VERDICT: CLI exec hung >90s - daemon-side exec regression on this runner's Docker"
+            exit 1
+          }
+          docker rm -f tc-exec-probe
+
       # The runner's daemon (npipe transport) runs WINDOWS containers: the
       # Linux-guarded suites self-skip, while WindowsContainer.* really runs —
       # nanoserver:ltsc2022 is pre-cached on windows-2022 images, and the test
