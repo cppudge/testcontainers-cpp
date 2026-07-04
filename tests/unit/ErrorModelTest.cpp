@@ -1,16 +1,9 @@
 #include <gtest/gtest.h>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/write.hpp>
-
-#include <atomic>
 #include <string>
-#include <thread>
 #include <type_traits>
-#include <utility>
-#include <vector>
 
+#include "CannedHttpServer.hpp"
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/RegistryAuth.hpp"
@@ -35,88 +28,14 @@
 
 namespace {
 
-namespace asio = boost::asio;
-using asio::ip::tcp;
+using tcunit::CannedHttpServer;
+using tcunit::http_response;
 
 using testcontainers::DockerError;
-using testcontainers::DockerHost;
 using testcontainers::Error;
 using testcontainers::NotFoundError;
 using testcontainers::StartupTimeoutError;
 using testcontainers::TransportTimeoutError;
-
-/// A loopback HTTP responder: serves ONE connection per canned response (in
-/// order), each time reading until the end of the request head, writing the
-/// response verbatim, and closing. Exactly enough server to drive
-/// DockerClient's status/parse error paths and the create->pull->retry loop.
-class CannedHttpServer {
-public:
-    explicit CannedHttpServer(std::string response)
-        : CannedHttpServer(std::vector<std::string>{std::move(response)}) {}
-
-    explicit CannedHttpServer(std::vector<std::string> responses)
-        : acceptor_(ioc_, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0)),
-          port_(acceptor_.local_endpoint().port()),
-          thread_([this, responses = std::move(responses)] {
-              for (const std::string& response : responses) {
-                  boost::system::error_code ec;
-                  tcp::socket socket(ioc_);
-                  acceptor_.accept(socket, ec);
-                  if (ec || stop_) {
-                      return; // destroyed before every response was requested
-                  }
-                  // Read until the blank line ending the request head (our
-                  // requests carry no body worth waiting for beyond that).
-                  std::string request;
-                  char buf[1024];
-                  while (request.find("\r\n\r\n") == std::string::npos) {
-                      const std::size_t n = socket.read_some(asio::buffer(buf), ec);
-                      if (ec) {
-                          break;
-                      }
-                      request.append(buf, n);
-                  }
-                  asio::write(socket, asio::buffer(response), ec);
-                  boost::system::error_code ignore;
-                  socket.shutdown(tcp::socket::shutdown_both, ignore);
-                  socket.close(ignore);
-              }
-          }) {}
-
-    ~CannedHttpServer() {
-        // Unblock a pending accept with a throwaway connection instead of
-        // closing the acceptor under the server thread's feet (concurrent ops
-        // on one Asio object from two threads are undefined). The thread sees
-        // stop_ right after its accept returns and exits.
-        stop_ = true;
-        {
-            asio::io_context poke_io;
-            tcp::socket poke(poke_io);
-            boost::system::error_code ignore;
-            poke.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), port_), ignore);
-        }
-        thread_.join();
-        boost::system::error_code ignore;
-        acceptor_.close(ignore);
-    }
-
-    DockerHost host() const {
-        return DockerHost::parse("tcp://127.0.0.1:" + std::to_string(port_));
-    }
-
-private:
-    asio::io_context ioc_;
-    tcp::acceptor acceptor_;
-    std::uint16_t port_;
-    std::atomic<bool> stop_{false};
-    std::thread thread_;
-};
-
-std::string http_response(int status, const std::string& reason, const std::string& body) {
-    return "HTTP/1.1 " + std::to_string(status) + " " + reason +
-           "\r\nContent-Type: application/json\r\nContent-Length: " +
-           std::to_string(body.size()) + "\r\n\r\n" + body;
-}
 
 } // namespace
 

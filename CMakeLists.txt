@@ -62,6 +62,7 @@ add_library(testcontainers
     src/WaitStrategies.cpp
     src/GenericImage.cpp
     src/GenericBuildableImage.cpp
+    src/Runner.cpp
     src/Container.cpp
     src/Network.cpp
     src/Volume.cpp
@@ -127,6 +128,7 @@ if(BUILD_TESTING)
         tests/unit/StreamReadTest.cpp
         tests/unit/TransportTimeoutTest.cpp
         tests/unit/ErrorModelTest.cpp
+        tests/unit/RunnerTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp

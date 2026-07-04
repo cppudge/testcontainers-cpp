@@ -10,6 +10,7 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Lifecycle.hpp"
@@ -20,12 +21,6 @@
 #include "testcontainers/docker/ContainerSpec.hpp"
 
 namespace testcontainers {
-
-/// When to pull the image before creating the container.
-enum class ImagePullPolicy {
-    Default, ///< pull only if missing locally (lazy, on create 404) — today's behavior
-    Always,  ///< always pull before create (even if present locally)
-};
 
 /// A reusable, copyable description of a container to run: image reference,
 /// exposed ports, environment, command, labels, and readiness conditions.
@@ -341,6 +336,14 @@ public:
     const std::vector<LifecycleHook>& stopping_hooks() const noexcept { return stopping_hooks_; }
     int startup_attempts() const noexcept { return startup_attempts_; }
 
+    /// Snapshot this builder into a self-contained `ContainerRequest` — the
+    /// fully-translated create spec (resolved/substituted image reference, env
+    /// joined to "KEY=VALUE", ports rendered to "6379/tcp" + publish-all) plus
+    /// every run-time input (waits, copy-to sources, hooks, pull/reuse/retry
+    /// policy). `start()` is exactly `run(to_request())`; call this directly to
+    /// tweak the request or to `run()` it on a custom DockerClient.
+    ContainerRequest to_request() const;
+
     /// Create, start, and wait for a container from this image, returning a RAII
     /// handle that removes the container on destruction. Throws on failure
     /// (best-effort removing a container that started but never became ready).
@@ -351,7 +354,7 @@ private:
     /// (which already holds every verbatim create field) with the fields that
     /// need translation filled in — the resolved/substituted image reference,
     /// env joined to "KEY=VALUE", and exposed ports rendered to "6379/tcp" with
-    /// publish-all turned on. Session/reuse labels are layered on by `start()`.
+    /// publish-all turned on. Session/reuse labels are layered on by `run()`.
     CreateContainerSpec build_spec() const;
 
     std::string image_;

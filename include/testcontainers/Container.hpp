@@ -15,7 +15,9 @@
 
 namespace testcontainers {
 
-class GenericImage;
+namespace detail {
+class Runner;
+}
 
 /// Who removes an adopted container. No default on purpose: adopting a
 /// container this library did not create must state the ownership decision
@@ -183,10 +185,11 @@ public:
     void remove();
 
 private:
-    // The constructor below is GenericImage::start()'s (the friend's) private
+    // The constructor below is the start orchestration's (the friend's) private
     // channel for handing over a fully-configured handle; it is not part of
-    // the user-facing API.
-    friend class GenericImage;
+    // the user-facing API. detail::Runner is what GenericImage::start() / the
+    // free run() ultimately drive.
+    friend class detail::Runner;
 
     /// Wrap an already-created, already-started container. The wiring is
     /// constructor-only so a handle is never observable half-configured:

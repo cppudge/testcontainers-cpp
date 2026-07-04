@@ -25,6 +25,7 @@
 //   GenericImage.LifecycleHooksGrowVectors - each with_*_hook builder appends to the matching hook vector (in order across repeated calls).
 //   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
 //   GenericImage.LifecycleBuildersChainOnRvalue - the hook/attempts builders chain on a temporary rvalue.
+//   GenericImage.ToRequestSnapshotsBuilderState - to_request() carries the translated create spec (image ref, "K=V" env, "port/proto" strings, publish-all) plus every orchestration field, one-to-one with the builders.
 
 using namespace testcontainers;
 
@@ -256,4 +257,51 @@ TEST(GenericImage, LifecycleBuildersChainOnRvalue) {
     EXPECT_EQ(img.started_hooks().size(), 1u);
     EXPECT_EQ(img.stopping_hooks().size(), 1u);
     EXPECT_EQ(img.startup_attempts(), 2);
+}
+
+TEST(GenericImage, ToRequestSnapshotsBuilderState) {
+    const LifecycleHook noop = [](DockerClient&, const std::string&) {};
+    GenericImage img("redis", "7.2");
+    img.with_exposed_port(tcp(6379))
+        .with_env("MODE", "standalone")
+        .with_cmd({"redis-server"})
+        .with_copy_to(CopyToContainer::content("hello", "/tmp/hello.txt"))
+        .with_wait(wait_for::stdout_message("Ready"))
+        .with_startup_timeout(std::chrono::milliseconds(5000))
+        .with_registry_auth(RegistryAuth{})
+        .with_image_pull_policy(ImagePullPolicy::Always)
+        .with_reuse(true)
+        .with_created_hook(noop)
+        .with_starting_hook(noop)
+        .with_started_hook(noop)
+        .with_stopping_hook(noop)
+        .with_startup_attempts(3)
+        // A custom substitutor pins the image reference, keeping the assert
+        // independent of TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX in the environment.
+        .with_image_name_substitutor([](const std::string& ref) { return "sub/" + ref; });
+
+    const ContainerRequest req = img.to_request();
+
+    // The create spec is fully translated.
+    EXPECT_EQ(req.spec.image, "sub/redis:7.2");
+    EXPECT_EQ(req.spec.cmd, (std::vector<std::string>{"redis-server"}));
+    EXPECT_EQ(req.spec.env, (std::vector<std::string>{"MODE=standalone"}));
+    EXPECT_EQ(req.spec.exposed_ports, (std::vector<std::string>{"6379/tcp"}));
+    EXPECT_TRUE(req.spec.publish_all_ports);
+
+    // The orchestration fields mirror the builders one-to-one.
+    EXPECT_EQ(req.exposed_ports, (std::vector<ContainerPort>{tcp(6379)}));
+    ASSERT_EQ(req.copy_to_sources.size(), 1u);
+    EXPECT_EQ(req.copy_to_sources[0].target(), "/tmp/hello.txt");
+    ASSERT_EQ(req.waits.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<wait::LogMessage>(req.waits[0]));
+    EXPECT_EQ(req.startup_timeout, std::chrono::milliseconds(5000));
+    EXPECT_TRUE(req.registry_auth.has_value());
+    EXPECT_EQ(req.pull_policy, ImagePullPolicy::Always);
+    EXPECT_TRUE(req.reuse);
+    EXPECT_EQ(req.created_hooks.size(), 1u);
+    EXPECT_EQ(req.starting_hooks.size(), 1u);
+    EXPECT_EQ(req.started_hooks.size(), 1u);
+    EXPECT_EQ(req.stopping_hooks.size(), 1u);
+    EXPECT_EQ(req.startup_attempts, 3);
 }
