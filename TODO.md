@@ -5,13 +5,6 @@ documented in [docs/06-feature-notes.md](docs/06-feature-notes.md); an item leav
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-- **Named-pipe half-close for exec-stdin** — moby creates the daemon pipe in message mode, and
-  go-winio's `CloseWrite` signals EOF with a zero-length message (`WriteFile(h, buf, 0, ...)`) —
-  exactly how `docker exec -i` works on Windows. Implement on the Asio `stream_handle` via
-  `native_handle()`; exec-stdin then works on the PRIMARY local transport and `Exec.FeedsStdin`
-  un-skips there, leaving the up-front throw a TLS-only edge case (Go's `tls.Conn` has no
-  `CloseWrite` either — even the docker CLI hangs there, so throwing beats the reference).
-  (`src/docker/Transport.cpp`)
 - **`DockerComposeContainer` moves are 17-member hand-written** — the move ctor/assign must
   manually zero `temp_file_`/`started_`/`stopped_` and copy every field; the next added field
   will silently be dropped from the move. Fix direction: a small RAII `TempFile` member

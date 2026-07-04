@@ -131,14 +131,16 @@ inline std::string read_error_body(docker::TransportStream& stream,
 }
 
 /// Read the response header off a hijacked/streaming connection and require
-/// HTTP 200: on a read error, an immediate EOF, or a non-200 status this
-/// closes `transport` and throws the typed error prefixed with `context` (a
-/// deadline expiry becomes TransportTimeoutError, a non-200 goes through
+/// HTTP 200 (or, with `accept_upgraded`, the 101 a connection-upgrade request
+/// is answered with): on a read error, an immediate EOF, or a failing status
+/// this closes `transport` and throws the typed error prefixed with `context`
+/// (a deadline expiry becomes TransportTimeoutError, a bad status goes through
 /// throw_status_error with the daemon's drained error body appended).
 template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
                     boost::beast::flat_buffer& buffer, Parser& parser,
-                    const std::string& context, const std::string& resource_id = {}) {
+                    const std::string& context, const std::string& resource_id = {},
+                    bool accept_upgraded = false) {
     boost::system::error_code ec;
     http::read_header(stream, buffer, parser, ec);
     if (ec == http::error::end_of_stream && !parser.is_header_done()) {
@@ -152,8 +154,8 @@ void read_ok_header(docker::ITransport& transport, docker::TransportStream& stre
         transport.close();
         docker::throw_transport_error(context + " failed to read response: " + ec.message(), ec);
     }
-    if (parser.get().result_int() != 200) {
-        const int status = static_cast<int>(parser.get().result_int());
+    const int status = static_cast<int>(parser.get().result_int());
+    if (status != 200 && !(accept_upgraded && status == 101)) {
         const std::string detail = read_error_body(stream, buffer, parser);
         transport.close();
         throw_status_error(context, status, detail, resource_id);
@@ -594,17 +596,16 @@ void require_stdin_capable(docker::ITransport& transport, const ExecOptions& opt
     if (opts.stdin_data && !transport.supports_half_close()) {
         transport.close();
         throw DockerError(
-            "exec: stdin_data requires a transport that supports half-close (TCP or "
-            "unix socket); the Windows named-pipe and TLS transports cannot signal "
-            "EOF, so the in-container reader would hang");
+            "exec: stdin_data requires a transport that can signal EOF (TCP, unix "
+            "socket, or a message-mode Windows named pipe); the TLS transport (and a "
+            "byte-mode pipe) cannot half-close, so the in-container reader would hang");
     }
 }
 
 /// Open the exec start stream on an already-connected `stream`: write
-/// `POST /exec/{exec_id}/start` and, when `opts.stdin_data` is set, feed those
-/// bytes then half-close the send side so an in-container reader (e.g. `cat`)
-/// sees EOF. On a write error, closes `transport` and throws DockerError. The
-/// caller then reads the (multiplexed or, with tty, raw) response off `stream`.
+/// `POST /exec/{exec_id}/start`. On a write error, closes `transport` and
+/// throws. The caller must then read the response HEADER, feed stdin via
+/// `feed_stdin` (if any), and read the (multiplexed or, with tty, raw) body.
 void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
                 const DockerHost& host, const std::string& exec_id, const ExecOptions& opts) {
     const std::string start_target = "/exec/" + exec_id + "/start";
@@ -613,6 +614,16 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
 
     auto req = make_request<http::string_body>(http::verb::post, start_target, host);
     req.set(http::field::content_type, "application/json");
+    if (opts.stdin_data) {
+        // Ask the daemon to switch the connection to a raw bidirectional
+        // stream (101 UPGRADED) — how the docker CLI attaches stdin. Without
+        // the upgrade, HTTP-aware intermediaries (Docker Desktop's named-pipe
+        // proxy) treat client bytes sent after the completed POST as the start
+        // of the NEXT request and drop them: stdin (and its EOF) never reaches
+        // the container, even though a direct daemon connection tolerates it.
+        req.set(http::field::connection, "Upgrade");
+        req.set(http::field::upgrade, "tcp");
+    }
     req.body() = start_body;
     req.prepare_payload();
 
@@ -623,28 +634,38 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
         docker::throw_transport_error(
             "exec start " + exec_id + " failed to send request: " + ec.message(), ec);
     }
+}
 
-    // Feed stdin (if any) onto the same hijacked stream, then half-close the send
-    // side so the in-container reader terminates on EOF.
-    if (opts.stdin_data) {
-        const std::string& in = *opts.stdin_data;
-        std::size_t sent = 0;
-        while (sent < in.size() && !ec) {
-            const std::size_t n = stream.write_some(
-                boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
-            if (n == 0 && !ec) {
-                // Defensive: a 0-byte write without an error would spin forever.
-                ec = boost::asio::error::broken_pipe;
-            }
-            sent += n;
-        }
-        if (ec) {
-            transport.close();
-            docker::throw_transport_error(
-                "exec start " + exec_id + " failed to send stdin: " + ec.message(), ec);
-        }
-        transport.shutdown_send(); // signal end-of-input (EOF) to the container
+/// Feed `opts.stdin_data` (when set) onto the hijacked stream, then half-close
+/// the send side so the in-container reader (e.g. `cat`) terminates on EOF.
+/// MUST run after the exec-start response header has been read: bytes written
+/// before the daemon switches the connection to the raw stream are dropped by
+/// intermediaries (Docker Desktop's named-pipe proxy loses both the data and
+/// the EOF; the docker CLI also reads the response header before streaming
+/// stdin). On a write error, closes `transport` and throws.
+void feed_stdin(docker::ITransport& transport, docker::TransportStream& stream,
+                const std::string& exec_id, const ExecOptions& opts) {
+    if (!opts.stdin_data) {
+        return;
     }
+    boost::system::error_code ec;
+    const std::string& in = *opts.stdin_data;
+    std::size_t sent = 0;
+    while (sent < in.size() && !ec) {
+        const std::size_t n = stream.write_some(
+            boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
+        if (n == 0 && !ec) {
+            // Defensive: a 0-byte write without an error would spin forever.
+            ec = boost::asio::error::broken_pipe;
+        }
+        sent += n;
+    }
+    if (ec) {
+        transport.close();
+        docker::throw_transport_error(
+            "exec start " + exec_id + " failed to send stdin: " + ec.message(), ec);
+    }
+    transport.shutdown_send(); // signal end-of-input (EOF) to the container
 }
 
 } // namespace
@@ -666,8 +687,8 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     const std::string exec_id =
         exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
 
-    // 3) Start the exec over the raw transport stream so we can (when requested)
-    //    hijack stdin (see exec_start).
+    // 3) Start the exec over the raw transport stream so stdin can (when
+    //    requested) be hijacked after the response header (see feed_stdin).
     docker::TransportStream stream{*transport};
     exec_start(*transport, stream, host_, exec_id, opts);
 
@@ -677,17 +698,38 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     boost::beast::flat_buffer buffer;
     http::response_parser<http::string_body> parser;
     parser.body_limit(boost::none);
-    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id);
-    // The body completes only when the command exits — it may legitimately run
-    // (and stay silent) for as long as the caller's command takes.
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
+                   /*accept_upgraded=*/opts.stdin_data.has_value());
+    // Stdin goes in only AFTER the response header: the connection is now the
+    // raw hijacked stream end to end (see feed_stdin).
+    feed_stdin(*transport, stream, exec_id, opts);
+    // The output completes only when the command exits — it may legitimately
+    // run (and stay silent) for as long as the caller's command takes.
     transport->set_io_timeout(std::nullopt);
-    http::read(stream, buffer, parser, ec); // the rest of the body
-    if (ec && ec != http::error::end_of_stream) {
-        transport->close();
-        docker::throw_transport_error(
-            "exec start " + exec_id + " failed to read response: " + ec.message(), ec);
+    std::string body;
+    if (parser.get().result_int() == 101) {
+        // Upgraded (the stdin path): the exec stream arrives raw on the
+        // connection, not as an HTTP body; the header parse may already have
+        // pulled some of it into `buffer`.
+        const auto leftover = buffer.data();
+        body = docker::read_raw_stream(
+            *transport,
+            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()), ec);
+        if (ec) {
+            transport->close();
+            docker::throw_transport_error(
+                "exec start " + exec_id + " failed to read the upgraded stream: " + ec.message(),
+                ec);
+        }
+    } else {
+        http::read(stream, buffer, parser, ec); // the rest of the body
+        if (ec && ec != http::error::end_of_stream) {
+            transport->close();
+            docker::throw_transport_error(
+                "exec start " + exec_id + " failed to read response: " + ec.message(), ec);
+        }
+        body = std::move(parser.get().body());
     }
-    std::string body = std::move(parser.get().body());
     transport->close();
 
     ExecResult out;
@@ -719,8 +761,8 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     const std::string exec_id =
         exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
 
-    // 3) Start the exec over the raw stream so output can be consumed incrementally
-    //    (and stdin hijacked) — see exec_start.
+    // 3) Start the exec over the raw stream so output can be consumed
+    //    incrementally (and stdin hijacked after the header — see feed_stdin).
     docker::TransportStream stream{*transport};
     exec_start(*transport, stream, host_, exec_id, opts);
 
@@ -731,11 +773,24 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id);
+    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
+                   /*accept_upgraded=*/opts.stdin_data.has_value());
+    // Stdin goes in only AFTER the response header (see feed_stdin).
+    feed_stdin(*transport, stream, exec_id, opts);
     // Streaming exec output idles until the command writes the next chunk —
     // waiting indefinitely is the intended behavior from here on.
     transport->set_io_timeout(std::nullopt);
-    docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+    if (parser.get().result_int() == 101) {
+        // Upgraded (the stdin path): raw stream, not an HTTP body (see the
+        // non-streaming overload).
+        const auto leftover = buffer.data();
+        docker::stream_raw_to_consumer(
+            *transport,
+            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()),
+            opts.tty, consumer);
+    } else {
+        docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+    }
     transport->close();
 
     // 5) Inspect the exec for the exit code; the output went to consumer, so

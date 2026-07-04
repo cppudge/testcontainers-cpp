@@ -25,8 +25,8 @@
 //   Exec.TtyCapturesRawStdout - tty=true returns raw output in stdout_data with stderr_data empty.
 //   Exec.StreamsOutputIncrementally - the streaming overload delivers chunks to the consumer and reports the exit code.
 //   Exec.StreamingStopsWhenConsumerReturnsFalse - returning false from the consumer stops the stream early.
-//   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); skipped on the named-pipe/TLS transport (no half-close, so the reader never sees EOF).
-//   Exec.StdinThrowsOnNonHalfClosableTransport - on the named-pipe/TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on unix-socket/TCP.
+//   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
+//   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
 
 using namespace testcontainers;
 
@@ -142,14 +142,13 @@ TEST_F(Exec, StreamingStopsWhenConsumerReturnsFalse) {
 
 TEST_F(Exec, FeedsStdin) {
     // Feeding stdin relies on half-closing the send side so the in-container
-    // reader sees EOF. Only the unix-socket and TCP transports implement a real
-    // half-close; the Windows named pipe and TLS transports cannot (their
-    // shutdown_send() is a documented no-op), so `cat` would block forever there.
-    // Skip on those transports rather than hang.
+    // reader sees EOF. Unix sockets and TCP shutdown(send); the Windows named
+    // pipe sends a zero-length message (the daemon pipe is message-mode; this
+    // is `docker exec -i`'s mechanism). Only TLS cannot signal EOF (SSL has no
+    // half-close) — skip there rather than hang.
     const DockerScheme scheme = DockerClient::from_environment().host().scheme();
-    if (scheme == DockerScheme::NamedPipe || scheme == DockerScheme::Https) {
-        GTEST_SKIP() << "exec-stdin needs a half-closable transport (unix socket / TCP); "
-                        "the named-pipe / TLS transport cannot signal EOF";
+    if (scheme == DockerScheme::Https) {
+        GTEST_SKIP() << "exec-stdin needs a half-closable transport; TLS cannot signal EOF";
     }
 
     Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
@@ -166,11 +165,13 @@ TEST_F(Exec, FeedsStdin) {
 
 TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {
     // The inverse of FeedsStdin: on a transport whose shutdown_send() is a no-op
-    // (Windows named pipe, TLS) exec must fail loudly instead of leaving the
-    // in-container reader waiting forever for an EOF that never comes.
+    // (TLS; a byte-mode named pipe) exec must fail loudly instead of leaving the
+    // in-container reader waiting forever for an EOF that never comes. A real
+    // daemon's named pipe is message-mode and half-closes, so this only fires
+    // on TLS.
     const DockerScheme scheme = DockerClient::from_environment().host().scheme();
-    if (scheme != DockerScheme::NamedPipe && scheme != DockerScheme::Https) {
-        GTEST_SKIP() << "this transport half-closes; the guard only fires on named pipe / TLS";
+    if (scheme != DockerScheme::Https) {
+        GTEST_SKIP() << "this transport half-closes; the guard only fires on TLS";
     }
 
     Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();

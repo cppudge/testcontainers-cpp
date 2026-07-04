@@ -102,11 +102,14 @@ cooperative stop via the consumer — run it on your own thread). TTY containers
 pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 
 **Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data) plus a
-streaming overload (`exec(cmd, opts, consumer)`). Stdin requires a half-closable transport:
-TCP and unix sockets work; the Windows named pipe and TLS cannot half-close, so exec-with-stdin
-throws up front there instead of hanging the in-container reader (the named-pipe half is
-fixable — see TODO; Go's `tls.Conn` cannot half-close either, so on TLS even the docker CLI
-hangs where we throw).
+streaming overload (`exec(cmd, opts, consumer)`). Exec-with-stdin requests a connection
+upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) and
+feeds stdin only AFTER the response header — both required through Docker Desktop's named-pipe
+proxy, which drops client bytes sent after the POST on a non-upgraded connection. Stdin EOF:
+TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirrors go-winio's
+`CloseWrite` (flush, then a zero-length message — message-mode pipes only, which is what every
+real daemon serves); TLS cannot half-close, so exec-with-stdin throws up front there (Go's
+`tls.Conn` cannot either — the docker CLI hangs where we throw).
 
 **Copy to / from container** — `CopyToContainer` (host file or in-memory bytes, `with_mode`)
 is PUT as a single-entry USTAR tar per source (entry path ≤ 100/255 chars); the target's parent

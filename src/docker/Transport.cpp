@@ -18,6 +18,7 @@
 #endif
 
 #if defined(_WIN32)
+#include <boost/asio/windows/overlapped_ptr.hpp>
 #include <boost/asio/windows/stream_handle.hpp>
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -457,6 +458,14 @@ public:
             ::CloseHandle(handle);
             throw DockerError("Cannot bind Docker named pipe handle: " + ec.message());
         }
+        // Half-close (see shutdown_send) works only on a MESSAGE-type pipe,
+        // where a zero-byte write is a distinct message the reader observes as
+        // a zero-byte read. moby creates the daemon pipe in message mode; on a
+        // byte-type pipe a zero-byte write is invisible, so half-close support
+        // is honestly reported as absent.
+        DWORD flags = 0;
+        message_mode_ = ::GetNamedPipeInfo(handle, &flags, nullptr, nullptr, nullptr) != 0 &&
+                        (flags & PIPE_TYPE_MESSAGE) != 0;
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
@@ -479,11 +488,49 @@ public:
             [&] { cancel_pending(); });
     }
     void shutdown_send() override {
-        // A Windows named-pipe handle has no half-close primitive (closing it tears
-        // down both directions). No-op; callers needing the EOF signal check
-        // supports_half_close().
+        // A named pipe has no shutdown() primitive, but on a MESSAGE-type pipe
+        // a zero-byte WriteFile is delivered as a zero-length message, which
+        // go-winio's reader (the daemon side) treats as EOF — this is exactly
+        // go-winio's CloseWrite, i.e. how `docker exec -i` signals
+        // end-of-stdin on Windows. Best-effort like the socket shutdowns: a
+        // failure surfaces on the next use of the broken pipe.
+        if (!message_mode_) {
+            return; // byte-type pipe: a zero-byte write is invisible, no-op
+        }
+        // Mirror go-winio's CloseWrite exactly: FLUSH first (blocks until the
+        // server has consumed everything written so far), THEN the zero-length
+        // message. Without the flush the EOF marker can land in the pipe
+        // buffer together with still-unread payload and get lost in the
+        // reader's transition (observed with Docker Desktop's pipe proxy).
+        ::FlushFileBuffers(handle_.native_handle());
+        // The handle is registered with ioc_'s IOCP, so even this synchronous-
+        // looking write must complete through the io_context: overlapped_ptr
+        // wraps a handler as an OVERLAPPED, and the deadline handling matches
+        // every other operation on this transport.
+        bool done = false;
+        boost::system::error_code ec;
+        asio::windows::overlapped_ptr overlapped(
+            ioc_, [&](const boost::system::error_code& op_ec, std::size_t) {
+                done = true;
+                ec = op_ec;
+            });
+        const BOOL ok =
+            ::WriteFile(handle_.native_handle(), "", 0, /*bytes written*/ nullptr,
+                        overlapped.get());
+        const DWORD last_error = ::GetLastError();
+        if (!ok && last_error != ERROR_IO_PENDING) {
+            // Failed to initiate: post the completion ourselves.
+            overlapped.complete(boost::system::error_code(static_cast<int>(last_error),
+                                                          boost::system::system_category()),
+                                0);
+        } else {
+            // Initiated (or completed synchronously): the IOCP owns the
+            // OVERLAPPED now and posts the completion to ioc_.
+            overlapped.release();
+        }
+        run_pending(ioc_, io_timeout_, done, ec, [&] { cancel_pending(); });
     }
-    bool supports_half_close() const noexcept override { return false; }
+    bool supports_half_close() const noexcept override { return message_mode_; }
     void close() override {
         boost::system::error_code ec;
         handle_.close(ec);
@@ -507,6 +554,7 @@ private:
     }
 
     asio::windows::stream_handle handle_;
+    bool message_mode_ = false; ///< pipe is MESSAGE-type → zero-byte-write EOF works
 };
 #endif // _WIN32
 

@@ -42,12 +42,14 @@ public:
     /// Half-close the send side so the peer sees EOF on its read while we keep
     /// reading the response (used by exec-stdin: after writing the input bytes we
     /// signal end-of-input so a reader like `cat`/`wc` terminates). Best-effort:
-    /// SSL and Windows named pipes have no clean half-close, so those override it
-    /// as a no-op (see the transport implementations).
+    /// TCP / unix sockets shutdown(send); the Windows named pipe sends a
+    /// zero-length message (go-winio CloseWrite semantics, message-type pipes
+    /// only); SSL has no clean half-close, so TLS overrides it as a no-op.
     virtual void shutdown_send() = 0;
-    /// Whether shutdown_send() actually half-closes (TCP / unix socket) or is a
-    /// no-op (TLS / Windows named pipe). Callers that NEED the EOF signal (exec
-    /// stdin) should fail loudly instead of hanging when this is false.
+    /// Whether shutdown_send() actually delivers EOF (TCP / unix socket /
+    /// message-type named pipe) or is a no-op (TLS / byte-type named pipe).
+    /// Callers that NEED the EOF signal (exec stdin) should fail loudly instead
+    /// of hanging when this is false.
     virtual bool supports_half_close() const noexcept = 0;
     virtual void close() = 0;
 };

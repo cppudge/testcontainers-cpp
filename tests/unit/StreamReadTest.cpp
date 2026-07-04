@@ -23,6 +23,10 @@
 //   StreamRead.SkipsStdinFrames - a stdin-kind frame in the stream is dropped; surrounding stdout frames still arrive.
 //   StreamRead.StopsWhenConsumerReturnsFalse - returning false from the consumer stops delivery without draining the remaining frames.
 //   StreamRead.TtyPassthroughIsRawStdout - with tty=true the unframed body bytes are delivered verbatim as stdout (no demuxing).
+//   StreamRead.RawStreamAccumulatesLeftoverAndReads - read_raw_stream (the 101-upgraded exec path) returns leftover + everything until EOF, with EOF reported as a clean end.
+//   StreamRead.RawStreamPropagatesRealErrors - a mid-stream transport error (not eof/broken_pipe) is left in ec for the caller to throw on.
+//   StreamRead.RawConsumerDemuxesLeftoverFirst - stream_raw_to_consumer demuxes frames split between the header-parse leftover and the transport reads.
+//   StreamRead.RawConsumerStopsWhenConsumerReturnsFalse - returning false stops the raw stream delivery early.
 
 using namespace testcontainers;
 namespace http = boost::beast::http;
@@ -154,6 +158,82 @@ TEST(StreamRead, StopsWhenConsumerReturnsFalse) {
 
     ASSERT_EQ(got.size(), 1u); // stopped after the first delivery
     EXPECT_EQ(got[0].second, "first");
+}
+
+TEST(StreamRead, RawStreamAccumulatesLeftoverAndReads) {
+    // The 101-upgrade exec path: the header parse pulled some stream bytes
+    // into its buffer already (the leftover); the rest arrives from the
+    // transport until EOF — which is the NORMAL completion, not an error.
+    FakeTransport transport({"middle-", "end"});
+    boost::system::error_code ec;
+    const std::string out = docker::read_raw_stream(transport, "leftover-", ec);
+
+    EXPECT_FALSE(ec) << ec.message();
+    EXPECT_EQ(out, "leftover-middle-end");
+}
+
+namespace {
+
+/// FakeTransport variant failing with the given error after its chunks.
+class FailingTransport : public FakeTransport {
+public:
+    FailingTransport(std::vector<std::string> chunks, boost::system::error_code fail_with)
+        : FakeTransport(std::move(chunks)), fail_with_(fail_with) {}
+
+    std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
+        const std::size_t n = FakeTransport::read_some(data, size, ec);
+        if (ec == boost::asio::error::eof) {
+            ec = fail_with_;
+        }
+        return n;
+    }
+
+private:
+    boost::system::error_code fail_with_;
+};
+
+} // namespace
+
+TEST(StreamRead, RawStreamPropagatesRealErrors) {
+    FailingTransport transport({"partial"}, boost::asio::error::connection_reset);
+    boost::system::error_code ec;
+    const std::string out = docker::read_raw_stream(transport, "", ec);
+
+    EXPECT_EQ(out, "partial"); // what arrived is still returned
+    EXPECT_EQ(ec, boost::asio::error::connection_reset) << ec.message();
+}
+
+TEST(StreamRead, RawConsumerDemuxesLeftoverFirst) {
+    // A frame split between the leftover (from the header parse) and the
+    // transport reads must reassemble: the demuxer state carries across.
+    const std::string body = frame(1, "out") + frame(2, "err");
+    const std::string leftover = body.substr(0, 13); // mid-second-frame-header
+    FakeTransport transport({body.substr(13)});
+
+    std::vector<std::pair<LogSource, std::string>> got;
+    docker::stream_raw_to_consumer(transport, leftover, /*tty*/ false,
+                                   [&](LogSource source, std::string_view data) {
+                                       got.emplace_back(source, std::string(data));
+                                       return true;
+                                   });
+
+    EXPECT_EQ(joined(got, LogSource::Stdout), "out");
+    EXPECT_EQ(joined(got, LogSource::Stderr), "err");
+}
+
+TEST(StreamRead, RawConsumerStopsWhenConsumerReturnsFalse) {
+    const std::string body = frame(1, "first") + frame(1, "second");
+    FakeTransport transport({body});
+
+    std::vector<std::string> got;
+    docker::stream_raw_to_consumer(transport, "", /*tty*/ false,
+                                   [&](LogSource, std::string_view data) {
+                                       got.emplace_back(data);
+                                       return false; // stop after the first
+                                   });
+
+    ASSERT_EQ(got.size(), 1u);
+    EXPECT_EQ(got[0], "first");
 }
 
 TEST(StreamRead, TtyPassthroughIsRawStdout) {

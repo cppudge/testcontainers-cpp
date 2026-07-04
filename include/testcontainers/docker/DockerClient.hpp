@@ -220,8 +220,9 @@ public:
     /// `stdout_data` and `stderr_data` is left empty. When `opts.stdin_data` is
     /// set those bytes are written to the exec's stdin and the send side is then
     /// half-closed so a reader (e.g. `cat`) sees EOF; on a transport that cannot
-    /// half-close (Windows named pipe, TLS) this throws DockerError instead of
-    /// hanging the reader.
+    /// half-close (TLS, or a byte-mode named pipe) this throws DockerError
+    /// instead of hanging the reader. The Windows named pipe to a real daemon
+    /// half-closes fine (the daemon pipe is message-mode).
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
                     const ExecOptions& opts);
 
