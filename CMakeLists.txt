@@ -48,6 +48,7 @@ find_package(Boost REQUIRED)            # header-only Beast + Asio
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(LibArchive REQUIRED)
+find_package(libssh2 REQUIRED)          # host-port-exposure sidecar tunnel
 
 # ===== Library =====
 add_library(testcontainers
@@ -63,6 +64,7 @@ add_library(testcontainers
     src/GenericImage.cpp
     src/GenericBuildableImage.cpp
     src/Runner.cpp
+    src/HostPortForwarding.cpp
     src/Container.cpp
     src/Network.cpp
     src/Volume.cpp
@@ -92,6 +94,7 @@ target_link_libraries(testcontainers PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
     LibArchive::LibArchive
+    Libssh2::libssh2
 )
 
 if(WIN32)
@@ -181,6 +184,7 @@ if(BUILD_TESTING)
         tests/integration/ReaperTest.cpp
         tests/integration/ReuseTest.cpp
         tests/integration/AuthTest.cpp
+        tests/integration/HostAccessTest.cpp
         tests/integration/WindowsContainerTest.cpp
         tests/integration/ComposeTest.cpp
         tests/integration/TlsTransportTest.cpp

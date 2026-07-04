@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -48,6 +49,13 @@ struct ContainerRequest {
 
     /// Files / bytes copied into the container between create and start.
     std::vector<CopyToContainer> copy_to_sources;
+
+    /// Host (test-process) ports the container must be able to reach via
+    /// `host.testcontainers.internal` (see `GenericImage::with_exposed_host_port`).
+    /// When non-empty, `run()` starts the process-wide sshd sidecar, forwards
+    /// these ports through it, and appends the alias's ExtraHosts entry to
+    /// `spec` for this run.
+    std::vector<std::uint16_t> host_access_ports;
 
     /// Readiness conditions, run in order under one shared `startup_timeout`.
     std::vector<WaitFor> waits;

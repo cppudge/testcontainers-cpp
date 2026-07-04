@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "HostPortForwarding.hpp"
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
 
@@ -66,6 +67,9 @@ void Network::drop() noexcept {
     }
     dropped_ = true;
     try {
+        // If host-port exposure joined its sshd sidecar to this network, detach
+        // it first — a network with active endpoints cannot be removed.
+        detail::HostPortForwarder::instance().release_network(client_, name_);
         client_.remove_network(id_);
     } catch (...) {
         // Best-effort: a teardown failure must never propagate (esp. from the

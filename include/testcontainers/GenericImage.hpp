@@ -203,6 +203,24 @@ public:
         return *this;
     }
 
+    /// Expose a port of the HOST (the machine the tests run on) to this
+    /// container: services listening on `127.0.0.1:<port>` in the test process
+    /// become reachable from inside the container at
+    /// `host.testcontainers.internal:<port>`. Add several to expose multiple
+    /// ports.
+    ///
+    /// Works regardless of where the daemon runs (Docker Desktop VM, remote
+    /// engine): the first start() needing it launches one process-wide
+    /// `testcontainers/sshd` sidecar container and tunnels each exposed port
+    /// back to the host through an SSH remote forward. Requires a
+    /// Linux-containers daemon; supported on the default bridge network and
+    /// user-defined networks (`with_network`) — not on network modes "host",
+    /// "none", or "container:...".
+    GenericImage& with_exposed_host_port(std::uint16_t port) {
+        host_access_ports_.push_back(port);
+        return *this;
+    }
+
     /// Deep-merge a raw Docker `/containers/create` body fragment into the create
     /// body (RFC 7386 merge applied AFTER our typed fields, so it overrides them).
     /// This is the escape hatch for any field not exposed as a typed setter: nest
@@ -322,6 +340,9 @@ public:
     const std::vector<std::string>& cap_add() const noexcept { return spec_.cap_add; }
     const std::vector<std::string>& cap_drop() const noexcept { return spec_.cap_drop; }
     const std::vector<std::string>& extra_hosts() const noexcept { return spec_.extra_hosts; }
+    const std::vector<std::uint16_t>& exposed_host_ports() const noexcept {
+        return host_access_ports_;
+    }
     const std::string& create_body_patch() const noexcept { return spec_.create_body_patch; }
     ImagePullPolicy image_pull_policy() const noexcept { return pull_policy_; }
     bool reuse() const noexcept { return reuse_; }
@@ -366,6 +387,7 @@ private:
     CreateContainerSpec spec_;
 
     std::vector<CopyToContainer> copy_to_sources_;
+    std::vector<std::uint16_t> host_access_ports_; ///< host ports exposed via the sshd sidecar
     std::vector<WaitFor> waits_;
     std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
     std::optional<RegistryAuth> registry_auth_;

@@ -42,6 +42,7 @@ ContainerRequest GenericImage::to_request() const {
     request.spec = build_spec();
     request.exposed_ports = exposed_ports_;
     request.copy_to_sources = copy_to_sources_;
+    request.host_access_ports = host_access_ports_;
     request.waits = waits_;
     request.startup_timeout = startup_timeout_;
     request.registry_auth = registry_auth_;

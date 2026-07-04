@@ -9,8 +9,9 @@ CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 > **Status:** alpha, feature-complete core. `GenericImage` / `GenericBuildableImage` /
 > `Container` / `Network` / `Volume` / `DockerComposeContainer`, six wait strategies, exec
 > (stdin / tty / streaming), copy to/from container, lifecycle hooks, container reuse, the Ryuk
-> crash-safety reaper, registry auth incl. credential helpers, and the TLS transport are
-> implemented, covered by ~300 unit + ~65 integration tests against a real daemon — green on
+> crash-safety reaper, registry auth incl. credential helpers, host-port exposure
+> (`with_exposed_host_port`, sshd sidecar + SSH tunnel), and the TLS transport are
+> implemented, covered by ~300 unit + ~70 integration tests against a real daemon — green on
 > Windows (named pipe) and Linux (unix socket; CI runs the full suite). The feature reference
 > with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a real
 > remote daemon is the main unverified gap.
@@ -251,9 +252,11 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignore
       Docker host resolution, follow/streaming logs, exec stdin/tty/streaming, TTY containers,
       lifecycle hooks + startup retry, build-from-Dockerfile, image pull policy + name
       substitution, credential helpers, container reuse, named volumes, richer networks,
-      Docker Compose (three client modes), the `ContainerRequest`/`Runner` split, and scoped
-      keep-alive sessions. Current state and known limits per feature:
-      [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
+      Docker Compose (three client modes), the `ContainerRequest`/`Runner` split, scoped
+      keep-alive sessions, and host-port exposure (`with_exposed_host_port`:
+      `testcontainers/sshd` sidecar + libssh2 remote forwards, so containers reach host
+      services at `host.testcontainers.internal:<port>`). Current state and known limits per
+      feature: [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
 
 ## Build
 

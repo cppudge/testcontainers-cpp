@@ -132,6 +132,19 @@ IPAM subnet+gateway pair / driver options / labels); `with_network_alias` (per-n
 aliases); `Network::connect` attaches a running container. No network inspect and no
 process-wide dedup — every `create()` makes a brand-new network.
 
+**Host access (`with_exposed_host_port`)** — services listening on the test host become
+reachable from containers at `host.testcontainers.internal:<port>` through the standard
+Testcontainers `testcontainers/sshd` sidecar: one per process (started on first use,
+session-labeled for Ryuk, removed on clean exit), one SSH session (libssh2) carrying a remote
+forward per exposed port; connections arriving at the sidecar are pumped back to
+`127.0.0.1:<port>` in the test process, so it works wherever the daemon runs (Desktop VM,
+remote engine). Supported on the default bridge and user-defined networks (the sidecar joins a
+user network on demand; `Network` teardown detaches it again); requires a Linux-containers
+daemon; network modes "host" / "none" / "container:..." are rejected. Residuals: the
+sidecar/tunnel singleton binds to the FIRST daemon used (same residual as the reaper); remote
+forwards are never cancelled once added; the sidecar's root password travels in the create
+body's env (readable via inspect — by someone who already has daemon access; Java parity).
+
 **Named volumes** — `Volume` RAII handle + builder, session-labeled for Ryuk;
 `populate(sources)` seeds data through a throwaway helper container (`alpine:3.20` by default,
 started before the archive PUT — not every daemon materializes writes on a created-only

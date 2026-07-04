@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string>
 
+#include "HostPortForwarding.hpp"
 #include "Reaper.hpp"
 #include "Reuse.hpp"
 #include "WaitStrategies.hpp"
@@ -23,6 +24,16 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
     // locally; Default relies on create's lazy pull-on-404 path.
     if (request.pull_policy == ImagePullPolicy::Always) {
         client.pull_image(spec.image, request.registry_auth);
+    }
+
+    // Host-port exposure: make sure the sshd sidecar + SSH forwards are up and
+    // point host.testcontainers.internal at the sidecar (an ExtraHosts entry
+    // appended to this run's spec). Must happen before the reuse hash below —
+    // reachability is part of the container's effective config. The sidecar's
+    // own start() recurses through here with no host_access_ports, so this
+    // cannot loop.
+    if (!request.host_access_ports.empty()) {
+        detail::HostPortForwarder::instance().wire(client, spec, request.host_access_ports);
     }
 
     // The shared create→copy→start→wait tail, returning a handle. `remove_on_drop`

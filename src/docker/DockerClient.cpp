@@ -870,6 +870,23 @@ void DockerClient::connect_network(const std::string& network_id, const std::str
     }
 }
 
+void DockerClient::disconnect_network(const std::string& network_id,
+                                      const std::string& container_id, bool force) {
+    nlohmann::json body;
+    body["Container"] = container_id;
+    body["Force"] = force;
+    const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+
+    const Response res =
+        request("POST", "/networks/" + network_id + "/disconnect", body.dump(), headers);
+    // 200 (older daemons) or 204 (current) both mean disconnected.
+    if (res.status_code != 200 && res.status_code != 204) {
+        throw_status_error("disconnect_network(" + network_id + ", " + container_id + ")", res,
+                           network_id);
+    }
+}
+
 void DockerClient::remove_network(const std::string& id) {
     const Response res = request("DELETE", "/networks/" + id);
     if (res.status_code != 204) {

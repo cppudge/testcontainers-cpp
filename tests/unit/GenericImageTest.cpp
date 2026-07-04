@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
@@ -26,6 +27,8 @@
 //   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
 //   GenericImage.LifecycleBuildersChainOnRvalue - the hook/attempts builders chain on a temporary rvalue.
 //   GenericImage.ToRequestSnapshotsBuilderState - to_request() carries the translated create spec (image ref, "K=V" env, "port/proto" strings, publish-all) plus every orchestration field, one-to-one with the builders.
+//   GenericImage.ExposedHostPortsDefaultEmpty - a freshly constructed image exposes no host ports.
+//   GenericImage.ExposedHostPortsAccumulateAndSnapshot - with_exposed_host_port accumulates in call order, chains on an rvalue, and to_request() carries the ports without touching the create spec (no ExtraHosts entry until run()).
 
 using namespace testcontainers;
 
@@ -309,4 +312,22 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     EXPECT_EQ(req.started_hooks.size(), 1u);
     EXPECT_EQ(req.stopping_hooks.size(), 1u);
     EXPECT_EQ(req.startup_attempts, 3);
+}
+
+TEST(GenericImage, ExposedHostPortsDefaultEmpty) {
+    const GenericImage img("alpine", "3.20");
+    EXPECT_TRUE(img.exposed_host_ports().empty());
+    EXPECT_TRUE(img.to_request().host_access_ports.empty());
+}
+
+TEST(GenericImage, ExposedHostPortsAccumulateAndSnapshot) {
+    const ContainerRequest req = GenericImage("alpine", "3.20")
+                                     .with_exposed_host_port(8080)
+                                     .with_exposed_host_port(5432)
+                                     .to_request();
+
+    EXPECT_EQ(req.host_access_ports, (std::vector<std::uint16_t>{8080, 5432}));
+    // The alias's ExtraHosts entry depends on the run (the sidecar's IP), so
+    // the snapshot must NOT have touched the create spec.
+    EXPECT_TRUE(req.spec.extra_hosts.empty());
 }

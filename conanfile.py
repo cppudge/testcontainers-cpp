@@ -6,7 +6,7 @@ from conan.tools.files import copy
 
 class TestcontainersCppRecipe(ConanFile):
     name = "testcontainers-cpp"
-    version = "0.1.0-alpha.0"
+    version = "0.1.0-alpha.1"
     package_type = "library"
 
     # Metadata
@@ -53,6 +53,9 @@ class TestcontainersCppRecipe(ConanFile):
         self.requires("openssl/3.6.3")
         self.requires("nlohmann_json/3.12.0")
         self.requires("libarchive/3.8.7")
+        # SSH client for the host-port-exposure sidecar tunnel (remote port
+        # forwarding through a `testcontainers/sshd` container).
+        self.requires("libssh2/1.11.1")
 
     def config_options(self):
         if self.settings.os == "Windows":

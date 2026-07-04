@@ -55,8 +55,11 @@ jobs:
 
       # The runner's Docker daemon is a plain Linux engine over the unix
       # socket — the primary POSIX transport. Pulls (redis, alpine,
-      # docker:26.1-cli, ryuk) dominate the wall clock on cold runs.
+      # docker:26.1-cli, ryuk, sshd) dominate the wall clock on cold runs.
+      # The step timeout turns a wedged daemon into a fast red instead of
+      # eating the whole job timeout.
       - name: Integration tests
+        timeout-minutes: 20
         run: ./build/ninja/bin/tc_integration_tests --gtest_brief=1
 
   windows:
@@ -91,10 +94,24 @@ jobs:
       - name: Unit tests
         run: ./build/ninja/bin/tc_unit_tests.exe --gtest_brief=1
 
+      # Some windows-2022 runners come up with the Docker service stopped —
+      # the daemon-dependent suites would then ALL self-skip and the job would
+      # pass hollow (observed in practice). Start the service and require the
+      # daemon to answer, so "no daemon" is a hard red, not a silent skip.
+      - name: Ensure the Docker engine is running
+        run: |
+          $svc = Get-Service docker -ErrorAction SilentlyContinue
+          if (-not $svc) { Write-Error "Docker service is not installed on this runner"; exit 1 }
+          if ($svc.Status -ne 'Running') { Start-Service docker }
+          docker version --format 'daemon os: {{.Server.Os}}'
+
       # The runner's daemon (npipe transport) runs WINDOWS containers: the
       # Linux-guarded suites self-skip, while WindowsContainer.* really runs —
       # nanoserver:ltsc2022 is pre-cached on windows-2022 images, and the test
       # resolves the tag from the daemon's build (an unknown build FAILS, so a
-      # runner-image upgrade cannot silently hollow this job out).
+      # runner-image upgrade cannot silently hollow this job out). The step
+      # timeout turns a wedged daemon (observed once: 56 min of silence) into
+      # a bounded red instead of eating the whole job timeout.
       - name: Integration tests (Windows engine)
+        timeout-minutes: 25
         run: ./build/ninja/bin/tc_integration_tests.exe --gtest_brief=1

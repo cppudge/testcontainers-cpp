@@ -86,17 +86,17 @@ when it lands (adding a short note there if it needs one).
 - **Test gaps** — the WaitStrategies duration-clamp-to-deadline branch is only exercised via
   the integration `WaitStrategiesTest` (extract a pure `clamped_wait_plan(now, value, deadline)`
   if it ever regresses).
+- **Host access residuals** — libssh2 landed as a HARD dependency (the planned optional
+  `find_package` guard would make the public API compile-time-conditional; revisit if the
+  dependency ever bothers a consumer); the sidecar/tunnel singleton binds to the FIRST daemon
+  used (same shape as the Ryuk residual); remote forwards are never cancelled once added; the
+  tunnel pump wakes every 100ms even when idle (fine for test traffic).
+  (`src/HostPortForwarding.cpp`)
 - **msvc-preset configure noise** — non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release`
   messages for OpenSSL/zlib under the Visual Studio preset (Conan installs Release-only); the
   default `ninja` preset is unaffected.
 
 ## Open / not yet built
-- **`expose_host_ports` (Tier 2.8)** — let a container reach a HOST service at
-  `host.testcontainers.internal:<port>`: an `testcontainers/sshd` sidecar + a reverse SSH
-  tunnel (`-R`) established via **libssh2** as an OPTIONAL dependency (CMake option /
-  `find_package` guard — the core keeps no hard SSH dependency). Interim workaround:
-  `with_extra_host("host.docker.internal", "host-gateway")` (Docker Desktop / Linux 20.10+),
-  but that exposes the whole host with no per-port control.
 - **Full connection pool (option B)** — deferred until a real remote-TCP/TLS use case appears;
   scoped keep-alive sessions cover the polling hot path today (decision record in docs/06).
   Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,

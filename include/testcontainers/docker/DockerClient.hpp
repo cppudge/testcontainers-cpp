@@ -266,6 +266,11 @@ public:
     void connect_network(const std::string& network_id, const std::string& container_id,
                          const std::vector<std::string>& aliases = {});
 
+    /// `POST /networks/{id}/disconnect` — detach a container from a network.
+    /// `force` also detaches a container that is not running.
+    void disconnect_network(const std::string& network_id, const std::string& container_id,
+                            bool force = false);
+
     /// `DELETE /networks/{id}` — remove a network (204 expected).
     void remove_network(const std::string& id);
 
