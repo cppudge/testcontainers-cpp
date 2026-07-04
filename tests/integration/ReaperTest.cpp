@@ -101,14 +101,18 @@ TEST_F(Reaper, RyukReapsOnDisconnect) {
     const detail::RyukEndpoint ryuk = detail::start_ryuk(client);
     std::string target_id;
     try {
-        // Connect to Ryuk's control port (retry while it starts listening).
+        // Handshake with Ryuk's control port. The WHOLE exchange retries, not
+        // just the connect: the daemon's userland docker-proxy accepts on the
+        // published port before Ryuk itself listens, so the startup race
+        // surfaces as "connection reset" on the write/ACK-read (bit on CI).
         asio::io_context io;
         tcp::socket socket(io);
         {
+            const std::string line = detail::ryuk_filter_line(key, value);
             boost::system::error_code ec;
             const auto deadline =
                 std::chrono::steady_clock::now() + std::chrono::seconds(20);
-            bool connected = false;
+            bool handshaken = false;
             while (std::chrono::steady_clock::now() < deadline) {
                 tcp::resolver resolver(io);
                 const auto endpoints =
@@ -117,25 +121,27 @@ TEST_F(Reaper, RyukReapsOnDisconnect) {
                     socket = tcp::socket(io);
                     asio::connect(socket, endpoints, ec);
                     if (!ec) {
-                        connected = true;
-                        break;
+                        asio::write(socket, asio::buffer(line), ec);
                     }
+                    if (!ec) {
+                        asio::streambuf buf;
+                        asio::read_until(socket, buf, '\n', ec);
+                        if (!ec) {
+                            std::istream is(&buf);
+                            std::string ack;
+                            std::getline(is, ack);
+                            ASSERT_NE(ack.find("ACK"), std::string::npos)
+                                << "unexpected Ryuk reply: " << ack;
+                            handshaken = true;
+                            break;
+                        }
+                    }
+                    boost::system::error_code ignore;
+                    socket.close(ignore);
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
-            ASSERT_TRUE(connected) << "could not connect to Ryuk: " << ec.message();
-        }
-
-        // Send the filter line and read the ACK.
-        const std::string line = detail::ryuk_filter_line(key, value);
-        asio::write(socket, asio::buffer(line));
-        {
-            asio::streambuf buf;
-            asio::read_until(socket, buf, '\n');
-            std::istream is(&buf);
-            std::string ack;
-            std::getline(is, ack);
-            EXPECT_NE(ack.find("ACK"), std::string::npos) << "unexpected Ryuk reply: " << ack;
+            ASSERT_TRUE(handshaken) << "Ryuk handshake failed: " << ec.message();
         }
 
         // Create (do NOT start) a container carrying the throwaway label.

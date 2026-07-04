@@ -189,91 +189,100 @@ void Reaper::start_locked(DockerClient& client) {
     auto impl = std::make_unique<Impl>();
     impl->container_id = ep.container_id;
 
-    // Ryuk needs a moment to start listening; connect-retry for a few seconds.
-    // Each attempt is bounded by what is left of the overall deadline, so a
-    // black-holed connect cannot overshoot it by the OS connect timeout.
+    // Ryuk needs a moment to start listening, and retrying the TCP connect
+    // alone is NOT enough: with the daemon's userland docker-proxy (the
+    // default on plain Linux engines, e.g. CI runners) the proxy ACCEPTS on
+    // the published port before Ryuk itself listens, and the failure shows up
+    // one step later as "connection reset" on the filter write / ACK read.
+    // So the WHOLE handshake — fresh connect, send filter, read ACK — retries
+    // until the deadline; each leg is also individually bounded, so a
+    // black-holed attempt cannot overshoot the budget.
     boost::system::error_code ec;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-    bool connected = false;
+    const std::chrono::milliseconds leg_budget = std::chrono::seconds(5);
+    const std::string line = ryuk_filter_line(kSessionIdLabel, session_id());
+    const auto budget_left = [&deadline, &leg_budget] {
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        return std::max(std::min(left, leg_budget), std::chrono::milliseconds(1));
+    };
+
+    std::string ack;
+    bool handshaken = false;
     while (std::chrono::steady_clock::now() < deadline) {
         tcp::resolver resolver(impl->io);
         const auto endpoints = resolver.resolve(ep.host, std::to_string(ep.port), ec);
+        if (ec) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+        impl->socket = tcp::socket(impl->io);
+        bool done = false;
+        asio::async_connect(impl->socket, endpoints,
+                            [&](const boost::system::error_code& op_ec, const tcp::endpoint&) {
+                                done = true;
+                                ec = op_ec;
+                            });
+        // Close-not-cancel on expiry: a cancelled multi-endpoint connect just
+        // moves on to the next endpoint (see docker/Transport.cpp).
+        run_bounded(impl->io, budget_left(), done, ec, [&] {
+            boost::system::error_code ignore;
+            impl->socket.close(ignore);
+        });
+
         if (!ec) {
-            impl->socket = tcp::socket(impl->io);
-            bool done = false;
-            asio::async_connect(impl->socket, endpoints,
-                                [&](const boost::system::error_code& op_ec,
-                                    const tcp::endpoint&) {
-                                    done = true;
-                                    ec = op_ec;
-                                });
-            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now());
-            // Close-not-cancel on expiry: a cancelled multi-endpoint connect
-            // just moves on to the next endpoint (see docker/Transport.cpp).
-            run_bounded(impl->io, std::max(left, std::chrono::milliseconds(1)), done, ec, [&] {
+            done = false;
+            asio::async_write(impl->socket, asio::buffer(line),
+                              [&](const boost::system::error_code& op_ec, std::size_t) {
+                                  done = true;
+                                  ec = op_ec;
+                              });
+            run_bounded(impl->io, budget_left(), done, ec, [&] {
                 boost::system::error_code ignore;
-                impl->socket.close(ignore);
+                impl->socket.cancel(ignore);
+            });
+        }
+
+        if (!ec) {
+            asio::streambuf buf;
+            done = false;
+            asio::async_read_until(impl->socket, buf, '\n',
+                                   [&](const boost::system::error_code& op_ec, std::size_t) {
+                                       done = true;
+                                       ec = op_ec;
+                                   });
+            run_bounded(impl->io, budget_left(), done, ec, [&] {
+                boost::system::error_code ignore;
+                impl->socket.cancel(ignore);
             });
             if (!ec) {
-                connected = true;
+                std::istream is(&buf);
+                std::getline(is, ack);
+                handshaken = true;
                 break;
             }
         }
+
+        // Any connection-level failure (refused, reset by the proxy, timed
+        // out): drop the socket and try the whole exchange again.
+        boost::system::error_code ignore;
+        impl->socket.close(ignore);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
-    if (!connected) {
+    if (!handshaken) {
         kill_ryuk();
-        // The retry loop only exits unconnected when its 20s budget is spent —
-        // type on THAT, not on whichever ec the last attempt happened to leave
-        // (a refused final attempt is still an exhausted handshake budget).
-        throw TransportTimeoutError("Could not connect to Ryuk control port at " + ep.host + ":" +
+        // The retry loop only exits early when its 20s budget is spent — type
+        // on THAT, not on whichever ec the last attempt happened to leave
+        // (a refused/reset final attempt is still an exhausted budget).
+        throw TransportTimeoutError("Could not complete the Ryuk handshake at " + ep.host + ":" +
                                     std::to_string(ep.port) + " within the handshake budget"
                                     " (last error: " + ec.message() + ")");
     }
 
-    // Register the session filter and wait for the ACK so we know Ryuk accepted
-    // it before we start creating labelled resources. Both legs are bounded: a
-    // Ryuk that accepts but never ACKs would otherwise hang the first container
-    // start of the whole session (this runs under the Reaper mutex).
-    const std::chrono::milliseconds ack_budget = std::chrono::seconds(5);
-    const std::string line = ryuk_filter_line(kSessionIdLabel, session_id());
-    bool done = false;
-    asio::async_write(impl->socket, asio::buffer(line),
-                      [&](const boost::system::error_code& op_ec, std::size_t) {
-                          done = true;
-                          ec = op_ec;
-                      });
-    run_bounded(impl->io, ack_budget, done, ec, [&] {
-        boost::system::error_code ignore;
-        impl->socket.cancel(ignore);
-    });
-    if (ec) {
-        kill_ryuk();
-        docker::throw_transport_error("Failed to send filter to Ryuk: " + ec.message(), ec);
-    }
-
-    asio::streambuf buf;
-    done = false;
-    asio::async_read_until(impl->socket, buf, '\n',
-                           [&](const boost::system::error_code& op_ec, std::size_t) {
-                               done = true;
-                               ec = op_ec;
-                           });
-    run_bounded(impl->io, ack_budget, done, ec, [&] {
-        boost::system::error_code ignore;
-        impl->socket.cancel(ignore);
-    });
-    if (ec) {
-        kill_ryuk();
-        docker::throw_transport_error("Failed to read ACK from Ryuk: " + ec.message(), ec);
-    }
-    std::istream is(&buf);
-    std::string ack;
-    std::getline(is, ack);
     // Ryuk replies "ACK" per accepted line (tolerate a trailing CR). Anything
     // else means the filter was NOT registered — fail loudly rather than run
-    // without crash-safe reaping.
+    // without crash-safe reaping. (A live Ryuk answering garbage is a protocol
+    // error, not a startup race — no retry.)
     if (ack.rfind("ACK", 0) != 0) {
         kill_ryuk();
         throw DockerError("Ryuk did not acknowledge the session filter (got '" + ack + "')");
