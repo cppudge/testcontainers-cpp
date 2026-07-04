@@ -190,10 +190,12 @@ Response DockerClient::request_with_io_timeout(
     docker::TransportTimeouts timeouts = timeouts_;
     timeouts.io = io_timeout;
 
-    // Session reuse applies to idempotent requests only: a stale-connection
-    // retry (below) can then never replay a side effect, and non-GET requests
-    // behave exactly as without a session (fresh connection, close after).
-    const bool reuse = session_enabled_ && (method == "GET" || method == "HEAD");
+    // Session reuse applies to idempotent GETs only: a stale-connection retry
+    // (below) can then never replay a side effect, and non-GET requests behave
+    // exactly as without a session (fresh connection, close after). HEAD is
+    // deliberately excluded: the response parser would wait for the body a
+    // HEAD reply announces but never carries.
+    const bool reuse = session_enabled_ && method == "GET";
 
     // One request/response exchange on `transport`. Sets `conn_reusable` to
     // whether the connection may serve another request afterwards (the whole
@@ -245,8 +247,12 @@ Response DockerClient::request_with_io_timeout(
                                           ec);
         }
         auto& res = parser.get();
-        // end_of_stream means the peer is closing (EOF-delimited body).
-        conn_reusable = keep_alive && res.keep_alive() && ec != http::error::end_of_stream;
+        // need_eof() marks an EOF-delimited body: the peer ends the message by
+        // closing, so the connection is not reusable even though keep_alive()
+        // (a header-only check) may still say true. (Beast reports a completed
+        // EOF-delimited read as SUCCESS — the end_of_stream branch above only
+        // fires when zero response bytes arrived.)
+        conn_reusable = keep_alive && res.keep_alive() && !res.need_eof();
 
         Response out;
         out.status_code = static_cast<int>(res.result_int());
@@ -291,6 +297,18 @@ Response DockerClient::request_with_io_timeout(
         transport->close();
     }
     return out;
+}
+
+void DockerClient::end_session() noexcept {
+    session_enabled_ = false;
+    if (session_transport_) {
+        try {
+            session_transport_->close();
+        } catch (...) {
+            ; // teardown is best-effort; the destructor drops the handle anyway
+        }
+        session_transport_.reset();
+    }
 }
 
 bool DockerClient::ping() {

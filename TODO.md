@@ -158,7 +158,7 @@ review are recorded here so they aren't lost between milestones.
   (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
 - **Connection reuse: scoped keep-alive sessions (done), no global pool (by decision)** —
   `request()` still opens/closes a transport per call by default, but `DockerClient::Session`
-  (RAII, per instance) opts consecutive **idempotent (GET/HEAD)** requests into reusing one
+  (RAII, per instance) opts consecutive **idempotent GET** requests into reusing one
   kept-alive connection; `wait_until_ready` wraps its whole polling loop in one, so the ~200ms
   readiness polls stop paying a fresh connect (a TCP/TLS handshake on remote daemons) each tick.
   Staleness handling: a reused connection that died while idle (failed write, or EOF/reset
@@ -167,7 +167,7 @@ review are recorded here so they aren't lost between milestones.
   retried (it would double the io budget); non-GET requests always use a fresh connection, so
   a retry can never replay a side effect (double-create). Unit-tested against a multi-response
   canned server (`tests/unit/DockerClientSessionTest.cpp`).
-  **Decision rationale (2026-07-05, from reading the reference implementations):**
+  **Decision rationale (2026-07-04, from reading the reference implementations):**
   testcontainers-rs/bollard deliberately POOLS NOTHING (`pool_max_idle_per_host(0)` on every
   connector) — connection-per-request is the reference-validated correctness-first default;
   testcontainers-java/docker-java runs an unbounded shared HttpClient5 pool with stale

@@ -23,8 +23,10 @@ namespace testcontainers::docker {
 /// Every operation is deadline-bounded (see TransportTimeouts): a read/write
 /// that produces no progress within the io deadline fails with
 /// boost::asio::error::timed_out instead of blocking forever. A timed-out
-/// connection is mid-exchange and therefore unusable — callers must close and
-/// discard it (which the one-connection-per-request model does anyway).
+/// connection is mid-exchange and therefore unusable — callers must discard
+/// it (DockerClient drops it: per request in the default one-connection-per-
+/// request mode, and from the session cache on any failure; the destructor
+/// closes the handle).
 class ITransport {
 public:
     virtual ~ITransport() = default;

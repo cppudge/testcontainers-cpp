@@ -27,6 +27,11 @@ namespace tcunit {
 /// connection, so tests can assert both the call sequence and which
 /// connection carried it. Exactly enough server to drive DockerClient's
 /// status/parse error paths, the start orchestration, and keep-alive reuse.
+///
+/// Declare the server BEFORE the client / session that talks to it: teardown
+/// only unblocks a pending accept, so a thread blocked reading the next
+/// scripted request on a still-cached connection relies on the client being
+/// destroyed (closing that connection) first.
 class CannedHttpServer {
 public:
     explicit CannedHttpServer(std::string response)

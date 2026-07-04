@@ -52,8 +52,8 @@ public:
     explicit DockerClient(DockerHost host);
 
     /// While alive, THIS client instance keeps its daemon connection open
-    /// across requests and reuses it for consecutive idempotent (GET/HEAD)
-    /// calls — non-idempotent requests keep opening fresh connections, so a
+    /// across requests and reuses it for consecutive idempotent GET calls —
+    /// all other requests keep opening fresh connections, so a
     /// stale-connection retry can never replay a side effect. If a reused
     /// connection turns out dead (the daemon or an intermediary closed it
     /// while idle), the request is transparently retried ONCE on a fresh
@@ -62,10 +62,11 @@ public:
     ///
     /// Sessions make the instance stateful: do not share one DockerClient
     /// instance across threads while a session is active (copies made while
-    /// a session is active do not inherit it and stay independent).
+    /// a session is active do not inherit it and stay independent). The
+    /// client must outlive the Session — the guard holds a reference.
     class Session {
     public:
-        explicit Session(DockerClient& client)
+        [[nodiscard]] explicit Session(DockerClient& client)
             : client_(client), owns_(!client.session_enabled_) {
             client_.session_enabled_ = true;
         }
@@ -82,19 +83,32 @@ public:
         bool owns_; ///< nested sessions: only the outermost one tears down
     };
 
-    // The session connection is per-instance state: copies share the host
-    // config but never the live connection (two instances writing into one
-    // socket would interleave requests).
+    // The session connection is per-instance state: neither copies nor moves
+    // transfer it (a moved-into instance would be stuck in reuse mode with no
+    // Session guard to end it, and two instances writing into one socket
+    // would interleave requests). The source of a move keeps its session
+    // state, so its guard still tears it down.
     DockerClient(const DockerClient& other) : host_(other.host_), timeouts_(other.timeouts_) {}
     DockerClient& operator=(const DockerClient& other) {
-        host_ = other.host_;
-        timeouts_ = other.timeouts_;
-        session_enabled_ = false;
-        session_transport_.reset();
+        if (this != &other) {
+            host_ = other.host_;
+            timeouts_ = other.timeouts_;
+            session_enabled_ = false;
+            session_transport_.reset();
+        }
         return *this;
     }
-    DockerClient(DockerClient&&) = default;
-    DockerClient& operator=(DockerClient&&) = default;
+    DockerClient(DockerClient&& other) noexcept
+        : host_(std::move(other.host_)), timeouts_(other.timeouts_) {}
+    DockerClient& operator=(DockerClient&& other) noexcept {
+        if (this != &other) {
+            host_ = std::move(other.host_);
+            timeouts_ = other.timeouts_;
+            session_enabled_ = false;
+            session_transport_.reset();
+        }
+        return *this;
+    }
     ~DockerClient() = default;
 
     /// Construct a client using DockerHost::resolve().
@@ -277,12 +291,10 @@ private:
                                      const std::vector<std::pair<std::string, std::string>>& headers,
                                      std::optional<std::chrono::milliseconds> io_timeout);
 
-    /// Drop the session state: the cached connection (if any) is closed by its
-    /// destructor. Called by the outermost Session's destructor.
-    void end_session() noexcept {
-        session_enabled_ = false;
-        session_transport_.reset();
-    }
+    /// Drop the session state, gracefully closing the cached connection (on
+    /// TLS that is the close_notify exchange; plain destruction would cut it
+    /// abruptly). Called by the outermost Session's destructor.
+    void end_session() noexcept;
 
     DockerHost host_;
     docker::TransportTimeouts timeouts_;
