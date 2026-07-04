@@ -1,5 +1,7 @@
 # testcontainers-cpp
 
+[![CI](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml)
+
 Native C++ port of [Testcontainers](https://testcontainers.com/) — spin up real Docker
 containers from your integration tests and tear them down automatically. **No Rust, no `docker`
 CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
@@ -8,9 +10,10 @@ CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 > `Container` / `Network` / `Volume` / `DockerComposeContainer`, six wait strategies, exec
 > (stdin / tty / streaming), copy to/from container, lifecycle hooks, container reuse, the Ryuk
 > crash-safety reaper, registry auth incl. credential helpers, and the TLS transport are
-> implemented, covered by ~290 unit + ~65 integration tests against a real daemon. The feature
-> reference with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a
-> real remote daemon is the main unverified gap.
+> implemented, covered by ~300 unit + ~65 integration tests against a real daemon — green on
+> Windows (named pipe) and Linux (unix socket; CI runs the full suite). The feature reference
+> with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a real
+> remote daemon is the main unverified gap.
 
 This is a from-scratch rewrite. A previous attempt (`testcontainers-cxx/`, in this repo for
 reference) wrapped the Rust `testcontainers` library over a cxx FFI bridge; this project drops
