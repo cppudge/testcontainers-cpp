@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // _putenv_s on MSVC
-
 #include <gtest/gtest.h>
 
 #include <chrono>

@@ -71,7 +71,9 @@ std::string build_tar(const CopyToContainer& source) {
     struct archive_entry* entry = archive_entry_new();
     archive_entry_set_pathname(entry, name.c_str());
     archive_entry_set_filetype(entry, AE_IFREG);
-    archive_entry_set_perm(entry, static_cast<int>(source.mode()));
+    // libarchive's mode parameter is 16-bit on Windows (CRT _mode_t);
+    // permission bits always fit.
+    archive_entry_set_perm(entry, static_cast<unsigned short>(source.mode()));
     archive_entry_set_size(entry, static_cast<la_int64_t>(body.size()));
 
     if (archive_write_header(a, entry) != ARCHIVE_OK) {
@@ -125,7 +127,8 @@ std::string build_context_tar(const std::vector<TarFile>& files) {
         struct archive_entry* entry = archive_entry_new();
         archive_entry_set_pathname(entry, name.c_str());
         archive_entry_set_filetype(entry, AE_IFREG);
-        archive_entry_set_perm(entry, file.mode);
+        // 16-bit on Windows, see above.
+        archive_entry_set_perm(entry, static_cast<unsigned short>(file.mode));
         archive_entry_set_size(entry, static_cast<la_int64_t>(file.body.size()));
 
         if (archive_write_header(a, entry) != ARCHIVE_OK) {

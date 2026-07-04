@@ -50,6 +50,27 @@ if(WIN32)
     add_compile_definitions(_WIN32_WINNT=0x0A00)
 endif()
 
+# ===== Warnings =====
+# High warning level on OUR targets only (dependency headers already arrive as
+# system includes — /external:I under MSVC, -isystem under gcc/clang — so they
+# stay silent). TC_WERROR hardens warnings into errors; CI turns it on, the
+# default stays OFF so a future compiler's new warnings never break a user's
+# build of a vendored copy.
+option(TC_WERROR "Treat compiler warnings as errors" OFF)
+function(tc_apply_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+        if(TC_WERROR)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+        if(TC_WERROR)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
 # ===== Dependencies (provided by Conan / CMakeDeps) =====
 find_package(Boost REQUIRED)            # header-only Beast + Asio
 find_package(OpenSSL REQUIRED)
@@ -85,6 +106,7 @@ add_library(testcontainers
     src/compose/ComposeClients.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
+tc_apply_warnings(testcontainers)
 
 target_include_directories(testcontainers
     PUBLIC
@@ -118,9 +140,11 @@ endif()
 if(TC_BUILD_EXAMPLES)
     add_executable(tc_smoke examples/smoke.cpp)
     target_link_libraries(tc_smoke PRIVATE testcontainers::testcontainers)
+    tc_apply_warnings(tc_smoke)
 
     add_executable(tc_ping examples/ping.cpp)
     target_link_libraries(tc_ping PRIVATE testcontainers::testcontainers)
+    tc_apply_warnings(tc_ping)
 endif()
 
 # ===== Tests =====
@@ -172,6 +196,7 @@ if(BUILD_TESTING)
     )
     # ApiMappingTest / AuthTest / TarTest include internal headers under src/.
     target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    tc_apply_warnings(tc_unit_tests)
     add_test(NAME unit COMMAND tc_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS "unit")
 
@@ -214,11 +239,19 @@ if(BUILD_TESTING)
     )
     # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id).
     target_include_directories(tc_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    tc_apply_warnings(tc_integration_tests)
     if(WIN32)
         target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
     endif()
     add_test(NAME integration COMMAND tc_integration_tests)
     set_tests_properties(integration PROPERTIES LABELS "integration")
+
+    if(MSVC)
+        # Tests call portable getenv/fopen on purpose (the _s variants are
+        # Windows-only); silence the CRT's C4996 deprecation for them.
+        target_compile_definitions(tc_unit_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_definitions(tc_integration_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
 endif()
 
 # ===== Install =====
