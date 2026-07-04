@@ -7,67 +7,54 @@
 
 // A small cross-platform subprocess helper. Originally written for the local
 // compose client (the documented compose-only exception to the library's "no
-// docker CLI" rule), it is also used to drive Docker credential helpers. No
-// Boost here — just the C runtime's popen/pclose.
+// docker CLI" rule), it is also used to drive Docker credential helpers.
+// Children are spawned directly (CreateProcessW / posix_spawnp) — no shell in
+// between — with an EXPLICIT environment block, so the parent environment is
+// never mutated and concurrent run_process calls cannot cross-contaminate.
 
 namespace testcontainers::detail {
 
 /// The outcome of running a child process: its exit code and combined output.
 struct ProcessResult {
     int exit_code = 0;  ///< the process exit status (WEXITSTATUS on POSIX)
-    std::string output; ///< merged stdout + stderr (we append `2>&1`)
+    std::string output; ///< merged stdout + stderr (both handed the same pipe)
 };
 
-/// Quote a single argv element for inclusion in a shell command line.
+/// Quote a single argv element for a Windows child's command line.
 ///
-/// Wraps the element in double quotes and escapes any embedded double quote
-/// (`"` -> `\"`). This keeps paths/values containing spaces intact. We do NOT
-/// attempt full POSIX/cmd metacharacter escaping — the argv here is
-/// library-controlled (compose subcommands + paths), not arbitrary user shell
-/// input; see TODO.md for the cmd.exe embedded-quote caveat. Exposed (pure)
-/// for unit testing.
+/// Follows the CommandLineToArgvW / MSVCRT parsing rules the child applies:
+/// the element is wrapped in double quotes, an embedded `"` becomes `\"` with
+/// any backslash run before it doubled, and a trailing backslash run is
+/// doubled so the closing quote stays a delimiter. Only used to build Windows
+/// command lines (POSIX passes argv directly); compiled everywhere as a pure
+/// function for unit testing.
 std::string quote_arg(const std::string& arg);
 
-/// Build the full command line run_process hands to popen: each argv element
-/// quoted and space-joined, an optional `cd "<dir>" &&` prefix, an optional
-/// `< "<stdin-file>"` redirection, and a trailing `2>&1`. On Windows the whole
-/// line is wrapped in one more pair of quotes so cmd.exe's first/last-quote
-/// stripping is a no-op on our real quoting. Exposed (pure) for unit testing.
-std::string build_command_line(const std::vector<std::string>& argv,
-                               const std::optional<std::string>& working_dir,
-                               const std::optional<std::string>& stdin_file);
+/// Build the command line handed to CreateProcessW: each argv element quoted
+/// per quote_arg and space-joined. No shell is involved, so there is no
+/// redirection or cmd.exe-quoting layer here. Exposed (pure) for unit testing.
+std::string build_command_line(const std::vector<std::string>& argv);
 
 /// Run `argv` as a child process, capturing its merged stdout+stderr.
 ///
-/// CONTRACT: `argv[0]` must be a real executable ("exe + arguments" — its
-/// arguments are parsed with the MSVCRT/`CommandLineToArgvW` rules our quoting
-/// targets, which is how every library caller uses it: docker, compose,
-/// docker-credential-<helper>). A nested `cmd /c "<script>"` argv — or a
-/// .bat/.cmd file, which cmd.exe also tokenizes itself — is UNSUPPORTED on
-/// Windows: cmd's tokenizer re-processes the quotes and mangles the quoted
-/// script (see tests/unit/ProcessTest.cpp and TODO.md).
+/// CONTRACT: `argv[0]` must be a real executable — the child is spawned
+/// directly via CreateProcessW (which appends `.exe` and searches PATH) or
+/// posix_spawnp; there is no shell, so shell builtins and `.bat`/`.cmd`
+/// scripts are not runnable. Every library caller passes one (docker,
+/// compose, docker-credential-<helper>).
 ///
-/// Implementation: we shell out via `_popen`/`_pclose` (`popen`/`pclose` on
-/// POSIX), so the argv is joined into a single command line. Each element is
-/// quoted defensively (wrapped in double quotes with embedded double quotes
-/// escaped) so paths/values with spaces survive; `2>&1` is appended to fold
-/// stderr into the captured stream. The exit code is the raw value on Windows
-/// and `WEXITSTATUS(status)` on POSIX.
+/// `working_dir`, when set, becomes the child's working directory natively
+/// (CreateProcessW's lpCurrentDirectory / posix_spawn addchdir) — the compose
+/// clients avoid it by passing absolute `-f` paths, so it is normally nullopt.
 ///
-/// `working_dir`, when set, is applied by prefixing a `cd` into it — but the
-/// compose clients avoid this by passing absolute `-f` paths (and compose's own
-/// `--project-directory`), so it is normally nullopt.
+/// `env` entries OVERRIDE the inherited variables in an explicit environment
+/// block built for the child; the parent's own environment is never touched,
+/// making concurrent run_process calls with different env safe.
 ///
-/// `env` entries are exported into the process environment via `_putenv_s` /
-/// `setenv` immediately before the run and RESTORED to their prior values (or
-/// unset if previously absent) immediately after, so the parent environment is
-/// left untouched.
-///
-/// `stdin_data`, when set, is fed to the child on its stdin. Since popen is
-/// unidirectional, we write the data to a temp file and append an (unquoted)
-/// `< "<tempfile>"` redirection to the command line; the temp file is deleted
-/// (best-effort) after the child exits. When nullopt the child inherits the
-/// parent's stdin (the original behaviour).
+/// `stdin_data`, when set, is staged in a temp file opened as the child's
+/// stdin (deleted best-effort after the run) — a file cannot deadlock against
+/// the output pipe the way a stdin pipe could. When nullopt the child reads
+/// EOF (NUL / /dev/null); no library child reads stdin outside `stdin_data`.
 ProcessResult run_process(const std::vector<std::string>& argv,
                           const std::optional<std::string>& working_dir = std::nullopt,
                           const std::vector<std::pair<std::string, std::string>>& env = {},

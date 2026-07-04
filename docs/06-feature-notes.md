@@ -157,8 +157,10 @@ to the host `docker compose` CLI, the one documented exception to the library's 
 rule), Containerised (a long-lived `docker:26.1-cli` ambassador with the host socket
 bind-mounted), and Auto (probe, then fall back). Readiness = compose v2 `--wait
 --wait-timeout` PLUS a TCP probe per `with_exposed_service` (phases budgeted separately).
-Local-mode env vars are saved/applied/restored around the child process only. Compose
-containers carry no session label (not Ryuk-reaped).
+Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
+an explicit per-child environment block, so compose env never touches the parent process and
+concurrent stacks cannot cross-contaminate. Compose containers carry no session label (not
+Ryuk-reaped).
 
 **Windows containers** (docs/04) — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the

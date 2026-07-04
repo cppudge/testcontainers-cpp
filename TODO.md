@@ -10,10 +10,6 @@ when it lands (adding a short note there if it needs one).
   will silently be dropped from the move. Fix direction: a small RAII `TempFile` member
   (delete-on-destroy, moveable) + an owning "torn down" flag type, then `= default` both moves —
   rule of zero makes the whole failure class impossible. (`src/DockerComposeContainer.cpp`)
-- **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
-  credential-helper path) mutate process-global env around the child run; two compose stacks
-  torn down concurrently can cross-contaminate env. Serialize with a static mutex, or move to
-  `CreateProcessW`/`posix_spawn` with an explicit environment block. (`src/Process.cpp`)
 
 ## Tech debt
 - **No Docker API version pinned** — all targets are unversioned (`/containers/create`),
@@ -51,11 +47,12 @@ when it lands (adding a short note there if it needs one).
   realistic exec-stdin payloads are tiny) — interleave the stdin write with the output read if
   it ever matters. Named-pipe half-close note: `FlushFileBuffers` before the zero-length EOF
   message is the one transport operation the io deadline cannot bound (go-winio parity).
-- **`Process.cpp` quoting residuals** — embedded-`"` escaping follows the MSVCRT-argv
-  convention, which cmd.exe does not honor (safe today: all input is library-controlled); only
-  "exe + arguments" argv shapes survive on Windows (documented). `working_dir` uses `cd`
-  without `/d`, so a Windows dir on another drive would silently not switch (every caller
-  passes nullopt today) — emit `cd /d` under `_WIN32` before anyone relies on it.
+- **`run_process` residuals** — children are spawned directly (no shell), so shell builtins
+  and `.bat`/`.cmd` scripts are not runnable (every caller passes a real executable: docker,
+  compose, docker-credential-<helper>). On POSIX, `working_dir` needs
+  `posix_spawn_file_actions_addchdir_np` (glibc 2.29+ / macOS; throws elsewhere — callers pass
+  nullopt today). Output is fully buffered until child exit (no streaming consumer).
+  (`src/Process.cpp`)
 - **`server_os()` cache race is benign but unrealized** — the mutex is released between the
   cache read and the `GET /version`, so two threads can both issue the first request
   (idempotent, harmless). `std::call_once` would realize the double-checked intent.
