@@ -13,7 +13,7 @@ namespace testcontainers {
 /// on some platforms (notably MSVC, where `stdout` expands to a function call).
 /// There is deliberately no `follow` flag here: the snapshot/stream split is
 /// encoded in the method names — `logs()` is always a snapshot, `follow_logs()`
-/// always streams (mirrors java's getLogs()/followOutput()).
+/// always streams.
 struct LogOptions {
     bool include_stdout = true; ///< include the stdout stream
     bool include_stderr = true; ///< include the stderr stream

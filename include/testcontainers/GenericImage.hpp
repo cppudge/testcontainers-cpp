@@ -40,7 +40,7 @@ namespace testcontainers {
 /// the orchestration-only state (waits, copy-to sources, hooks, reuse, …).
 class GenericImage {
 public:
-    /// Construct from an image name and tag (tag defaults to "latest").
+    /// Construct from an image name and tag.
     explicit GenericImage(std::string image, std::string tag = "latest")
         : image_(std::move(image)), tag_(std::move(tag)) {}
 
@@ -220,8 +220,7 @@ public:
         return *this;
     }
 
-    /// Enable container reuse (à la testcontainers `.withReuse(true)`). When
-    /// reuse is also enabled globally (`testcontainers.reuse.enable=true` in
+    /// Enable container reuse. When reuse is also enabled globally (`testcontainers.reuse.enable=true` in
     /// ~/.testcontainers.properties or `TESTCONTAINERS_REUSE_ENABLE=true`),
     /// `start()` first looks for an already-running container matching this
     /// config (by a stable reuse-hash label) and ADOPTS it instead of creating a
@@ -282,8 +281,7 @@ public:
 
     /// Retry the whole create→start→wait sequence up to `n` times if an attempt
     /// fails (each retry creates a brand-new container). Values < 1 are treated
-    /// as 1 (a single attempt, no retry). Mirrors testcontainers
-    /// `withStartupAttempts`.
+    /// as 1 (a single attempt, no retry).
     GenericImage& with_startup_attempts(int n) {
         startup_attempts_ = n < 1 ? 1 : n;
         return *this;

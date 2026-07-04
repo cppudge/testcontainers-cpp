@@ -16,21 +16,19 @@ namespace compose {
 class IComposeClient; // internal; defined under src/compose
 } // namespace compose
 
-/// Which compose client drives the project (mirrors testcontainers-rs's factory
-/// naming `with_local_client` / `with_containerised_client` / `with_auto_client`).
+/// Which compose client drives the project.
 enum class ComposeClientKind {
-    Local,         ///< host `docker compose` CLI (THE DEFAULT, matching rust)
+    Local,         ///< host `docker compose` CLI (the default)
     Containerised, ///< `docker compose` inside a long-lived `docker:cli` container
     Auto,          ///< probe local; fall back to containerised
 };
 
 /// A RAII handle to a running Docker Compose project.
 ///
-/// THREE client modes (rust parity), selected by ComposeClientKind:
+/// Three client modes, selected by ComposeClientKind:
 ///   - Local (DEFAULT): shells out to the host `docker compose` CLI. This is a
 ///     DELIBERATE, COMPOSE-ONLY exception to the library's "no docker CLI" rule
-///     (the rest of the library stays pure Engine-API). rust's default is the
-///     local client, so ours is too.
+///     (the rest of the library stays pure Engine-API).
 ///   - Containerised: runs `docker compose` inside ONE long-lived `docker:cli`
 ///     container (entrypoint /bin/sh, cmd `-c sleep infinity`) with the host
 ///     docker socket bind-mounted; each compose file is copied in and `up`/`down`
@@ -54,7 +52,7 @@ enum class ComposeClientKind {
 /// that lives in the .cpp and the internal src/compose/ files.
 class DockerComposeContainer {
 public:
-    /// Build from host compose files (default client = Local, matching rust).
+    /// Build from host compose files (default client = Local).
     /// The files are referenced by absolute path at start() (they are not read
     /// here); for containerised mode they are copied into the cli container.
     explicit DockerComposeContainer(std::vector<std::string> compose_files);
@@ -62,7 +60,7 @@ public:
     /// Single-file convenience.
     explicit DockerComposeContainer(const std::string& compose_file);
 
-    // --- rust-parity factories (set files + client kind) ---
+    // --- Factories (set files + client kind) ---
 
     static DockerComposeContainer with_local_client(std::vector<std::string> compose_files);
     static DockerComposeContainer with_containerised_client(std::vector<std::string> compose_files);
@@ -124,8 +122,8 @@ public:
 
     /// Readiness timeout, default 60s. Applies to compose `--wait`
     /// (`--wait-timeout <secs>`) AND to each exposed service's TCP probe; the
-    /// phases are budgeted separately (each gets the full timeout, mirroring
-    /// java's per-strategy timeouts), not shared under one deadline.
+    /// phases are budgeted separately (each gets the full timeout), not shared
+    /// under one deadline.
     DockerComposeContainer& with_wait_timeout(std::chrono::seconds timeout) &;
     DockerComposeContainer&& with_wait_timeout(std::chrono::seconds timeout) &&;
 

@@ -12,7 +12,7 @@
 namespace testcontainers {
 
 /// A reusable, copyable description of an image to BUILD from a Dockerfile and a
-/// build context — the C++ analogue of testcontainers-rs's `GenericBuildableImage`.
+/// build context.
 ///
 /// Construct it with a name and tag, add the Dockerfile (from a host path or an
 /// inline string) plus any context files/data, then call `build()` to build the
@@ -39,39 +39,36 @@ namespace testcontainers {
 /// walk and tar packing happen in the .cpp so no libarchive/Boost leaks here.
 class GenericBuildableImage {
 public:
-    /// Construct a buildable image with the given name and tag (default "latest").
-    /// The built image is tagged `<name>:<tag>`.
+    /// Construct a buildable image with the given name and tag.
     explicit GenericBuildableImage(std::string_view name, std::string_view tag = "latest")
         : name_(name), tag_(tag) {}
 
     // --- In-place builders (single overload; chain on lvalues and temporaries) ---
 
     /// Add a Dockerfile from the host filesystem, placed at `Dockerfile` in the
-    /// build context (mirrors rust `with_dockerfile`).
+    /// build context.
     GenericBuildableImage& with_dockerfile(std::filesystem::path source_path) {
         context_.push_back(CopyToContainer::host_file(std::move(source_path), "Dockerfile"));
         return *this;
     }
 
     /// Add a Dockerfile from an inline string, placed at `Dockerfile` in the
-    /// build context (mirrors rust `with_dockerfile_string`). Useful for
-    /// generating a Dockerfile programmatically or embedding one in a test.
+    /// build context. Useful for generating a Dockerfile programmatically or
+    /// embedding one in a test.
     GenericBuildableImage& with_dockerfile_string(std::string content) {
         context_.push_back(CopyToContainer::content(std::move(content), "Dockerfile"));
         return *this;
     }
 
     /// Add a host file or directory to the build context at `target` (a directory
-    /// is added recursively, each file under `target/<relpath>`). Mirrors rust
-    /// `with_file`. The Dockerfile must be named `Dockerfile` unless added via
-    /// `with_dockerfile*`.
+    /// is added recursively, each file under `target/<relpath>`). The Dockerfile
+    /// must be named `Dockerfile` unless added via `with_dockerfile*`.
     GenericBuildableImage& with_file(std::filesystem::path source_path, std::string target) {
         context_.push_back(CopyToContainer::host_file(std::move(source_path), std::move(target)));
         return *this;
     }
 
-    /// Add in-memory bytes to the build context at `target` (mirrors rust
-    /// `with_data`). `data` may be binary.
+    /// Add in-memory bytes to the build context at `target`. `data` may be binary.
     GenericBuildableImage& with_data(std::string data, std::string target) {
         context_.push_back(CopyToContainer::content(std::move(data), std::move(target)));
         return *this;
