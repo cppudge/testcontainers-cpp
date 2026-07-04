@@ -214,9 +214,12 @@ void Reaper::ensure_started() {
     }
     if (!connected) {
         kill_ryuk();
-        docker::throw_transport_error("Could not connect to Ryuk control port at " + ep.host +
-                                          ":" + std::to_string(ep.port) + ": " + ec.message(),
-                                      ec);
+        // The retry loop only exits unconnected when its 20s budget is spent —
+        // type on THAT, not on whichever ec the last attempt happened to leave
+        // (a refused final attempt is still an exhausted handshake budget).
+        throw TransportTimeoutError("Could not connect to Ryuk control port at " + ep.host + ":" +
+                                    std::to_string(ep.port) + " within the handshake budget"
+                                    " (last error: " + ec.message() + ")");
     }
 
     // Register the session filter and wait for the ACK so we know Ryuk accepted

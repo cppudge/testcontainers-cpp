@@ -88,7 +88,7 @@ std::string build_build_query(const BuildOptions& options,
 /// Scan a `POST /build` progress stream (newline-delimited JSON) and throw
 /// DockerError if any line reports an error ("error"/"errorDetail"). Docker
 /// returns HTTP 200 even on build failure (the error is embedded in the stream),
-/// exactly like the pull stream.
-void throw_if_build_error(const std::string& build_stream);
+/// exactly like the pull stream. `tag` becomes the error's resource_id().
+void throw_if_build_error(const std::string& build_stream, const std::string& tag = {});
 
 } // namespace testcontainers::docker

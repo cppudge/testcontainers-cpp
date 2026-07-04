@@ -427,7 +427,7 @@ public:
         // NMPWAIT_USE_DEFAULT_WAIT).
         const auto deadline = Clock::now() + timeouts.connect;
         HANDLE handle = INVALID_HANDLE_VALUE;
-        for (int attempt = 0; attempt < 3; ++attempt) {
+        for (;;) {
             handle = ::CreateFileA(win_path.c_str(), GENERIC_READ | GENERIC_WRITE,
                                    /*share*/ 0, /*security*/ nullptr, OPEN_EXISTING,
                                    FILE_FLAG_OVERLAPPED, /*template*/ nullptr);
@@ -435,20 +435,21 @@ public:
                 break;
             }
             const DWORD err = ::GetLastError();
-            if (err == ERROR_PIPE_BUSY) {
-                const DWORD busy_wait_ms = static_cast<DWORD>(
-                    std::max<long long>(1, remaining(deadline).count()));
-                ::WaitNamedPipeA(win_path.c_str(), busy_wait_ms);
-                continue;
+            if (err != ERROR_PIPE_BUSY) {
+                throw DockerError("Cannot open Docker named pipe '" + win_path +
+                                  "' (Win32 error " + std::to_string(err) +
+                                  "). Is Docker Desktop running?");
             }
-            throw DockerError("Cannot open Docker named pipe '" + win_path +
-                              "' (Win32 error " + std::to_string(err) +
-                              "). Is Docker Desktop running?");
-        }
-        if (handle == INVALID_HANDLE_VALUE) {
-            // The connect budget was exhausted waiting for a free pipe instance.
-            throw TimeoutError("Docker named pipe is busy: " + win_path +
-                               " (connect budget exhausted)");
+            // Busy: retry until the connect budget is spent (a WaitNamedPipe
+            // wake-up does not guarantee THIS client wins the freed instance,
+            // so keep trying rather than counting attempts).
+            if (Clock::now() >= deadline) {
+                throw TransportTimeoutError("Docker named pipe is busy: " + win_path +
+                                            " (connect budget exhausted)");
+            }
+            const DWORD busy_wait_ms = static_cast<DWORD>(
+                std::max<long long>(1, remaining(deadline).count()));
+            ::WaitNamedPipeA(win_path.c_str(), busy_wait_ms);
         }
         boost::system::error_code ec;
         handle_.assign(handle, ec);
@@ -560,7 +561,7 @@ bool docker_tls_verify() {
 
 void throw_transport_error(const std::string& message, const boost::system::error_code& ec) {
     if (ec == asio::error::timed_out) {
-        throw TimeoutError(message);
+        throw TransportTimeoutError(message);
     }
     throw DockerError(message);
 }

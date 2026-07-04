@@ -505,7 +505,8 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
             // a non-string payload rather than swallowing the failure.
             if (const auto err = json.find("error"); err != json.end()) {
                 throw DockerError("Failed to pull image '" + image + "': " +
-                                  (err->is_string() ? err->get<std::string>() : err->dump()));
+                                      (err->is_string() ? err->get<std::string>() : err->dump()),
+                                  std::nullopt, image);
             }
         } catch (const nlohmann::json::parse_error&) {
             // Non-JSON line (shouldn't happen) — ignore.
@@ -557,7 +558,7 @@ std::string build_build_query(const BuildOptions& options,
     return query;
 }
 
-void throw_if_build_error(const std::string& build_stream) {
+void throw_if_build_error(const std::string& build_stream, const std::string& tag) {
     std::size_t start = 0;
     while (start < build_stream.size()) {
         const std::size_t nl = build_stream.find('\n', start);
@@ -572,15 +573,17 @@ void throw_if_build_error(const std::string& build_stream) {
             // ANY "error" key means the build failed (see throw_if_pull_error).
             if (const auto err = json.find("error"); err != json.end()) {
                 throw DockerError("image build failed: " +
-                                  (err->is_string() ? err->get<std::string>() : err->dump()));
+                                      (err->is_string() ? err->get<std::string>() : err->dump()),
+                                  std::nullopt, tag);
             }
             if (const auto detail = json.find("errorDetail"); detail != json.end()) {
                 const auto msg =
                     detail->is_object() ? detail->find("message") : detail->end();
                 throw DockerError("image build failed: " +
-                                  (msg != detail->end() && msg->is_string()
-                                       ? msg->get<std::string>()
-                                       : detail->dump()));
+                                      (msg != detail->end() && msg->is_string()
+                                           ? msg->get<std::string>()
+                                           : detail->dump()),
+                                  std::nullopt, tag);
             }
         } catch (const nlohmann::json::parse_error&) {
             // Non-JSON line (shouldn't happen) — ignore.

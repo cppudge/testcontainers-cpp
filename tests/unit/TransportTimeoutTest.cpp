@@ -38,9 +38,10 @@
 //   TransportTimeout.SetIoTimeoutAppliesToSubsequentReads - a transport opened without a deadline starts timing out after set_io_timeout(ms).
 //   TransportTimeout.WriteTimesOutWhenPeerStopsReading - once the peer's receive window fills, a write fails with timed_out instead of blocking forever.
 //   TransportTimeout.ConnectRefusedFailsWithDockerError - connecting to a closed port throws DockerError (the refused path is an error, not a hang).
-//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws TimeoutError within the connect budget (composed-op cancellation).
-//   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws TimeoutError (status_code()==nullopt) instead of hanging the Beast parser loop (end-to-end through TransportStream).
+//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws TransportTimeoutError within the connect budget (composed-op cancellation).
+//   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws TransportTimeoutError (status_code()==nullopt) instead of hanging the Beast parser loop (end-to-end through TransportStream).
 //   TransportTimeout.NamedPipeReadTimesOutOnSilentServer - (Windows) a named-pipe read against a silent pipe server fails with timed_out within the deadline.
+//   TransportTimeout.NamedPipeRequestThrowsTypedTimeout - (Windows) DockerClient::request over a silent named pipe throws TransportTimeoutError - the typed path on the primary Windows transport.
 
 namespace {
 
@@ -50,7 +51,7 @@ using namespace std::chrono_literals;
 
 using testcontainers::DockerError;
 using testcontainers::DockerHost;
-using testcontainers::TimeoutError;
+using testcontainers::TransportTimeoutError;
 using testcontainers::docker::TransportTimeouts;
 
 /// A loopback TCP server accepting ONE connection, running `session` on it,
@@ -235,8 +236,8 @@ TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
     const auto start = std::chrono::steady_clock::now();
     try {
         testcontainers::docker::connect(host, timeouts);
-        FAIL() << "expected TimeoutError";
-    } catch (const TimeoutError& e) {
+        FAIL() << "expected TransportTimeoutError";
+    } catch (const TransportTimeoutError& e) {
         // The typed timeout is also a DockerError (checked by the static
         // hierarchy tests); here the specific type must survive the throw.
         EXPECT_NE(std::string(e.what()).find("TLS handshake"), std::string::npos) << e.what();
@@ -261,8 +262,8 @@ TEST(TransportTimeout, RequestTimesOutMidBody) {
     const auto start = std::chrono::steady_clock::now();
     try {
         client.request("GET", "/wedged");
-        FAIL() << "expected TimeoutError";
-    } catch (const TimeoutError& e) {
+        FAIL() << "expected TransportTimeoutError";
+    } catch (const TransportTimeoutError& e) {
         EXPECT_NE(std::string(e.what()).find("Failed to read response"), std::string::npos)
             << e.what();
         EXPECT_EQ(e.status_code(), std::nullopt); // a timeout never saw a status
@@ -308,6 +309,46 @@ TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     EXPECT_LT(elapsed_since(start), 5s);
 
     transport->close();
+    stop.set_value();
+    server.join();
+    ::CloseHandle(pipe);
+}
+
+TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
+    // Same silent-pipe-server shape, driven through DockerClient::request: the
+    // request is written (fits the pipe buffer), the response never comes, and
+    // the typed TransportTimeoutError must survive to the caller on the
+    // primary Windows transport.
+    const std::string pipe_name =
+        R"(\\.\pipe\tc-timeout-req-test-)" + std::to_string(::GetCurrentProcessId());
+    const HANDLE pipe =
+        ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
+                           /*default timeout*/ 0, /*security*/ nullptr);
+    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
+
+    std::promise<void> stop;
+    std::thread server([&] {
+        ::ConnectNamedPipe(pipe, nullptr); // blocks until the client connects
+        stop.get_future().wait();          // never reads, never answers
+    });
+
+    testcontainers::DockerClient client{DockerHost::parse(
+        "npipe:////./pipe/tc-timeout-req-test-" + std::to_string(::GetCurrentProcessId()))};
+    TransportTimeouts timeouts;
+    timeouts.io = 250ms;
+    client.set_transport_timeouts(timeouts);
+
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        client.request("GET", "/wedged");
+        FAIL() << "expected TransportTimeoutError";
+    } catch (const TransportTimeoutError& e) {
+        EXPECT_EQ(e.status_code(), std::nullopt) << e.what();
+    }
+    EXPECT_LT(elapsed_since(start), 5s);
+
     stop.set_value();
     server.join();
     ::CloseHandle(pipe);

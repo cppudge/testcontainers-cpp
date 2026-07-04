@@ -73,8 +73,9 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
 
         if (Clock::now() >= deadline) {
             throw StartupTimeoutError("Timed out waiting for log message \"" + cond.text + "\" (" +
-                                      std::to_string(seen) + "/" + std::to_string(needed) +
-                                      " occurrences) in container " + id);
+                                          std::to_string(seen) + "/" + std::to_string(needed) +
+                                          " occurrences) in container " + id,
+                                      id);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -101,7 +102,7 @@ void wait_for_exit(DockerClient& client, const std::string& id, const wait::Exit
         }
 
         if (Clock::now() >= deadline) {
-            throw StartupTimeoutError("Timed out waiting for container " + id + " to exit");
+            throw StartupTimeoutError("Timed out waiting for container " + id + " to exit", id);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -131,7 +132,8 @@ void wait_for_healthcheck(DockerClient& client, const std::string& id, Clock::ti
 
         if (Clock::now() >= deadline) {
             throw StartupTimeoutError("Timed out waiting for container " + id +
-                                      " to become healthy (last status \"" + status + "\")");
+                                          " to become healthy (last status \"" + status + "\")",
+                                      id);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -304,8 +306,9 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
         if (Clock::now() >= deadline) {
             throw StartupTimeoutError(
                 "Timed out waiting for HTTP " + std::to_string(cond.expected_status) + " from " +
-                host + ":" + std::to_string(port) + cond.path + " (container " + id +
-                ", last status " + std::to_string(last_status) + ")");
+                    host + ":" + std::to_string(port) + cond.path + " (container " + id +
+                    ", last status " + std::to_string(last_status) + ")",
+                id);
         }
         std::this_thread::sleep_for(interval);
     }
@@ -329,7 +332,8 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
 
         if (Clock::now() >= deadline) {
             throw StartupTimeoutError("Timed out waiting for TCP connection to " + host + ":" +
-                                      std::to_string(port) + " (container " + id + ")");
+                                          std::to_string(port) + " (container " + id + ")",
+                                      id);
         }
         std::this_thread::sleep_for(interval);
     }
@@ -355,8 +359,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                     const Clock::time_point wake = Clock::now() + cond.value;
                     std::this_thread::sleep_until(wake < deadline ? wake : deadline);
                     if (Clock::now() >= deadline && wake > deadline) {
-                        throw StartupTimeoutError("Timed out during wait::Duration for container " +
-                                                  id);
+                        throw StartupTimeoutError(
+                            "Timed out during wait::Duration for container " + id, id);
                     }
                 } else if constexpr (std::is_same_v<T, wait::Exit>) {
                     wait_for_exit(client, id, cond, deadline);
@@ -375,8 +379,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
             // next condition (if any) would observe the expiry, so re-check here
             // to fail fast rather than enter the next strategy with no budget.
             if (&w != &waits.back()) {
-                throw StartupTimeoutError("Startup timeout exceeded while waiting for container " +
-                                          id);
+                throw StartupTimeoutError(
+                    "Startup timeout exceeded while waiting for container " + id, id);
             }
         }
     }

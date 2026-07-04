@@ -17,6 +17,7 @@
 //   WaitStrategies.HealthcheckWaitBecomesHealthy - an alpine container with a passing healthcheck and wait_for::healthy() starts and is running once healthy.
 //   WaitStrategies.HttpWaitReachesNginx - an nginx container with wait_for::http("/", tcp(80), 200) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.PortWaitReachesRedis - a redis container with wait_for::listening_port(tcp(6379)) starts, publishes a reachable host port, and is running.
+//   WaitStrategies.TimeoutThrowsStartupTimeoutError - a log wait on a message that never appears throws StartupTimeoutError (carrying the container id) and is NOT catchable as DockerError - readiness is not a daemon failure.
 
 using namespace testcontainers;
 using namespace std::chrono_literals;
@@ -69,4 +70,27 @@ TEST_F(WaitStrategies, PortWaitReachesRedis) {
                       .start();
     EXPECT_GT(c.get_host_port(tcp(6379)), 0);
     EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WaitStrategies, TimeoutThrowsStartupTimeoutError) {
+    // A log line that never appears: the wait can only end by timing out. (A
+    // port wait would NOT work here — Docker Desktop's host proxy accepts on a
+    // published port even when nothing listens inside the container.)
+    try {
+        GenericImage("alpine", "3.20")
+            .with_cmd({"sleep", "60"})
+            .with_wait(wait_for::log("NEVER_LOGGED_9c41"))
+            .with_startup_timeout(3s)
+            .start();
+        FAIL() << "expected StartupTimeoutError";
+    } catch (const DockerError& e) {
+        // The headline contract of the error model: a readiness timeout is not
+        // a daemon failure, so it must NOT be catchable as DockerError.
+        FAIL() << "readiness timeout arrived as DockerError: " << e.what();
+    } catch (const StartupTimeoutError& e) {
+        EXPECT_FALSE(e.resource_id().empty()) << e.what(); // the container id
+        EXPECT_NE(std::string(e.what()).find("Timed out waiting for log message"),
+                  std::string::npos)
+            << e.what();
+    }
 }

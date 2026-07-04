@@ -114,8 +114,8 @@ private:
 std::unique_ptr<ITransport> connect(const DockerHost& host,
                                     const TransportTimeouts& timeouts = {});
 
-/// Throw the typed error for a failed transport/HTTP operation: TimeoutError
-/// when `ec` says the operation hit its TransportTimeouts deadline
+/// Throw the typed error for a failed transport/HTTP operation:
+/// TransportTimeoutError when `ec` says the operation hit its deadline
 /// (asio::error::timed_out — the code every transport maps deadline expiry
 /// to), DockerError otherwise. `message` is used verbatim as the exception
 /// text (callers append ec.message() themselves).

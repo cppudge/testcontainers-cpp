@@ -27,8 +27,8 @@ review are recorded here so they aren't lost between milestones.
   so the connect budget is soft for the resolve leg of DNS names. Unit-tested against loopback
   TCP + named-pipe servers incl. TLS-handshake timeout and a mid-body stall through
   `DockerClient::request` (`tests/unit/TransportTimeoutTest.cpp`). Residual gaps:
-  (a) a timeout surfaces as the platform's `timed_out` message inside `DockerError` — a typed
-  `TimeoutError` belongs to the error-model item below;
+  (a) ~~typed timeout error~~ DONE — deadline expiry now throws `TransportTimeoutError`
+  (see the error-model item below);
   (b) deadlines are per-operation (idle), so a malicious/trickling peer can extend a response
   indefinitely — fine for a trusted daemon; a whole-request cap would need a second budget;
   (c) `pull_image` keeps the default 60s idle deadline (progress streaming is chatty, but the
@@ -38,17 +38,35 @@ review are recorded here so they aren't lost between milestones.
   not forever) — port it to the bounded probe if compose waits ever misbehave.
   (`src/docker/Transport.*`, `include/testcontainers/docker/Timeouts.hpp`,
   `src/WaitStrategies.cpp`, `src/Reaper.cpp`)
-- **Error model thinner than the README claims** — README promises "structured errors carrying
-  HTTP status / container id", but `Error`/`DockerError` are bare `runtime_error`s with no
-  fields or subtypes. The same `DockerError` is also thrown for pure usage errors (port not
-  exposed, readiness timeout), so callers cannot `catch` selectively. Fix direction: a small
-  hierarchy (e.g. `TimeoutError`, `NotFoundError`) + status/id fields on `DockerError`.
-  Related: the create-endpoint "Id"/"Name" extraction now goes through
-  `docker::expect_string_field` (wraps nlohmann failures in DockerError), but the other parse
-  entry points (`parse_inspect`, `parse_container_list`, `parse_volume_inspect`,
-  `parse_server_os`, `parse_exec_exit_code`) still call `nlohmann::json::parse` unguarded — an
-  HTML error page through a 200 escapes as a raw `json::parse_error`; route them through the
-  same wrap-to-DockerError policy. (`include/testcontainers/Error.hpp`, `src/docker/ApiMapping.*`)
+- **Structured error hierarchy (done), with known residuals** — `DockerError` carries
+  `status_code()` (the daemon's HTTP status; nullopt for transport failures) and
+  `resource_id()` (the container/image/network/volume/exec the call was about). Subtypes:
+  `NotFoundError` (every 404 status site, via one `throw_status_error` helper in
+  DockerClient.cpp), `TransportTimeoutError` (deadline expiry — connect budget, io deadline,
+  Ryuk handshake budget; mapped from `asio::error::timed_out` by
+  `docker::throw_transport_error`), and `StartupTimeoutError` for wait-strategy / compose
+  readiness timeouts — deliberately derives `Error`, NOT `DockerError` (readiness of the app
+  is not a daemon failure; `catch (DockerError)` no longer swallows it) and carries the
+  container id / compose service as `resource_id()`. ALL parse entry points are guarded now
+  (`guard_parse` in ApiMapping.cpp wraps nlohmann failures with the operation name and a 2 KiB
+  `body_excerpt` — an HTML page through a 200 neither escapes as `json::parse_error` nor
+  floods the message). Unit-tested incl. a canned loopback HTTP responder (404/500/HTML-200,
+  create→pull→retry) and an integration test pinning the StartupTimeoutError contract.
+  Known limits / one-line notes:
+  (a) `resource_id` is best-effort: empty on parse-layer and generic-`request()` transport
+  failures, and names the PRIMARY resource on two-resource calls (`connect_network` → the
+  network; create_container's post-pull 404 could actually be a missing network but reports
+  the image);
+  (b) no `ConflictError` (dispatch on `status_code()==409`); the DockerError doc explicitly
+  reserves the right to add status subtypes later, so callers must not assume exact dynamic
+  types of non-404 errors;
+  (c) non-timeout wait failures (exited-with-wrong-code, unhealthy, no-healthcheck,
+  port-not-published) stay `DockerError` (with the container id) — a dedicated
+  `ContainerStartError` was considered and deferred;
+  (d) a pull `NotFoundError` can also mean "authentication required" — registries answer 404
+  for private images requested without credentials (noted in the class doc).
+  (`include/testcontainers/Error.hpp`, `src/docker/DockerClient.cpp`, `src/docker/ApiMapping.*`,
+  `src/docker/Transport.*`, `src/WaitStrategies.cpp`)
 - **`run_process` env save/apply/restore is not thread-safe** — local-mode compose (and the
   credential-helper path) mutate process-global env via `_putenv_s`/`setenv` around the child
   run; two compose stacks torn down concurrently (destructors on different threads) can
@@ -344,8 +362,6 @@ review are recorded here so they aren't lost between milestones.
   `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
 
 ## Open / not yet built
-- **Structured error hierarchy** — status/id fields + `TimeoutError` etc.; see the tech-debt
-  item above.
 - **`ContainerRequest` + `Runner` split of `start()`** — responsibility + testability; not a
   blocker. See the tech-debt item above.
 - **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an

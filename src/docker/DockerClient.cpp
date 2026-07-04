@@ -133,7 +133,7 @@ inline std::string read_error_body(docker::TransportStream& stream,
 /// Read the response header off a hijacked/streaming connection and require
 /// HTTP 200: on a read error, an immediate EOF, or a non-200 status this
 /// closes `transport` and throws the typed error prefixed with `context` (a
-/// deadline expiry becomes TimeoutError, a non-200 goes through
+/// deadline expiry becomes TransportTimeoutError, a non-200 goes through
 /// throw_status_error with the daemon's drained error body appended).
 template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
@@ -145,7 +145,8 @@ void read_ok_header(docker::ITransport& transport, docker::TransportStream& stre
         // Without this check an immediate EOF would read the status off a
         // never-populated parser, masquerading as an empty 200 response.
         transport.close();
-        throw DockerError(context + " failed: connection closed before a response header");
+        throw DockerError(context + " failed: connection closed before a response header",
+                          std::nullopt, resource_id);
     }
     if (ec && ec != http::error::end_of_stream) {
         transport.close();
@@ -318,7 +319,7 @@ void DockerClient::build_image(const std::string& context_tar,
     }
     // Docker streams build output as newline-delimited JSON and returns 200 even
     // on a build failure, embedding the error in the stream.
-    docker::throw_if_build_error(res.body);
+    docker::throw_if_build_error(res.body, options.tag);
 }
 
 std::string DockerClient::create_container(const CreateContainerSpec& spec,
@@ -353,10 +354,8 @@ void DockerClient::start_container(const std::string& id) {
 
 std::string DockerClient::inspect_container_raw(const std::string& id) {
     const Response res = request("GET", "/containers/" + id + "/json");
-    if (res.status_code == 404) {
-        throw NotFoundError("Container not found: " + id, id);
-    }
     if (res.status_code != 200) {
+        // 404 ("no such container") becomes NotFoundError via throw_status_error.
         throw_status_error("inspect_container(" + id + ")", res, id);
     }
     return res.body;
