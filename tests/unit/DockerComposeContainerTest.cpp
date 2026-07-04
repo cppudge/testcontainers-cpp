@@ -25,6 +25,7 @@
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
+//   DockerComposeContainer.MoveAssignReleasesTargetsOldTempFile - move-assigning over a handle releases (deletes) the temp file the target owned before.
 
 using namespace testcontainers;
 
@@ -131,10 +132,9 @@ TEST(DockerComposeContainer, UnknownServiceThrows) {
 }
 
 TEST(DockerComposeContainer, MoveConstructTransfersTempFileOwnership) {
-    // The hand-written move must zero the source's temp_file_/started_/stopped_
-    // so a moved-from handle's destructor tears nothing down. Observable via
-    // the from_yaml temp file: destroying the moved-from source must NOT delete
-    // it; destroying the target must.
+    // A moved-from handle must own nothing, so its destructor tears nothing
+    // down. Observable via the from_yaml temp file: destroying the moved-from
+    // source must NOT delete it; destroying the target must.
     //
     // std::optional makes the move ctor + moved-from destruction UNAMBIGUOUS:
     // a `return source;` from a helper would be NRVO-elided (GCC/Clang do it
@@ -176,4 +176,21 @@ TEST(DockerComposeContainer, MoveAssignTransfersState) {
         EXPECT_EQ(target.compose_files().front(), temp_path);
     }
     EXPECT_FALSE(std::filesystem::exists(temp_path));
+}
+
+TEST(DockerComposeContainer, MoveAssignReleasesTargetsOldTempFile) {
+    // The RAII promise on assignment: the target's OWN resources are released
+    // before adopting the source's — its old temp file must be deleted at the
+    // assignment, not leaked.
+    DockerComposeContainer target = DockerComposeContainer::from_yaml("services: {}\n");
+    const std::string old_temp = target.compose_files().front();
+    ASSERT_TRUE(std::filesystem::exists(old_temp));
+
+    DockerComposeContainer source = DockerComposeContainer::from_yaml("services: {}\n");
+    const std::string new_temp = source.compose_files().front();
+
+    target = std::move(source);
+    EXPECT_FALSE(std::filesystem::exists(old_temp)) << "the target's old temp file leaked";
+    EXPECT_TRUE(std::filesystem::exists(new_temp));
+    EXPECT_EQ(target.compose_files().front(), new_temp);
 }

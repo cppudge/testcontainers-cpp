@@ -12,10 +12,6 @@
 
 namespace testcontainers {
 
-namespace compose {
-class IComposeClient; // internal; defined under src/compose
-} // namespace compose
-
 /// Which compose client drives the project.
 enum class ComposeClientKind {
     Local,         ///< host `docker compose` CLI (the default)
@@ -72,7 +68,9 @@ public:
 
     DockerComposeContainer(const DockerComposeContainer&) = delete;
     DockerComposeContainer& operator=(const DockerComposeContainer&) = delete;
+    /// A moved-from handle owns nothing: destroying it tears nothing down.
     DockerComposeContainer(DockerComposeContainer&&) noexcept;
+    /// Releases the target's own stack/temp file before adopting the source's.
     DockerComposeContainer& operator=(DockerComposeContainer&&) noexcept;
 
     /// Best-effort stop() (never throws).
@@ -190,8 +188,29 @@ public:
 private:
     DockerComposeContainer() = default;
 
-    /// Best-effort teardown, swallowing any error. Marks the handle stopped.
-    void drop() noexcept;
+    /// RAII owner of the from_yaml temp file: the file is deleted when the
+    /// owner is destroyed, assigned over, or remove()d; moving leaves the
+    /// source owning nothing. File operations live in the .cpp so the header
+    /// stays <filesystem>-free.
+    class TempFile {
+    public:
+        TempFile() = default;
+        explicit TempFile(std::string path) noexcept : path_(std::move(path)) {}
+        TempFile(TempFile&& other) noexcept : path_(std::move(other.path_)) {
+            other.path_.clear();
+        }
+        TempFile& operator=(TempFile&& other) noexcept; // deletes the current file first
+        TempFile(const TempFile&) = delete;
+        TempFile& operator=(const TempFile&) = delete;
+        ~TempFile();
+        /// The owned path (empty when none).
+        const std::string& path() const noexcept { return path_; }
+        /// Delete the file now (best-effort) and forget it.
+        void remove() noexcept;
+
+    private:
+        std::string path_;
+    };
 
     std::vector<std::string> compose_files_;         ///< host compose files
     std::string project_;                            ///< compose project name
@@ -206,15 +225,16 @@ private:
     bool remove_images_ = false;
     /// The services (+ their published port) to wait for at start().
     std::vector<std::pair<std::string, ContainerPort>> exposed_services_;
-    /// compose service name -> discovered container id (filled by start()).
-    std::map<std::string, std::string> service_to_id_;
-    /// A temp file written by from_yaml(), deleted on destruction (else empty).
-    std::string temp_file_;
-    /// The resolved compose client (created in start(); owns the containerised
-    /// cli container, so it must live until stop()/destruction). Opaque here.
-    std::unique_ptr<compose::IComposeClient> client_;
-    bool started_ = false;
-    bool stopped_ = false;
+    /// The temp file written by from_yaml(). Declared BEFORE active_ on
+    /// purpose: teardown (which may re-read the compose file) must run before
+    /// the file is deleted on destruction.
+    TempFile temp_file_;
+    /// The running project (created by start()): the compose client, a
+    /// teardown snapshot of the config, and the discovered service ids.
+    /// Destroying it IS the teardown, so the defaulted special members above
+    /// inherit correct move/teardown semantics from unique_ptr.
+    struct ActiveStack;
+    std::unique_ptr<ActiveStack> active_;
 };
 
 } // namespace testcontainers

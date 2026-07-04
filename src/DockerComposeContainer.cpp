@@ -77,6 +77,91 @@ std::string absolute_path(const std::string& path) {
 
 } // namespace
 
+// ===== ActiveStack: the running project as an RAII object ==================
+//
+// Everything teardown needs is SNAPSHOTTED here by start(), and the destructor
+// IS the teardown (compose `down`, the best-effort label sweep, then the
+// client release). That makes every DockerComposeContainer special member
+// defaultable — rule of zero: a moved-from handle holds a null active_ and
+// tears nothing down, move-assignment releases the target's own stack via
+// unique_ptr, and a field added to either class cannot be silently dropped
+// from a hand-written move (there is none).
+struct DockerComposeContainer::ActiveStack {
+    /// Owns the containerised cli container (if any); released LAST (members
+    /// are destroyed in reverse order, after ~ActiveStack ran `down`).
+    std::unique_ptr<compose::IComposeClient> client;
+    std::string project;
+    std::vector<std::pair<std::string, std::string>> env;
+    bool remove_volumes = true;
+    bool remove_images = false;
+    /// compose service name -> discovered container id.
+    std::map<std::string, std::string> service_to_id;
+
+    ActiveStack() = default;
+    ActiveStack(const ActiveStack&) = delete;
+    ActiveStack& operator=(const ActiveStack&) = delete;
+
+    /// Best-effort teardown; a failure must never propagate (this runs from
+    /// destructors).
+    ~ActiveStack() {
+        try {
+            // Ask compose to tear the project down via the same client.
+            if (client) {
+                try {
+                    compose::ComposeDownCommand down;
+                    down.project_name = project;
+                    down.env = env;
+                    down.volumes = remove_volumes;
+                    down.remove_images = remove_images;
+                    client->down(down);
+                } catch (...) {
+                }
+            }
+
+            // Force-remove any container still carrying the project label
+            // (e.g. if compose down missed one).
+            try {
+                DockerClient docker = DockerClient::from_environment();
+                const std::vector<ContainerSummary> leftovers = docker.list_containers(
+                    {{"label", std::string(kComposeProjectLabel) + "=" + project}}, /*all*/ true);
+                for (const ContainerSummary& summary : leftovers) {
+                    try {
+                        docker.remove_container(summary.id, /*force*/ true,
+                                                /*remove_volumes*/ true);
+                    } catch (...) {
+                    }
+                }
+            } catch (...) {
+            }
+        } catch (...) {
+        }
+    }
+};
+
+// ===== TempFile =============================================================
+
+DockerComposeContainer::TempFile::~TempFile() { remove(); }
+
+DockerComposeContainer::TempFile&
+DockerComposeContainer::TempFile::operator=(TempFile&& other) noexcept {
+    if (this != &other) {
+        remove();
+        path_ = std::move(other.path_);
+        other.path_.clear();
+    }
+    return *this;
+}
+
+void DockerComposeContainer::TempFile::remove() noexcept {
+    if (!path_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(path_, ec);
+        path_.clear();
+    }
+}
+
+// ============================================================================
+
 DockerComposeContainer::DockerComposeContainer(std::vector<std::string> files)
     : compose_files_(std::move(files)), project_("tc" + random_hex(8)),
       compose_image_(kComposeImage) {
@@ -129,52 +214,18 @@ DockerComposeContainer DockerComposeContainer::from_yaml(std::string compose_yam
         }
         out << compose_yaml;
     }
-    c.temp_file_ = temp.string();
-    c.compose_files_ = {c.temp_file_};
+    c.temp_file_ = TempFile(temp.string());
+    c.compose_files_ = {c.temp_file_.path()};
     return c;
 }
 
-DockerComposeContainer::DockerComposeContainer(DockerComposeContainer&& other) noexcept
-    : compose_files_(std::move(other.compose_files_)), project_(std::move(other.project_)),
-      compose_image_(std::move(other.compose_image_)), client_kind_(other.client_kind_),
-      env_(std::move(other.env_)), build_(other.build_), pull_(other.pull_), wait_(other.wait_),
-      wait_timeout_(other.wait_timeout_), remove_volumes_(other.remove_volumes_),
-      remove_images_(other.remove_images_), exposed_services_(std::move(other.exposed_services_)),
-      service_to_id_(std::move(other.service_to_id_)), temp_file_(std::move(other.temp_file_)),
-      client_(std::move(other.client_)), started_(other.started_), stopped_(other.stopped_) {
-    other.temp_file_.clear(); // the moved-from handle owns no temp file
-    other.started_ = false;
-    other.stopped_ = true; // the moved-from handle owns nothing — never tear down
-}
-
-DockerComposeContainer& DockerComposeContainer::operator=(DockerComposeContainer&& other) noexcept {
-    if (this != &other) {
-        drop();
-        compose_files_ = std::move(other.compose_files_);
-        project_ = std::move(other.project_);
-        compose_image_ = std::move(other.compose_image_);
-        client_kind_ = other.client_kind_;
-        env_ = std::move(other.env_);
-        build_ = other.build_;
-        pull_ = other.pull_;
-        wait_ = other.wait_;
-        wait_timeout_ = other.wait_timeout_;
-        remove_volumes_ = other.remove_volumes_;
-        remove_images_ = other.remove_images_;
-        exposed_services_ = std::move(other.exposed_services_);
-        service_to_id_ = std::move(other.service_to_id_);
-        temp_file_ = std::move(other.temp_file_);
-        client_ = std::move(other.client_);
-        started_ = other.started_;
-        stopped_ = other.stopped_;
-        other.temp_file_.clear();
-        other.started_ = false;
-        other.stopped_ = true;
-    }
-    return *this;
-}
-
-DockerComposeContainer::~DockerComposeContainer() { drop(); }
+// Rule of zero (see the ActiveStack note above): TempFile and unique_ptr
+// carry all the move/teardown semantics, so nothing here is hand-written.
+// Defaulted out of line — ~unique_ptr<ActiveStack> needs the complete type.
+DockerComposeContainer::DockerComposeContainer(DockerComposeContainer&&) noexcept = default;
+DockerComposeContainer&
+DockerComposeContainer::operator=(DockerComposeContainer&&) noexcept = default;
+DockerComposeContainer::~DockerComposeContainer() = default;
 
 DockerComposeContainer& DockerComposeContainer::with_client(ComposeClientKind kind) & {
     client_kind_ = kind;
@@ -294,27 +345,34 @@ DockerComposeContainer&& DockerComposeContainer::with_remove_images(bool remove)
 }
 
 void DockerComposeContainer::start() {
-    // 1) Resolve the client (Local / Containerised / Auto). The containerised
-    //    client starts its long-lived cli container here; keep it for teardown.
-    client_ = compose::make_compose_client(to_internal_kind(client_kind_), compose_files_,
-                                           compose_image_);
+    // 1) Build the stack-to-be: resolve the client (Local / Containerised /
+    //    Auto — the containerised client starts its long-lived cli container
+    //    here) and snapshot the teardown config. If anything below throws,
+    //    ~ActiveStack already cleans up whatever came up — including a
+    //    PARTIAL `up` (the old started_-flag scheme skipped teardown there).
+    auto stack = std::make_unique<ActiveStack>();
+    stack->client = compose::make_compose_client(to_internal_kind(client_kind_), compose_files_,
+                                                 compose_image_);
+    stack->project = project_;
+    for (const auto& [key, value] : env_) {
+        stack->env.emplace_back(key, value);
+    }
+    stack->remove_volumes = remove_volumes_;
+    stack->remove_images = remove_images_;
 
     // 2) Build and run the compose `up` command.
     compose::ComposeUpCommand up;
     up.project_name = project_;
     up.files = compose_files_; // the client overrides with its own paths
-    for (const auto& [key, value] : env_) {
-        up.env.emplace_back(key, value);
-    }
+    up.env = stack->env;
     up.wait_timeout_secs = wait_timeout_.count();
     up.build = build_;
     up.pull = pull_;
     up.wait = wait_;
-    client_->up(up); // throws DockerError (with output) on non-zero exit
+    stack->client->up(up); // throws DockerError (with output) on non-zero exit
 
     // 3) Discover the service containers by the compose project label.
     DockerClient docker = DockerClient::from_environment();
-    service_to_id_.clear();
     const std::vector<ContainerSummary> summaries = docker.list_containers(
         {{"label", std::string(kComposeProjectLabel) + "=" + project_}}, /*all*/ true);
     for (const ContainerSummary& summary : summaries) {
@@ -322,10 +380,11 @@ void DockerComposeContainer::start() {
         if (it == summary.labels.end()) {
             continue; // not a per-service container (skip)
         }
-        service_to_id_.emplace(it->second, summary.id);
+        stack->service_to_id.emplace(it->second, summary.id);
     }
 
-    started_ = true;
+    // Adopt: a restart replaces (and thereby tears down) a previous stack.
+    active_ = std::move(stack);
 
     // 4) Extra guarantee on top of compose's `--wait`: wait for each exposed
     //    service's published host port to accept a TCP connection (mirrors the
@@ -378,71 +437,19 @@ std::uint16_t DockerComposeContainer::get_service_port(const std::string& servic
 }
 
 std::string DockerComposeContainer::get_service_container_id(const std::string& service) const {
-    const auto it = service_to_id_.find(service);
-    if (it == service_to_id_.end()) {
-        throw DockerError("Unknown compose service '" + service + "' in project '" + project_ +
-                          "' (did start() run, and does the service publish a port?)");
+    if (active_) {
+        const auto it = active_->service_to_id.find(service);
+        if (it != active_->service_to_id.end()) {
+            return it->second;
+        }
     }
-    return it->second;
+    throw DockerError("Unknown compose service '" + service + "' in project '" + project_ +
+                      "' (did start() run, and does the service publish a port?)");
 }
 
-void DockerComposeContainer::stop() { drop(); }
-
-void DockerComposeContainer::drop() noexcept {
-    // Always remove a temp `.yml` (from_yaml) regardless of started state.
-    const auto delete_temp = [this]() noexcept {
-        if (!temp_file_.empty()) {
-            std::error_code ec;
-            std::filesystem::remove(temp_file_, ec);
-            temp_file_.clear();
-        }
-    };
-
-    if (stopped_ || !started_) {
-        stopped_ = true;
-        client_.reset(); // releases the containerised cli container if any
-        delete_temp();
-        return;
-    }
-    stopped_ = true;
-    try {
-        // Best-effort: ask compose to tear the project down via the same client.
-        if (client_) {
-            try {
-                compose::ComposeDownCommand down;
-                down.project_name = project_;
-                for (const auto& [key, value] : env_) {
-                    down.env.emplace_back(key, value);
-                }
-                down.volumes = remove_volumes_;
-                down.remove_images = remove_images_;
-                client_->down(down);
-            } catch (...) {
-            }
-        }
-
-        // Best-effort: force-remove any container still carrying the project
-        // label (e.g. if compose down missed one).
-        try {
-            DockerClient client = DockerClient::from_environment();
-            const std::vector<ContainerSummary> leftovers = client.list_containers(
-                {{"label", std::string(kComposeProjectLabel) + "=" + project_}}, /*all*/ true);
-            for (const ContainerSummary& summary : leftovers) {
-                try {
-                    client.remove_container(summary.id, /*force*/ true, /*remove_volumes*/ true);
-                } catch (...) {
-                }
-            }
-        } catch (...) {
-        }
-    } catch (...) {
-        // A teardown failure must never propagate (esp. from the destructor).
-    }
-
-    // Release the client (force-removes the containerised cli container) AFTER
-    // `down`, then delete any temp file.
-    client_.reset();
-    delete_temp();
+void DockerComposeContainer::stop() {
+    active_.reset();     // ~ActiveStack runs the teardown (never throws)
+    temp_file_.remove(); // AFTER teardown: `down` may re-read the compose file
 }
 
 } // namespace testcontainers

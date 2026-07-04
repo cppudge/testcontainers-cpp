@@ -159,8 +159,11 @@ bind-mounted), and Auto (probe, then fall back). Readiness = compose v2 `--wait
 --wait-timeout` PLUS a TCP probe per `with_exposed_service` (phases budgeted separately).
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
-concurrent stacks cannot cross-contaminate. Compose containers carry no session label (not
-Ryuk-reaped).
+concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running
+project lives in an internal `ActiveStack` whose destructor IS the teardown (compose `down` +
+label sweep), so moves/destruction need no hand-written member lists and a failed `start()`
+(including a partial `up`) cleans up after itself. Compose containers carry no session label
+(not Ryuk-reaped).
 
 **Windows containers** (docs/04) — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the

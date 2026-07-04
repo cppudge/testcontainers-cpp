@@ -5,11 +5,7 @@ documented in [docs/06-feature-notes.md](docs/06-feature-notes.md); an item leav
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-- **`DockerComposeContainer` moves are 17-member hand-written** — the move ctor/assign must
-  manually zero `temp_file_`/`started_`/`stopped_` and copy every field; the next added field
-  will silently be dropped from the move. Fix direction: a small RAII `TempFile` member
-  (delete-on-destroy, moveable) + an owning "torn down" flag type, then `= default` both moves —
-  rule of zero makes the whole failure class impossible. (`src/DockerComposeContainer.cpp`)
+- (empty — pick from Tech debt / Open below)
 
 ## Tech debt
 - **No Docker API version pinned** — all targets are unversioned (`/containers/create`),
