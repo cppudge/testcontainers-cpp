@@ -45,7 +45,12 @@ when it lands (adding a short note there if it needs one).
 - **follow_logs / streaming exec are blocking, cooperative-stop only** — the consumer must
   return false to stop, and only when a next chunk arrives. A background-thread RAII log handle
   with socket-level cancellation is not provided. (`src/docker/DockerClient.cpp`)
-- **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec.
+- **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec;
+  stdin is written fully (then half-closed) BEFORE any output is read, so a command echoing a
+  LARGE stdin back can backpressure the write into an io-deadline timeout (bounded, not a hang;
+  realistic exec-stdin payloads are tiny) — interleave the stdin write with the output read if
+  it ever matters. Named-pipe half-close note: `FlushFileBuffers` before the zero-length EOF
+  message is the one transport operation the io deadline cannot bound (go-winio parity).
 - **`Process.cpp` quoting residuals** — embedded-`"` escaping follows the MSVCRT-argv
   convention, which cmd.exe does not honor (safe today: all input is library-controlled); only
   "exe + arguments" argv shapes survive on Windows (documented). `working_dir` uses `cd`

@@ -106,13 +106,19 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
     EXPECT_FALSE(ec) << ec.message();
     EXPECT_EQ(std::string(reply_buf, reply_n), "world");
 
+    // Close the client BEFORE harvesting the server-side observations: if the
+    // EOF message never arrived (a shutdown_send regression), the server is
+    // still blocked in its ReadFile — closing our end unblocks it, so the
+    // futures resolve and the test FAILS on the assertions instead of hanging
+    // forever in get().
+    transport->close();
+
     EXPECT_EQ(payload_promise.get_future().get(), "hello");
     EXPECT_TRUE(eof_ok_promise.get_future().get())
         << "the zero-length message must complete the read successfully";
     EXPECT_EQ(eof_bytes_promise.get_future().get(), 0u)
         << "the EOF signal is a zero-byte read, not data";
 
-    transport->close();
     server.join();
     ::CloseHandle(pipe);
 }

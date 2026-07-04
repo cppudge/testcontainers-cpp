@@ -45,6 +45,9 @@ public:
     /// TCP / unix sockets shutdown(send); the Windows named pipe sends a
     /// zero-length message (go-winio CloseWrite semantics, message-type pipes
     /// only); SSL has no clean half-close, so TLS overrides it as a no-op.
+    /// The named-pipe variant flushes first and is the ONE operation the io
+    /// deadline cannot bound (FlushFileBuffers waits for the peer to drain the
+    /// pipe; go-winio parity — see the implementation).
     virtual void shutdown_send() = 0;
     /// Whether shutdown_send() actually delivers EOF (TCP / unix socket /
     /// message-type named pipe) or is a no-op (TLS / byte-type named pipe).

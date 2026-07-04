@@ -93,9 +93,12 @@ inline void stream_body_to_consumer(
 /// bytes: after the 101 the exec output arrives directly on the connection,
 /// NOT as an HTTP body, so it is drained off the transport until EOF.
 /// `leftover` is whatever the header parse already pulled past the 101 header.
-/// A cleanly ended stream reports no error in `ec` (asio maps a peer-closed
-/// named pipe to eof just like a socket); anything else is left in `ec` for
-/// the caller to throw on.
+/// A cleanly ended stream reports no error in `ec` — and the clean end DIFFERS
+/// by transport: a socket ends with `eof`, but a peer-closed named pipe ends
+/// with `broken_pipe` (asio maps only ERROR_HANDLE_EOF to eof; a pipe close is
+/// ERROR_BROKEN_PIPE), so on the primary Windows transport `broken_pipe` IS
+/// the normal completion, not a failure. Anything else is left in `ec` for the
+/// caller to throw on.
 inline std::string read_raw_stream(ITransport& transport, std::string_view leftover,
                                    boost::system::error_code& ec) {
     std::string out(leftover);

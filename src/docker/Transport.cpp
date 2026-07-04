@@ -502,6 +502,11 @@ public:
         // message. Without the flush the EOF marker can land in the pipe
         // buffer together with still-unread payload and get lost in the
         // reader's transition (observed with Docker Desktop's pipe proxy).
+        // CAVEAT: FlushFileBuffers has no overlapped form, so this is the ONE
+        // transport operation the io deadline cannot bound — a peer that never
+        // drains its read side blocks here for as long as it pleases. That is
+        // exactly what go-winio's Flush (and therefore `docker exec -i`) does,
+        // and in practice the daemon proxy drains its pipe promptly.
         ::FlushFileBuffers(handle_.native_handle());
         // The handle is registered with ioc_'s IOCP, so even this synchronous-
         // looking write must complete through the io_context: overlapped_ptr

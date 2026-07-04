@@ -25,6 +25,7 @@
 //   StreamRead.TtyPassthroughIsRawStdout - with tty=true the unframed body bytes are delivered verbatim as stdout (no demuxing).
 //   StreamRead.RawStreamAccumulatesLeftoverAndReads - read_raw_stream (the 101-upgraded exec path) returns leftover + everything until EOF, with EOF reported as a clean end.
 //   StreamRead.RawStreamPropagatesRealErrors - a mid-stream transport error (not eof/broken_pipe) is left in ec for the caller to throw on.
+//   StreamRead.RawStreamTreatsBrokenPipeAsCleanEnd - a peer-closed NAMED PIPE ends the stream with broken_pipe (not eof) — that is the normal completion on the primary Windows transport, never an error.
 //   StreamRead.RawConsumerDemuxesLeftoverFirst - stream_raw_to_consumer demuxes frames split between the header-parse leftover and the transport reads.
 //   StreamRead.RawConsumerStopsWhenConsumerReturnsFalse - returning false stops the raw stream delivery early.
 
@@ -201,6 +202,20 @@ TEST(StreamRead, RawStreamPropagatesRealErrors) {
 
     EXPECT_EQ(out, "partial"); // what arrived is still returned
     EXPECT_EQ(ec, boost::asio::error::connection_reset) << ec.message();
+}
+
+TEST(StreamRead, RawStreamTreatsBrokenPipeAsCleanEnd) {
+    // On the primary Windows transport a peer-closed named pipe surfaces as
+    // broken_pipe, NOT eof (asio maps only ERROR_HANDLE_EOF to eof) — so
+    // broken_pipe is the NORMAL completion of a real named-pipe exec stream.
+    // This pin keeps a "simplification" from dropping the broken_pipe clause
+    // and breaking every real exec-with-stdin.
+    FailingTransport transport({"all the output"}, boost::asio::error::broken_pipe);
+    boost::system::error_code ec;
+    const std::string out = docker::read_raw_stream(transport, "", ec);
+
+    EXPECT_FALSE(ec) << ec.message();
+    EXPECT_EQ(out, "all the output");
 }
 
 TEST(StreamRead, RawConsumerDemuxesLeftoverFirst) {

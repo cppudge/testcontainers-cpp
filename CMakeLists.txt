@@ -128,6 +128,7 @@ if(BUILD_TESTING)
         tests/unit/StreamReadTest.cpp
         tests/unit/TransportTimeoutTest.cpp
         tests/unit/TransportHalfCloseTest.cpp
+        tests/unit/ExecWireTest.cpp
         tests/unit/ErrorModelTest.cpp
         tests/unit/RunnerTest.cpp
         tests/unit/DockerClientSessionTest.cpp
