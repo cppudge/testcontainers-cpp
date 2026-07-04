@@ -30,22 +30,24 @@ using asio::ip::tcp;
 
 /// A minimal host-side HTTP server on 127.0.0.1:<ephemeral port>: every
 /// connection gets a 200 response carrying `body`, then the connection is
-/// closed. Runs its accept loop on its own thread until destroyed.
+/// closed. Accepting is ASYNC on purpose: a blocking accept() on Linux is NOT
+/// woken by closing the acceptor from another thread (it is on Windows, which
+/// hid exactly this hang), so teardown stops the io_context instead.
 class HostHttpServer {
 public:
     explicit HostHttpServer(std::string body)
         : body_(std::move(body)),
           acceptor_(io_, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0)) {
         port_ = acceptor_.local_endpoint().port();
-        thread_ = std::thread([this] { accept_loop(); });
+        accept_next();
+        thread_ = std::thread([this] { io_.run(); });
     }
 
     HostHttpServer(const HostHttpServer&) = delete;
     HostHttpServer& operator=(const HostHttpServer&) = delete;
 
     ~HostHttpServer() {
-        boost::system::error_code ignored;
-        acceptor_.close(ignored); // unblocks the accept loop
+        io_.stop(); // parked async_accept is abandoned; run() returns
         if (thread_.joinable()) {
             thread_.join();
         }
@@ -55,27 +57,34 @@ public:
     int connections() const noexcept { return connections_.load(); }
 
 private:
-    void accept_loop() {
-        for (;;) {
-            boost::system::error_code ec;
-            tcp::socket sock(io_);
-            acceptor_.accept(sock, ec);
+    void accept_next() {
+        auto sock = std::make_shared<tcp::socket>(io_);
+        acceptor_.async_accept(*sock, [this, sock](const boost::system::error_code& ec) {
             if (ec) {
-                return; // acceptor closed by the destructor
+                return; // acceptor closed / io stopped
             }
             connections_.fetch_add(1);
-            // Read whatever arrived of the request (one read is enough for a
-            // one-packet GET), then answer and close.
-            char buf[4096];
-            sock.read_some(asio::buffer(buf), ec);
-            const std::string response = "HTTP/1.0 200 OK\r\n"
-                                         "Content-Type: text/plain\r\n"
-                                         "Content-Length: " +
-                                         std::to_string(body_.size()) + "\r\n\r\n" + body_;
-            asio::write(sock, asio::buffer(response), ec);
-            sock.shutdown(tcp::socket::shutdown_send, ec);
-            sock.close(ec);
-        }
+            serve(*sock);
+            accept_next();
+        });
+    }
+
+    /// Serve one connection synchronously on the io thread — fine for a test
+    /// helper: clients (wget through the tunnel) finish within the test, so
+    /// teardown never races an in-flight exchange.
+    void serve(tcp::socket& sock) {
+        boost::system::error_code ec;
+        // Read whatever arrived of the request (one read is enough for a
+        // one-packet GET), then answer and close.
+        char buf[4096];
+        sock.read_some(asio::buffer(buf), ec);
+        const std::string response = "HTTP/1.0 200 OK\r\n"
+                                     "Content-Type: text/plain\r\n"
+                                     "Content-Length: " +
+                                     std::to_string(body_.size()) + "\r\n\r\n" + body_;
+        asio::write(sock, asio::buffer(response), ec);
+        sock.shutdown(tcp::socket::shutdown_send, ec);
+        sock.close(ec);
     }
 
     std::string body_;
