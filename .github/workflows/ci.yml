@@ -169,12 +169,12 @@ jobs:
         run: pipx install clang-format==22.1.5
 
       - name: Check formatting
-        run: git ls-files '*.cpp' '*.hpp' | xargs clang-format --dry-run --Werror
+        run: git ls-files -z '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror
 
   # clang-tidy over the Ninja compile database with the checked-in .clang-tidy
   # set (the same one clangd uses in-editor). The wheel pins the analyzer
   # version so editor, this job, and a local run agree on findings. Configure
-  # only — the compile database (and the generated version header) exist
+  # only — no generated headers exist, so the compile database is complete
   # without a build.
   tidy:
     name: clang-tidy
@@ -204,8 +204,8 @@ jobs:
       # --warnings-as-errors makes happen on any finding.
       - name: Run clang-tidy
         run: >
-          git ls-files 'src/*.cpp' 'tests/*.cpp' 'examples/*.cpp'
-          | xargs -P "$(nproc)" -n 2 clang-tidy -p build/ninja --quiet
+          git ls-files -z 'src/*.cpp' 'tests/*.cpp' 'examples/*.cpp'
+          | xargs -0 -P "$(nproc)" -n 2 clang-tidy -p build/ninja --quiet
           --warnings-as-errors='*'
 
   # ASan + UBSan over both test suites: HTTP parsing, tar building, and the
@@ -242,13 +242,18 @@ jobs:
       - name: Build
         run: cmake --build build/ninja
 
+      # detect_container_overflow needs whole-program instrumentation to be
+      # sound; with uninstrumented deps reading our std::string buffers
+      # (libarchive, OpenSSL) it false-positives, so it is off by design.
       - name: Unit tests (sanitized)
         env:
+          ASAN_OPTIONS: detect_container_overflow=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./build/ninja/bin/tc_unit_tests --gtest_brief=1
 
       - name: Integration tests (sanitized)
         timeout-minutes: 30
         env:
+          ASAN_OPTIONS: detect_container_overflow=0
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./build/ninja/bin/tc_integration_tests

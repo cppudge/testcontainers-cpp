@@ -8,6 +8,13 @@ when it lands (adding a short note there if it needs one).
 - (empty — pick from Tech debt / Open below)
 
 ## Tech debt
+- **CI analysis follow-ups** (from the 2026-07-05 review of the analysis gates) — no
+  install/consumer smoke job (`cmake --install` + `find_package` from a downstream project);
+  no clang *compile* job (clang appears only via clang-tidy, so clang-specific warnings on
+  user builds go uncaught); no macOS job despite `Process.cpp` carrying macOS/BSD `environ`
+  portability code. `TC_WERROR` + unpinned runner gcc means occasional
+  `-Wno-error=<warning>` maintenance when the runner image bumps the compiler.
+  (`.github/workflows/ci.yml`)
 - **No Docker API version pinned** — all targets are unversioned (`/containers/create`),
   relying on the daemon's default API version; behavior can shift across daemon upgrades.
   Negotiate or pin `/v1.NN`. (`src/docker/DockerClient.cpp`)
