@@ -196,7 +196,10 @@ and hides host DNS quirks; the Windows integration suites pin "process" (valid b
 image build is host-matched). Not set = daemon default; never send it to a Linux daemon.
 
 **Windows-engine test mirrors** — WindowsBuildImage / WindowsVolumes / WindowsNetworks /
-WindowsExec / WindowsCopy fixtures live NEXT to their Linux twins in the same test files.
+WindowsExec / WindowsCopy / WindowsPortGetters / WindowsWaitStrategies / WindowsLifecycle
+fixtures live NEXT to their Linux twins in the same test files. Port publication needs no
+in-container listener (nanoserver suffices); the listening_port wait uses a PowerShell
+TcpListener in build-matched servercore (pre-cached on GitHub windows runners).
 Windows-daemon facts they encode (all verified live): (a) archive uploads (`PUT .../archive`,
 `docker cp` alike) land in the container LAYER and silently bypass volume mounts, so
 `Volume::populate` is Linux-only — seed Windows volumes by exec'ing writes in a container

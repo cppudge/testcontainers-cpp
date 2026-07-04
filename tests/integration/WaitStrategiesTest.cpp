@@ -11,13 +11,19 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "WindowsEngine.hpp"
 
-// Tests in this file (integration; require a Docker daemon):
+// Tests in this file (integration; require a Docker daemon — Linux mode for the
+// WaitStrategies suite, Windows mode for the WindowsWaitStrategies mirror):
 //   WaitStrategies.ExitCodeWaitSucceeds - a container that runs `exit 7` with wait_for::exit_code(7) starts, becomes ready, and is no longer running.
 //   WaitStrategies.HealthcheckWaitBecomesHealthy - an alpine container with a passing healthcheck and wait_for::healthy() starts and is running once healthy.
 //   WaitStrategies.HttpWaitReachesNginx - an nginx container with wait_for::http("/", tcp(80), 200) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.PortWaitReachesRedis - a redis container with wait_for::listening_port(tcp(6379)) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.TimeoutThrowsStartupTimeoutError - a log wait on a message that never appears throws StartupTimeoutError (carrying the container id) and is NOT catchable as DockerError - readiness is not a daemon failure.
+//   WindowsWaitStrategies.ExitCodeWaitSucceeds - cmd `exit 7` with wait_for::exit_code(7) on a Windows container.
+//   WindowsWaitStrategies.StdoutMessageWait - wait_for::stdout_message gates on a marker echoed by a Windows container that keeps running.
+//   WindowsWaitStrategies.HealthcheckWaitBecomesHealthy - a Windows container with a passing shell healthcheck reaches healthy.
+//   WindowsWaitStrategies.ListeningPortWaitOnServercore - a PowerShell TcpListener in servercore + wait_for::listening_port proves a published Windows port is reachable from the host.
 
 using namespace testcontainers;
 using namespace std::chrono_literals;
@@ -26,8 +32,8 @@ using namespace std::chrono_literals;
 class WaitStrategies : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -93,4 +99,67 @@ TEST_F(WaitStrategies, TimeoutThrowsStartupTimeoutError) {
                   std::string::npos)
             << e.what();
     }
+}
+
+// The Windows mirror. The http wait has no Windows twin (it would need a real
+// HTTP server in the container — nginx-scale, not worth a multi-GB image); the
+// listening-port wait uses a PowerShell TcpListener in servercore instead.
+class WindowsWaitStrategies : public tcit::WindowsEngineTest {};
+
+TEST_F(WindowsWaitStrategies, ExitCodeWaitSucceeds) {
+    Container c = nanoserver()
+                      .with_cmd({"cmd", "/c", "exit 7"})
+                      .with_wait(wait_for::exit_code(7))
+                      .start();
+    // The wait succeeded only because the container exited with code 7.
+    EXPECT_FALSE(c.is_running());
+}
+
+TEST_F(WindowsWaitStrategies, StdoutMessageWait) {
+    // Echo the marker, then keep running: the wait must return on the log
+    // line, not on container exit.
+    Container c = nanoserver()
+                      .with_cmd({"cmd", "/c", "echo tc-ready-win & ping -n 300 127.0.0.1 >nul"})
+                      .with_wait(wait_for::stdout_message("tc-ready-win"))
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WindowsWaitStrategies, HealthcheckWaitBecomesHealthy) {
+    // The shell form runs under cmd /S /C on a Windows daemon; `exit 0` is the
+    // trivially healthy probe.
+    Container c = nanoserver()
+                      .with_cmd(keep_alive_cmd())
+                      .with_healthcheck(Healthcheck::cmd_shell("exit 0")
+                                            .with_interval(500ms)
+                                            .with_retries(3)
+                                            .with_start_period(0ms))
+                      .with_wait(wait_for::healthy())
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WindowsWaitStrategies, ListeningPortWaitOnServercore) {
+    // A real in-container listener (nanoserver ships none, servercore has
+    // PowerShell): the listening_port wait then proves the published Windows
+    // port actually accepts a host connection — the strongest port assertion
+    // available on this engine.
+    // Two waits: the stdout marker separates "PowerShell never came up" from
+    // "port not reachable" when the port wait times out. Two minutes of budget:
+    // PowerShell's cold start (.NET JIT in a fresh container) can eat tens of
+    // seconds on a loaded 2-core CI runner — the default 60s margin is thin.
+    Container c =
+        servercore()
+            .with_cmd({"powershell", "-NoLogo", "-NoProfile", "-Command",
+                       "$l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, "
+                       "8080); $l.Start(); Write-Host tc-listening; "
+                       "while ($true) { Start-Sleep -Seconds 1 }"})
+            .with_exposed_port(tcp(8080))
+            .with_wait(wait_for::stdout_message("tc-listening"))
+            .with_wait(wait_for::listening_port(tcp(8080)))
+            .with_startup_timeout(std::chrono::minutes(2))
+            .start();
+
+    EXPECT_GT(c.get_host_port(tcp(8080)), 0);
+    EXPECT_TRUE(c.is_running());
 }

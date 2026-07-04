@@ -19,8 +19,13 @@
 namespace tcit {
 
 // Windows base image: nanoserver ships cmd.exe and ping.exe, which is all
-// these tests need. The tag is resolved from the DAEMON's Windows build below.
+// most tests need. The tag is resolved from the DAEMON's Windows build below.
 inline constexpr const char* kWindowsImage = "mcr.microsoft.com/windows/nanoserver";
+
+// The bigger base with PowerShell, for tests that need an in-container TCP
+// listener (nanoserver has no server binary). Same build-matched tag scheme;
+// GitHub windows runners pre-cache it, locally the first use pulls ~2.5 GB.
+inline constexpr const char* kWindowsServercoreImage = "mcr.microsoft.com/windows/servercore";
 
 /// The nanoserver tag matching the daemon host's Windows build. Process
 /// isolation (the only mode on CI runners — no nested virtualization, so no
@@ -51,8 +56,8 @@ inline std::string nanoserver_tag_for(testcontainers::DockerClient& client) {
 class WindowsEngineTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::windows_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::windows_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / not Windows-containers mode; reason not streamed (CI noise)
         }
         testcontainers::DockerClient client = testcontainers::DockerClient::from_environment();
         tag_ = nanoserver_tag_for(client);
@@ -71,6 +76,13 @@ protected:
     /// nested virtualization).
     testcontainers::GenericImage nanoserver() const {
         return testcontainers::GenericImage(kWindowsImage, tag_).with_isolation("process");
+    }
+
+    /// The build-matched servercore base (PowerShell inside), same isolation
+    /// rationale as nanoserver().
+    testcontainers::GenericImage servercore() const {
+        return testcontainers::GenericImage(kWindowsServercoreImage, tag_)
+            .with_isolation("process");
     }
 
     /// The nanoserver equivalent of `sleep 300`: ping.exe blocks cmd.exe for

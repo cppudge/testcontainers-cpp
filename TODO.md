@@ -79,8 +79,9 @@ when it lands (adding a short note there if it needs one).
   handled (use `/x.txt` = `C:\x.txt`). `Volume::populate` cannot seed a Windows volume — the
   daemon extracts archives into the container LAYER, bypassing mounts (`docker cp` shares the
   blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.
-  No Windows-mode integration coverage for published ports / non-exit wait strategies —
-  nanoserver ships no listener binary, a tiny Windows server image would unlock it.
+  Remaining Windows-mode test gaps: the http wait (needs a real HTTP server image —
+  the PowerShell TcpListener in servercore covers listening_port only), bind mounts, and
+  the stopping hook (see docs/07 for the full matrix).
 - **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
   are not consumed, only the `Host` endpoint; only `docker.host` is read from
   `~/.testcontainers.properties`. (`src/docker/HostResolve.hpp`)

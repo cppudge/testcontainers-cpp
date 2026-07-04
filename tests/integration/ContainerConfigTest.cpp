@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <exception>
 #include <string>
 
@@ -9,7 +10,9 @@
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
+#include "CapMask.hpp"
 #include "EngineGuard.hpp"
+#include "TempPaths.hpp"
 
 // Tests in this file (integration; require a Docker daemon):
 //   ContainerConfig.WorkingDirAndUser - working dir and user are applied so the process runs in /tmp as uid 1000.
@@ -19,6 +22,9 @@
 //   ContainerConfig.ExtraHostApplied - an extra host (via the typed setter) resolves to its mapped IP inside the container.
 //   ContainerConfig.CustomSubstitutorRewritesImage - a custom image-name substitutor rewrites a bogus reference to a runnable one used at create.
 //   ContainerConfig.AlwaysPullPolicyStarts - ImagePullPolicy::Always pulls before create and the container still starts and runs.
+//   ContainerConfig.BindMountReadOnly - a read-only bind mount exposes a host file's content inside the container and rejects writes.
+//   ContainerConfig.MemoryAndShmLimitsVisibleInside - with_memory_limit / with_shm_size land in the container's cgroup limit and /dev/shm size.
+//   ContainerConfig.CapAddDropReflectedInBounding - with_cap_add("SYS_TIME") sets and with_cap_drop("CHOWN") clears the matching bit in the container's bounding capability set.
 
 using namespace testcontainers;
 
@@ -29,8 +35,8 @@ using namespace testcontainers;
 class ContainerConfig : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -129,4 +135,68 @@ TEST_F(ContainerConfig, AlwaysPullPolicyStarts) {
     const ContainerLogs logs = c.logs();
     EXPECT_NE(logs.stdout_data.find("ok"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, BindMountReadOnly) {
+    const tcit::TempDirWithFile host("f.txt", "bind-content");
+
+    // Read the bind-mounted file, then prove the read-only flag: the write must
+    // fail. (Both outcomes are printed so a failure shows what happened.)
+    Container c = GenericImage("alpine", "3.20")
+                      .with_mount(Mount::bind(host.mount_source(), "/hostdata").with_read_only())
+                      .with_cmd({"sh", "-c",
+                                 "cat /hostdata/f.txt; "
+                                 "touch /hostdata/x 2>/dev/null && echo write-allowed"
+                                 " || echo write-denied"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("bind-content"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("write-denied"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_EQ(logs.stdout_data.find("write-allowed"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, MemoryAndShmLimitsVisibleInside) {
+    // The daemon's inspect does not echo Memory/ShmSize back, so assert from
+    // INSIDE: the cgroup memory limit (v2 path, v1 fallback) and /dev/shm size.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_memory_limit(256 * 1024 * 1024)
+                      .with_shm_size(128 * 1024 * 1024)
+                      .with_cmd({"sh", "-c",
+                                 "cat /sys/fs/cgroup/memory.max 2>/dev/null"
+                                 " || cat /sys/fs/cgroup/memory/memory.limit_in_bytes; "
+                                 "df -k /dev/shm"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("268435456"), std::string::npos)
+        << "cgroup memory limit missing; stdout was: " << logs.stdout_data;
+    // df -k reports /dev/shm in 1K blocks: 128 MiB = 131072.
+    EXPECT_NE(logs.stdout_data.find("131072"), std::string::npos)
+        << "/dev/shm size missing; stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, CapAddDropReflectedInBounding) {
+    // Docker's default capability set includes CHOWN (bit 0) and excludes
+    // SYS_TIME (bit 25), so each assertion below proves its own flag flowed
+    // through — independent of the daemon's exact default mask.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cap_add("SYS_TIME")
+                      .with_cap_drop("CHOWN")
+                      .with_cmd({"sh", "-c", "grep CapBnd /proc/self/status"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    const std::uint64_t bounding = tcit::cap_mask_after(logs.stdout_data, "CapBnd:");
+    ASSERT_NE(bounding, 0u) << "no CapBnd line; stdout was: " << logs.stdout_data;
+    EXPECT_TRUE(bounding & (std::uint64_t{1} << 25))
+        << "CAP_SYS_TIME not granted; CapBnd was: " << logs.stdout_data;
+    EXPECT_FALSE(bounding & std::uint64_t{1})
+        << "CAP_CHOWN not dropped; CapBnd was: " << logs.stdout_data;
 }

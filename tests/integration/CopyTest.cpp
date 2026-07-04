@@ -16,6 +16,7 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "TempPaths.hpp"
 #include "WindowsEngine.hpp"
 
 // Tests in this file (integration; require a Docker daemon — Linux mode for the
@@ -27,6 +28,7 @@
 //   Copy.LargeFileRoundTrip - a >1 MiB file copied in is read back byte-exact, proving the lifted response body limit.
 //   Copy.CopyFileFromWritesHost - copy_file_from writes the container file's contents to a host path.
 //   Copy.ReadFileRejectsDirectory - read_file on a directory throws DockerError (not a single regular file).
+//   Copy.ModeAppliedToCopiedFile - CopyToContainer::with_mode(0755) lands as the file's permission bits (stat -c %a -> 755).
 //   WindowsCopy.CopyAtStartData - the same copy-at-start round-trip into a Windows container (targets live at the C: root — extraction runs as the daemon, no parent-dir assumptions).
 //   WindowsCopy.CopyAtStartHostFile - with_copy_to(host_file) into a Windows container.
 //   WindowsCopy.CopyIntoRunningContainer - Container::copy_to against a running Windows container.
@@ -41,35 +43,11 @@ using namespace testcontainers;
 class Copy : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
-
-namespace {
-
-// A self-cleaning temp file holding `content`.
-class TempFile {
-public:
-    explicit TempFile(const std::string& content) {
-        static std::atomic<unsigned> counter{0};
-        path_ = std::filesystem::temp_directory_path() /
-                ("tc_copytest_" + std::to_string(counter.fetch_add(1)));
-        std::ofstream out(path_, std::ios::binary);
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-    }
-    ~TempFile() {
-        std::error_code ec;
-        std::filesystem::remove(path_, ec);
-    }
-    std::string string() const { return path_.string(); }
-
-private:
-    std::filesystem::path path_;
-};
-
-} // namespace
 
 TEST_F(Copy, CopyAtStartData) {
     // /tmp already exists in the image, so the relative entry "tmp/copied.txt"
@@ -87,7 +65,7 @@ TEST_F(Copy, CopyAtStartData) {
 
 TEST_F(Copy, CopyAtStartHostFile) {
     const std::string content = "contents-from-host-file";
-    const TempFile file(content);
+    const tcit::TempFile file(content, "tc_copytest_");
 
     Container c = GenericImage("alpine", "3.20")
                       .with_copy_to(CopyToContainer::host_file(file.string(), "/tmp/fromfile.txt"))
@@ -168,6 +146,17 @@ TEST_F(Copy, ReadFileRejectsDirectory) {
     EXPECT_THROW(c.read_file("/tmp"), DockerError);
 }
 
+TEST_F(Copy, ModeAppliedToCopiedFile) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    c.copy_to(CopyToContainer::content("#!/bin/sh\n", "/tmp/m.sh").with_mode(0755));
+
+    const ExecResult res = c.exec({"stat", "-c", "%a", "/tmp/m.sh"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("755"), std::string::npos)
+        << "mode was: " << res.stdout_data;
+}
+
 // The Windows mirror. All targets live at the filesystem root ("/x.txt" is
 // C:\x.txt to the daemon): the copy endpoint extracts as the daemon, not the
 // container user, so no writable-parent-directory assumptions are needed and
@@ -194,7 +183,7 @@ TEST_F(WindowsCopy, CopyAtStartData) {
 
 TEST_F(WindowsCopy, CopyAtStartHostFile) {
     const std::string content = "contents-from-host-file-win";
-    const TempFile file(content);
+    const tcit::TempFile file(content, "tc_copytest_");
 
     Container c = nanoserver()
                       .with_copy_to(CopyToContainer::host_file(file.string(), "/fromfile.txt"))

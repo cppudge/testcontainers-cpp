@@ -11,10 +11,10 @@ CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 > (stdin / tty / streaming), copy to/from container, lifecycle hooks, container reuse, the Ryuk
 > crash-safety reaper, registry auth incl. credential helpers, host-port exposure
 > (`with_exposed_host_port`, sshd sidecar + SSH tunnel), and the TLS transport are
-> implemented, covered by ~300 unit + ~95 integration tests against a real daemon — green on
+> implemented, covered by ~300 unit + ~115 integration tests against a real daemon — green on
 > Windows (named pipe) and Linux (unix socket; CI runs the full suite in BOTH engine modes:
-> the Windows job drives real Windows containers — build/volumes/networks/exec/copy each have
-> a Windows mirror suite). The feature reference
+> the Windows job drives real Windows containers — build/volumes/networks/exec/copy/ports/
+> waits/lifecycle each have a Windows mirror suite). The feature reference
 > with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a real
 > remote daemon is the main unverified gap.
 
@@ -249,11 +249,12 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignore
       engine-aware: Linux-image tests skip in Windows-containers mode and vice versa (see
       `tests/integration/EngineGuard.hpp`), and every cross-engine feature has a Windows
       mirror suite (`WindowsBuildImage` / `WindowsVolumes` / `WindowsNetworks` / `WindowsExec`
-      / `WindowsCopy` + the `WindowsContainer` smoke suite) running real
-      `mcr.microsoft.com/windows/nanoserver` containers end to end. `with_isolation`
-      ("process"/"hyperv") maps to `HostConfig.Isolation` for Windows daemons. Covered by 7
-      unit tests + 25 Windows-mode integration tests. Engine-mode coverage matrix:
-      [`docs/07`](docs/07-public-api-test-coverage.md).
+      / `WindowsCopy` / `WindowsPortGetters` / `WindowsWaitStrategies` / `WindowsLifecycle` +
+      the `WindowsContainer` smoke suite) running real `mcr.microsoft.com/windows/nanoserver`
+      (and, for the in-container TCP listener, `servercore`) containers end to end.
+      `with_isolation` ("process"/"hyperv") maps to `HostConfig.Isolation` for Windows
+      daemons. Covered by 7 unit tests + 34 Windows-mode integration tests. Engine-mode
+      coverage matrix: [`docs/07`](docs/07-public-api-test-coverage.md).
 - [x] **Everything since** — transport I/O deadlines + structured errors, TLS transport, full
       Docker host resolution, follow/streaming logs, exec stdin/tty/streaming, TTY containers,
       lifecycle hooks + startup retry, build-from-Dockerfile, image pull policy + name

@@ -12,11 +12,15 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "WindowsEngine.hpp"
 
-// Tests in this file (integration; require a Docker daemon):
+// Tests in this file (integration; require a Docker daemon — Linux mode for the
+// Lifecycle suite, Windows mode for the WindowsLifecycle mirror):
 //   Lifecycle.HooksFireInOrder - created/starting/started hooks fire once, in that order, each seeing the live container id.
 //   Lifecycle.StoppingHookFiresOnStop - a stopping hook fires when the container is explicitly stopped.
 //   Lifecycle.StartupRetriesOnFailure - with_startup_attempts(2) retries the whole create→start→wait on failure, creating a fresh container each attempt.
+//   WindowsLifecycle.HooksFireInOrder - the same hook ordering against a Windows daemon (the hooks are client-side, but each leg drives real Windows-engine create/start calls).
+//   WindowsLifecycle.StartupRetriesOnFailure - startup attempts retry with a fresh Windows container per attempt.
 
 using namespace testcontainers;
 
@@ -30,8 +34,8 @@ constexpr const char* kImage = "alpine:3.20";
 class Lifecycle : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -93,5 +97,50 @@ TEST_F(Lifecycle, StartupRetriesOnFailure) {
     EXPECT_THROW(image.start(), std::exception);
     // Exactly two attempts, each creating a fresh container (the created hook
     // runs once per create).
+    EXPECT_EQ(created_count, 2);
+}
+
+// The Windows mirror: the hook plumbing is client-side, but each leg drives a
+// real Windows-engine create/start/wait round-trip.
+class WindowsLifecycle : public tcit::WindowsEngineTest {};
+
+TEST_F(WindowsLifecycle, HooksFireInOrder) {
+    std::vector<std::string> order;
+    std::string seen_id;
+
+    GenericImage image = nanoserver();
+    image.with_cmd(keep_alive_cmd())
+        .with_created_hook([&](DockerClient&, const std::string& id) {
+            EXPECT_FALSE(id.empty());
+            seen_id = id;
+            order.emplace_back("created");
+        })
+        .with_starting_hook([&](DockerClient&, const std::string& id) {
+            EXPECT_FALSE(id.empty());
+            order.emplace_back("starting");
+        })
+        .with_started_hook([&](DockerClient&, const std::string& id) {
+            EXPECT_FALSE(id.empty());
+            order.emplace_back("started");
+        });
+
+    Container c = image.start();
+
+    EXPECT_EQ(order, (std::vector<std::string>{"created", "starting", "started"}));
+    EXPECT_EQ(seen_id, c.id());
+}
+
+TEST_F(WindowsLifecycle, StartupRetriesOnFailure) {
+    int created_count = 0;
+
+    GenericImage image = nanoserver();
+    image.with_cmd(keep_alive_cmd())
+        .with_wait(wait_for::log("THIS_NEVER_APPEARS"))
+        .with_startup_timeout(std::chrono::seconds(2))
+        .with_startup_attempts(2)
+        .with_created_hook([&](DockerClient&, const std::string&) { ++created_count; });
+
+    EXPECT_THROW(image.start(), std::exception);
+    // Exactly two attempts, each creating a fresh Windows container.
     EXPECT_EQ(created_count, 2);
 }

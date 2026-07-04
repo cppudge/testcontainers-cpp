@@ -35,8 +35,8 @@ protected:
     DockerClient client = DockerClient::from_environment();
 
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -48,8 +48,8 @@ TEST_F(DockerAuth, PublicPullUnaffectedByNoAuth) {
     // still pull a public image exactly as before.
     try {
         client.pull_image(std::string(kPublicImage) + ":" + kPublicTag);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "Public pull failed (registry/network unavailable): " << e.what();
+    } catch (const std::exception&) {
+        GTEST_SKIP(); // public pull failed - registry/network unavailable
     }
 }
 
@@ -64,8 +64,8 @@ TEST_F(DockerAuth, PublicPullWithExplicitAuthHeader) {
 
     try {
         client.pull_image(std::string(kPublicImage) + ":" + kPublicTag, auth);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "Public pull with auth header failed (env-dependent): " << e.what();
+    } catch (const std::exception&) {
+        GTEST_SKIP(); // public pull with auth header failed - env-dependent
     }
 }
 
@@ -77,7 +77,7 @@ TEST(DockerAuthCredentialHelper, CredentialHelperSmoke) {
     const std::string config = docker::read_docker_auth_config();
     const auto helper = docker::select_credential_helper(config, "index.docker.io");
     if (!helper.has_value()) {
-        GTEST_SKIP() << "no credsStore/credHelpers configured";
+        GTEST_SKIP(); // no credsStore/credHelpers configured on this machine
     }
     // Returns creds or nullopt depending on whether this machine is logged in;
     // either is fine — the point is that the subprocess+parse path never throws.

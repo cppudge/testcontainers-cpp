@@ -109,16 +109,15 @@ void run_redis_roundtrip(DockerComposeContainer& compose) {
 class Compose : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
 
 TEST_F(Compose, LocalClientBringsUpRedis) {
     if (!host_docker_compose_available()) {
-        GTEST_SKIP() << "host `docker compose` CLI is not available; "
-                        "local-client test cannot run";
+        GTEST_SKIP(); // host `docker compose` CLI is not available
     }
     // from_yaml writes a temp file so the local client has a real file on disk.
     DockerComposeContainer compose =
@@ -136,7 +135,7 @@ TEST_F(Compose, ContainerisedClientBringsUpRedis) {
 
 TEST_F(Compose, RestartKeepsProjectAlive) {
     if (!host_docker_compose_available()) {
-        GTEST_SKIP() << "host `docker compose` CLI is not available";
+        GTEST_SKIP(); // host `docker compose` CLI is not available
     }
     DockerComposeContainer compose =
         DockerComposeContainer::from_yaml(kRedisYaml).with_exposed_service("redis", tcp(6379));

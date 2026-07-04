@@ -179,7 +179,7 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (ec) {
-        GTEST_SKIP() << "could not create temp cert dir: " << ec.message();
+        GTEST_SKIP(); // could not create the temp cert dir
     }
     struct DirGuard {
         fs::path p;
@@ -190,7 +190,7 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
     } guard{dir};
 
     if (!write_self_signed_cert(dir)) {
-        GTEST_SKIP() << "could not generate a self-signed cert via the OpenSSL API";
+        GTEST_SKIP(); // could not generate a self-signed cert via the OpenSSL API
     }
 
     // The server: bind an ephemeral port, accept one TLS connection, echo bytes.
@@ -203,8 +203,8 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
     try {
         server_ctx.use_certificate_file((dir / "cert.pem").string(), asio::ssl::context::pem);
         server_ctx.use_private_key_file((dir / "key.pem").string(), asio::ssl::context::pem);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "server could not load the generated cert/key: " << e.what();
+    } catch (const std::exception&) {
+        GTEST_SKIP(); // server could not load the generated cert/key
     }
 
     std::thread server_thread([&] {

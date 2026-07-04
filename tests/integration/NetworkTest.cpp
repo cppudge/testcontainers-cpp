@@ -18,6 +18,8 @@
 //   Networks.CreateAndRemove - Network::create makes a real network with a non-empty id/name and remove() is idempotent.
 //   Networks.AliasResolvesOnCustomNetwork - a container with a network alias is reachable by that alias from a peer on the same network (getent resolves the alias to an IP).
 //   Networks.BuilderCreatesNetwork - Network::builder() with a driver, attachable, and an IPAM subnet creates a real network with a non-empty id/name.
+//   Networks.ConnectAttachesRunningContainerWithAlias - Network::connect attaches an already-running container (started WITHOUT with_network) and its runtime alias resolves from a peer on the network.
+//   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via GET /networks/{id}).
 //   WindowsNetworks.CreateAndRemove - the same create/remove round-trip on a Windows daemon (the default driver there is "nat").
 //   WindowsNetworks.PeerNameRegisteredAndReachable - two nanoserver containers on a user-defined nat network: the daemon registers the peer's container name in DNSNames, and a `ping` of the peer's network IP proves the data path.
 //   WindowsNetworks.AliasRegisteredOnCustomNetwork - with_network_alias lands in the endpoint's Aliases/DNSNames, and the alias-bearing peer is reachable by its network IP.
@@ -29,8 +31,8 @@ using namespace testcontainers;
 class Networks : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -109,6 +111,48 @@ TEST_F(Networks, BuilderCreatesNetwork) {
                     .create();
     EXPECT_FALSE(n.id().empty());
     EXPECT_FALSE(n.name().empty());
+
+    // RAII removes the network at scope exit.
+}
+
+TEST_F(Networks, ConnectAttachesRunningContainerWithAlias) {
+    // Declare the network FIRST so RAII tears the containers down before it
+    // (removal auto-detaches their endpoints).
+    Network net = Network::create();
+    ASSERT_FALSE(net.name().empty());
+
+    // Started WITHOUT with_network: it sits on the default bridge only.
+    Container late = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+    Container peer =
+        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+
+    // Attach the RUNNING container to the network with a runtime alias.
+    net.connect(late.id(), {"late-alias"});
+
+    // The alias resolves from a peer on the same network — proving the attach
+    // (and its alias) took effect daemon-side, not just returned 200.
+    const ExecResult res = peer.exec({"getent", "hosts", "late-alias"});
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data
+                                << " stderr: " << res.stderr_data;
+    EXPECT_FALSE(res.stdout_data.empty()) << "alias 'late-alias' did not resolve";
+}
+
+TEST_F(Networks, BuilderInternalGatewayAndLabels) {
+    // Internal + gateway + label are not modelled by any typed inspect, so
+    // assert them in the raw network-inspect body.
+    Network n = Network::builder()
+                    .with_driver("bridge")
+                    .with_subnet("172.31.253.0/24")
+                    .with_gateway("172.31.253.1")
+                    .with_internal()
+                    .with_label("tc-test-label", "yes")
+                    .create();
+
+    DockerClient client = DockerClient::from_environment();
+    const std::string body = client.request("GET", "/networks/" + n.id()).body;
+    EXPECT_NE(body.find("\"Internal\":true"), std::string::npos) << body.substr(0, 512);
+    EXPECT_NE(body.find("172.31.253.1"), std::string::npos) << body.substr(0, 512);
+    EXPECT_NE(body.find("tc-test-label"), std::string::npos) << body.substr(0, 512);
 
     // RAII removes the network at scope exit.
 }

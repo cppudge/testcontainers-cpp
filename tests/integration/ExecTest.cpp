@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <exception>
 #include <string>
 #include <string_view>
@@ -14,6 +15,7 @@
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
+#include "CapMask.hpp"
 #include "EngineGuard.hpp"
 #include "WindowsEngine.hpp"
 
@@ -29,6 +31,7 @@
 //   Exec.StreamingStopsWhenConsumerReturnsFalse - returning false from the consumer stops the stream early.
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
 //   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
+//   Exec.PrivilegedExecExpandsCapabilities - ExecOptions.privileged grants the exec process a strict superset of the unprivileged exec's effective capabilities.
 //   WindowsExec.PropagatesNonZeroExit - cmd `exit 5` in a Windows container reports exit code 5 (the basic stdout capture is covered by WindowsContainer.ExecRunsInRunningContainer).
 //   WindowsExec.PassesEnv - ExecOptions.env entries are visible to cmd (`echo %FOO%` -> "bar").
 //   WindowsExec.UsesWorkingDir - ExecOptions.working_dir sets the command's cwd (`cd` -> "C:\Windows").
@@ -46,8 +49,8 @@ using namespace testcontainers;
 class Exec : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -160,7 +163,7 @@ TEST_F(Exec, FeedsStdin) {
     // half-close) — skip there rather than hang.
     const DockerScheme scheme = DockerClient::from_environment().host().scheme();
     if (scheme == DockerScheme::Https) {
-        GTEST_SKIP() << "exec-stdin needs a half-closable transport; TLS cannot signal EOF";
+        GTEST_SKIP(); // exec-stdin needs a half-closable transport; TLS cannot signal EOF
     }
 
     Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
@@ -183,7 +186,7 @@ TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {
     // on TLS.
     const DockerScheme scheme = DockerClient::from_environment().host().scheme();
     if (scheme != DockerScheme::Https) {
-        GTEST_SKIP() << "this transport half-closes; the guard only fires on TLS";
+        GTEST_SKIP(); // this transport half-closes; the guard only fires on TLS
     }
 
     Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
@@ -191,6 +194,30 @@ TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {
     ExecOptions opts;
     opts.stdin_data = "ping\n";
     EXPECT_THROW((void)c.exec({"cat"}, opts), DockerError);
+}
+
+TEST_F(Exec, PrivilegedExecExpandsCapabilities) {
+    // The container itself is NOT privileged; only the exec asks for privilege.
+    // Assumes a ROOTFUL daemon (CI and Docker Desktop are): a rootless daemon
+    // cannot grant extra capabilities, making privileged == plain below.
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    const ExecResult plain = c.exec({"sh", "-c", "grep CapEff /proc/self/status"});
+    ASSERT_EQ(plain.exit_code, 0) << "stderr: " << plain.stderr_data;
+    const std::uint64_t plain_caps = tcit::cap_mask_after(plain.stdout_data, "CapEff:");
+    ASSERT_NE(plain_caps, 0u) << "no CapEff line; stdout: " << plain.stdout_data;
+
+    ExecOptions opts;
+    opts.privileged = true;
+    const ExecResult priv = c.exec({"sh", "-c", "grep CapEff /proc/self/status"}, opts);
+    ASSERT_EQ(priv.exit_code, 0) << "stderr: " << priv.stderr_data;
+    const std::uint64_t priv_caps = tcit::cap_mask_after(priv.stdout_data, "CapEff:");
+
+    // Privileged = a strict superset of the default exec's capabilities.
+    EXPECT_EQ(priv_caps & plain_caps, plain_caps)
+        << "privileged caps lost some default bits: " << priv.stdout_data;
+    EXPECT_NE(priv_caps, plain_caps)
+        << "privileged exec gained nothing: " << priv.stdout_data;
 }
 
 // The Windows mirror: every exec surface exercised above, but against a Windows
@@ -302,7 +329,7 @@ TEST_F(WindowsExec, FeedsStdin) {
     // transport; only TLS cannot signal EOF.
     const DockerScheme scheme = DockerClient::from_environment().host().scheme();
     if (scheme == DockerScheme::Https) {
-        GTEST_SKIP() << "exec-stdin needs a half-closable transport; TLS cannot signal EOF";
+        GTEST_SKIP(); // exec-stdin needs a half-closable transport; TLS cannot signal EOF
     }
 
     Container c = start_keep_alive();

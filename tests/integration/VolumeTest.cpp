@@ -5,6 +5,7 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/CopyToContainer.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Mount.hpp"
@@ -12,12 +13,14 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "TempPaths.hpp"
 #include "WindowsEngine.hpp"
 
 // Tests in this file (integration; require a Docker daemon — Linux mode for the
 // Volumes suite, Windows mode for the WindowsVolumes mirror):
-//   Volumes.CreateInspectRemove - Volume::create makes a real volume whose inspect() reports a matching name, "local" driver, and non-empty mountpoint; remove() succeeds and a later inspect_volume on the name throws (gone).
-//   Volumes.RaiiRemovesOnDrop - a Volume removes its backing volume at scope exit, so inspect_volume on the captured name throws afterward.
+//   Volumes.CreateInspectRemove - Volume::create makes a real volume whose inspect() reports a matching name, "local" driver, and non-empty mountpoint; remove() succeeds and a later inspect_volume on the name throws the typed NotFoundError.
+//   Volumes.RaiiRemovesOnDrop - a Volume removes its backing volume at scope exit, so inspect_volume on the captured name throws NotFoundError afterward.
+//   Volumes.BuilderSetsNameAndLabels - Volume::builder() name + labels land on the created volume (asserted via inspect()).
 //   Volumes.PopulateThenReadBack - populate() seeds a file into the volume via a helper container; a fresh container mounting the volume reads the seeded content back, proving it persisted in the volume.
 //   WindowsVolumes.CreateInspectRemove - the same create/inspect/remove round-trip against a Windows daemon (the RAII variant is client-side logic and needs no per-engine mirror).
 //   WindowsVolumes.DataPersistsAcrossContainers - a file written into a mounted volume from inside one container survives that container's removal and is read back by a fresh container mounting the same volume. (No populate() mirror: a Windows daemon extracts archive uploads into the container's layer, bypassing mounts — populate is Linux-only, see Volume.hpp.)
@@ -30,8 +33,8 @@ using namespace testcontainers;
 class Volumes : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (auto why = tcit::linux_engine_unavailable()) {
-            GTEST_SKIP() << *why;
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
         }
     }
 };
@@ -48,9 +51,10 @@ TEST_F(Volumes, CreateInspectRemove) {
     const std::string name = v.name();
     EXPECT_NO_THROW(v.remove());
 
-    // The volume is gone: a fresh inspect of the removed name throws (404).
+    // The volume is gone: a fresh inspect of the removed name throws the TYPED
+    // 404 (pinning NotFoundError end-to-end, not just "some exception").
     DockerClient client = DockerClient::from_environment();
-    EXPECT_THROW(client.inspect_volume(name), std::exception);
+    EXPECT_THROW(client.inspect_volume(name), NotFoundError);
 }
 
 TEST_F(Volumes, RaiiRemovesOnDrop) {
@@ -63,7 +67,23 @@ TEST_F(Volumes, RaiiRemovesOnDrop) {
     }
 
     DockerClient client = DockerClient::from_environment();
-    EXPECT_THROW(client.inspect_volume(name), std::exception);
+    EXPECT_THROW(client.inspect_volume(name), NotFoundError);
+}
+
+TEST_F(Volumes, BuilderSetsNameAndLabels) {
+    // Random suffix: volume create is silently idempotent (an existing name
+    // returns the OLD volume, labels unchanged), so a fixed name could inherit
+    // a leftover from a crashed run and fail confusingly at the label assert.
+    const std::string name = "tc-test-volume-built-" + tcit::random_suffix();
+    Volume v = Volume::builder().with_name(name).with_label("tc-test-label", "yes").create();
+    EXPECT_EQ(v.name(), name);
+
+    const VolumeInspect info = v.inspect();
+    const auto label = info.labels.find("tc-test-label");
+    ASSERT_NE(label, info.labels.end()) << "builder label missing from inspect";
+    EXPECT_EQ(label->second, "yes");
+
+    // RAII removes the volume at scope exit.
 }
 
 TEST_F(Volumes, PopulateThenReadBack) {
@@ -103,9 +123,10 @@ TEST_F(WindowsVolumes, CreateInspectRemove) {
     const std::string name = v.name();
     EXPECT_NO_THROW(v.remove());
 
-    // The volume is gone: a fresh inspect of the removed name throws (404).
+    // The volume is gone: a fresh inspect of the removed name throws the TYPED
+    // 404 — same NotFoundError contract as on the Linux engine.
     DockerClient client = DockerClient::from_environment();
-    EXPECT_THROW(client.inspect_volume(name), std::exception);
+    EXPECT_THROW(client.inspect_volume(name), NotFoundError);
 }
 
 TEST_F(WindowsVolumes, DataPersistsAcrossContainers) {
