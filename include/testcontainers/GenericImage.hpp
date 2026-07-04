@@ -210,7 +210,7 @@ public:
     }
 
     /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
-    GenericImage& with_extra_host(std::string host, std::string ip) {
+    GenericImage& with_extra_host(const std::string& host, const std::string& ip) {
         spec_.extra_hosts.push_back(host + ":" + ip);
         return *this;
     }

@@ -1,0 +1,53 @@
+# Single source of truth for the clang-tidy check set: clangd picks this file
+# up for in-editor diagnostics (see .clangd) and CI runs the same set over the
+# Ninja compile database (see .github/workflows/ci.yml).
+#
+# The set is deliberately high-signal: bug-prone patterns plus cheap
+# modernizations, minus checks that are noisy on a Boost/asio-heavy codebase.
+# Later globs win, so the negative entries below their positive group disable
+# individual checks out of it.
+#
+# Disabled on purpose:
+#   bugprone-easily-swappable-parameters — flags every (name, value) pair.
+#   bugprone-narrowing-conversions — drowns in size_t/int at API boundaries.
+#   performance-avoid-endl — std::endl is rare and deliberate here.
+#   performance-enum-size — none of our enums is stored in bulk; shrinking
+#     their base type to uint8_t buys nothing and churns the public headers.
+#   performance-inefficient-string-concatenation — every remaining hit is a
+#     one-shot error-message chain on the THROW path of a polling loop, where
+#     += restructuring only hurts readability (the one genuinely hot loop it
+#     found was fixed instead).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  performance-*,
+  -performance-avoid-endl,
+  -performance-enum-size,
+  -performance-inefficient-string-concatenation,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-emplace,
+  readability-redundant-*,
+  readability-misleading-indentation
+
+CheckOptions:
+  # The transport convention is asio's error_code OUT-parameter form:
+  #   boost::system::error_code ec; socket.shutdown(how, ec);
+  # Those overloads also ECHO the error_code back as the return value, which
+  # the caller already holds in `ec` — ignoring the echo is the idiom, so
+  # error_code comes out of the checked-return-types list (std::expected et
+  # al. stay checked, as does the checked-functions list: std::async, ...).
+  bugprone-unused-return-value.CheckedReturnTypes: '::std::expected'
+  # A deliberately swallowed exception must say so INSIDE the catch body:
+  #   catch (...) { /* Best-effort: teardown must never propagate. */ }
+  # "best-effort" (any case) is the codebase's keyword for that; an empty
+  # catch without it stays a finding.
+  bugprone-empty-catch.IgnoreCatchWithKeywords: '@TODO;@FIXME;best-effort'
+
+# Diagnose our own headers when they are pulled into a checked TU. Dependency
+# headers (Conan packages, gtest) arrive as -isystem includes and are exempt
+# regardless of this regex, so the loose 'src/' cannot leak diagnostics from
+# a package's internal src/ directory.
+HeaderFilterRegex: '(include/testcontainers|src|tests)/'

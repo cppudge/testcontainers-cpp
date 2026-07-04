@@ -32,6 +32,7 @@ struct RemoveGuard {
                 client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
             }
         } catch (...) {
+            // Best-effort: a guard must never throw from its destructor.
         }
     }
 };

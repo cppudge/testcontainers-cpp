@@ -25,23 +25,10 @@ Index:
   Background: Build
 
 Diagnostics:
-  # Run clang-tidy as you type. The set is deliberately high-signal: bug-prone
-  # patterns plus cheap modernizations, minus checks that are noisy on a
-  # Boost/asio-heavy codebase. This only affects local editing, never the build,
-  # so tune it freely.
-  ClangTidy:
-    Add:
-      - bugprone-*
-      - performance-*
-      - modernize-use-nullptr
-      - modernize-use-override
-      - modernize-use-emplace
-      - readability-redundant-*
-      - readability-misleading-indentation
-    Remove:
-      - bugprone-easily-swappable-parameters
-      - bugprone-narrowing-conversions
-      - performance-avoid-endl
+  # clang-tidy runs as you type; the check set lives in .clang-tidy (the
+  # single source of truth shared with the CI job), which clangd reads
+  # automatically — no per-editor duplicate here.
+  #
   # Flag includes that no longer pull their weight. Boost can occasionally
   # trip a false positive here — switch to `None` if it gets noisy.
   UnusedIncludes: Strict

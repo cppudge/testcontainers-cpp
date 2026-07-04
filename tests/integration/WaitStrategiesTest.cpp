@@ -151,6 +151,8 @@ TEST_F(WindowsWaitStrategies, ListeningPortWaitOnServercore) {
     Container c =
         servercore()
             .with_cmd({"powershell", "-NoLogo", "-NoProfile", "-Command",
+                       // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one
+                       // PowerShell one-liner, split across adjacent literals.
                        "$l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, "
                        "8080); $l.Start(); Write-Host tc-listening; "
                        "while ($true) { Start-Sleep -Seconds 1 }"})

@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // std::getenv on MSVC
-
 #include "Reaper.hpp"
 
 #include "RandomHex.hpp"
@@ -122,6 +120,7 @@ RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove) {
         try {
             client.remove_container(id, /*force*/ true, /*remove_volumes*/ true);
         } catch (...) {
+            // Best-effort: the missing-port error below is the one to surface.
         }
         throw DockerError("Ryuk container " + id + " published no host port for " + kRyukPort);
     }
@@ -183,6 +182,7 @@ void Reaper::start_locked(DockerClient& client) {
         try {
             client.remove_container(ep.container_id, /*force*/ true, /*remove_volumes*/ true);
         } catch (...) {
+            // Best-effort: the caller is already on a failure path.
         }
     };
 

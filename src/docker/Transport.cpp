@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // std::getenv on MSVC
-
 #include "docker/Transport.hpp"
 
 #include "docker/TlsConfig.hpp"

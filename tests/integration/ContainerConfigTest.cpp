@@ -164,8 +164,8 @@ TEST_F(ContainerConfig, MemoryAndShmLimitsVisibleInside) {
     // The daemon's inspect does not echo Memory/ShmSize back, so assert from
     // INSIDE: the cgroup memory limit (v2 path, v1 fallback) and /dev/shm size.
     Container c = GenericImage("alpine", "3.20")
-                      .with_memory_limit(256 * 1024 * 1024)
-                      .with_shm_size(128 * 1024 * 1024)
+                      .with_memory_limit(256LL * 1024 * 1024)
+                      .with_shm_size(128LL * 1024 * 1024)
                       .with_cmd({"sh", "-c",
                                  "cat /sys/fs/cgroup/memory.max 2>/dev/null"
                                  " || cat /sys/fs/cgroup/memory/memory.limit_in_bytes; "

@@ -86,6 +86,7 @@ TEST_F(Reuse, ReuseAdoptsRunningContainer) {
             try {
                 DockerClient::from_environment().remove_container(adopted_id, true, true);
             } catch (...) {
+                // Best-effort: restoring the env + rethrowing matter more.
             }
         }
         set_env("TESTCONTAINERS_REUSE_ENABLE", had_value ? previous.c_str() : nullptr);

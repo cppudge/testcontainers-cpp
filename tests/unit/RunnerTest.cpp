@@ -211,10 +211,10 @@ TEST(Runner, HooksFireInOrderAroundCopy) {
 
     ContainerRequest request = busybox_request();
     request.copy_to_sources.push_back(CopyToContainer::content("hello", "/tmp/hello.txt"));
-    request.created_hooks.push_back(record("created"));
-    request.starting_hooks.push_back(record("starting"));
-    request.started_hooks.push_back(record("started"));
-    request.stopping_hooks.push_back(record("stopping"));
+    request.created_hooks.emplace_back(record("created"));
+    request.starting_hooks.emplace_back(record("starting"));
+    request.started_hooks.emplace_back(record("started"));
+    request.stopping_hooks.emplace_back(record("stopping"));
 
     {
         testcontainers::DockerClient client{server.host()};
@@ -255,7 +255,7 @@ TEST(Runner, ThrowingCreatedHookRemovesContainer) {
     testcontainers::DockerClient client{server.host()};
 
     ContainerRequest request = busybox_request();
-    request.created_hooks.push_back(
+    request.created_hooks.emplace_back(
         [](testcontainers::DockerClient&, const std::string&) {
             throw std::runtime_error("hook boom");
         });

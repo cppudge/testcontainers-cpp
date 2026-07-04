@@ -42,7 +42,7 @@ constexpr const char* kSshdTag = "1.3.0";
 /// Per-direction buffer cap per forwarded connection. When a buffer is full
 /// the reading side is paused until the writing side drains it (backpressure
 /// instead of unbounded growth).
-constexpr std::size_t kConnBufferCap = 256 * 1024;
+constexpr std::size_t kConnBufferCap = std::size_t{256} * 1024;
 
 /// The last libssh2 error on `session`, as "message (rc N)".
 std::string ssh_error(LIBSSH2_SESSION* session) {
@@ -269,7 +269,7 @@ private:
                 maxfd = std::max(maxfd, static_cast<int>(fd));
             }
             timeval tv{};
-            tv.tv_usec = 100 * 1000;
+            tv.tv_usec = 100L * 1000;
             select(maxfd + 1, &rfds, &wfds, nullptr, &tv);
         }
     }
@@ -587,17 +587,18 @@ std::unique_ptr<HostPortForwarder::State> HostPortForwarder::make_state(DockerCl
             .with_wait(wait_for::listening_port(testcontainers::tcp(22)))
             .to_request();
     // Runner::run tags it with the session labels, so Ryuk reaps the sidecar
-    // if this process crashes; on a clean exit the handle removes it.
-    state->sidecar.emplace(Runner::run(client, request));
-    state->sidecar_id = state->sidecar->id();
+    // if this process crashes; on a clean exit the handle removes it. The
+    // reference emplace() returns keeps the accesses below provably engaged.
+    Container& sidecar = state->sidecar.emplace(Runner::run(client, request));
+    state->sidecar_id = sidecar.id();
     state->bridge_ip =
         ip_on_network(client, state->sidecar_id, "bridge", /*fallback_first*/ true);
 
     // Retry the WHOLE connect+handshake+auth: a userland proxy can accept on
     // the published port before sshd actually listens (the Ryuk lesson), and
     // sshd closes its very first connections while still generating host keys.
-    const std::string ssh_host = state->sidecar->host();
-    const std::uint16_t ssh_port = state->sidecar->get_host_port(testcontainers::tcp(22));
+    const std::string ssh_host = sidecar.host();
+    const std::uint16_t ssh_port = sidecar.get_host_port(testcontainers::tcp(22));
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
     for (;;) {
         try {

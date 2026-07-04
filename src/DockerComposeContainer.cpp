@@ -115,6 +115,8 @@ struct DockerComposeContainer::ActiveStack {
                     down.remove_images = remove_images;
                     client->down(down);
                 } catch (...) {
+                    // Best-effort: compose down is advisory; the label sweep
+                    // below catches what it missed.
                 }
             }
 
@@ -129,11 +131,14 @@ struct DockerComposeContainer::ActiveStack {
                         docker.remove_container(summary.id, /*force*/ true,
                                                 /*remove_volumes*/ true);
                     } catch (...) {
+                        // Best-effort: keep sweeping the remaining leftovers.
                     }
                 }
             } catch (...) {
+                // Best-effort: the sweep itself must not break teardown.
             }
         } catch (...) {
+            // Best-effort: teardown must never propagate.
         }
     }
 };
@@ -196,7 +201,7 @@ DockerComposeContainer::with_auto_client(std::vector<std::string> compose_files)
     return c;
 }
 
-DockerComposeContainer DockerComposeContainer::from_yaml(std::string compose_yaml) {
+DockerComposeContainer DockerComposeContainer::from_yaml(const std::string& compose_yaml) {
     DockerComposeContainer c;
     c.project_ = "tc" + random_hex(8);
     c.compose_image_ = kComposeImage;

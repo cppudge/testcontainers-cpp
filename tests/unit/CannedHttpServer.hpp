@@ -87,17 +87,22 @@ public:
         // on one Asio object from two threads are undefined). The thread sees
         // stop_ right after its accept returns and exits.
         stop_ = true;
-        {
-            boost::asio::io_context poke_io;
-            boost::asio::ip::tcp::socket poke(poke_io);
+        try {
+            {
+                boost::asio::io_context poke_io;
+                boost::asio::ip::tcp::socket poke(poke_io);
+                boost::system::error_code ignore;
+                poke.connect(boost::asio::ip::tcp::endpoint(
+                                 boost::asio::ip::make_address("127.0.0.1"), port_),
+                             ignore);
+            }
+            thread_.join();
             boost::system::error_code ignore;
-            poke.connect(boost::asio::ip::tcp::endpoint(
-                             boost::asio::ip::make_address("127.0.0.1"), port_),
-                         ignore);
+            acceptor_.close(ignore);
+        } catch (...) {
+            // Best-effort: a destructor must never throw (join only throws
+            // when the thread is already unjoinable).
         }
-        thread_.join();
-        boost::system::error_code ignore;
-        acceptor_.close(ignore);
     }
 
     testcontainers::DockerHost host() const {

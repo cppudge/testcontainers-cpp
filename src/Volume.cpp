@@ -98,6 +98,7 @@ void Volume::populate(const std::vector<CopyToContainer>& sources, const std::st
         try {
             client_.remove_container(helper_id, /*force=*/true);
         } catch (...) {
+            // Best-effort: the copy failure rethrown below is the root cause.
         }
         throw;
     }

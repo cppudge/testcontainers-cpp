@@ -512,7 +512,7 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
                                   std::nullopt, image);
             }
         } catch (const nlohmann::json::parse_error&) {
-            // Non-JSON line (shouldn't happen) — ignore.
+            // Best-effort parse: a non-JSON line (shouldn't happen) is ignored.
         }
     }
 }
@@ -589,7 +589,7 @@ void throw_if_build_error(const std::string& build_stream, const std::string& ta
                                   std::nullopt, tag);
             }
         } catch (const nlohmann::json::parse_error&) {
-            // Non-JSON line (shouldn't happen) — ignore.
+            // Best-effort parse: a non-JSON line (shouldn't happen) is ignored.
         }
     }
 }

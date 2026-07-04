@@ -1,0 +1,13 @@
+# Test-only relaxation on top of the root .clang-tidy.
+InheritParentConfig: true
+
+# gtest's ASSERT_TRUE(opt.has_value()) guard expands into an AssertionResult
+# dance the flow analysis cannot see through, so every guarded *opt / opt->
+# in a test body is a false positive — and that idiom is pervasive here. The
+# check stays on for the library, where the guards are plain ifs.
+Checks: '-bugprone-unchecked-optional-access'
+
+CheckOptions:
+  # On top of the root keywords: a test catch block whose comment says
+  # "expected" IS the assertion (reaching it is the pass condition).
+  bugprone-empty-catch.IgnoreCatchWithKeywords: '@TODO;@FIXME;best-effort;expected'

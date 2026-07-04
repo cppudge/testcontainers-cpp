@@ -101,7 +101,7 @@ TEST_F(Exec, RunsAsUser) {
     ExecOptions opts;
     opts.user = "0"; // root
     const ExecResult res = c.exec({"id", "-u"}, opts);
-    EXPECT_NE(res.stdout_data.find("0"), std::string::npos)
+    EXPECT_NE(res.stdout_data.find('0'), std::string::npos)
         << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
 }

@@ -192,7 +192,7 @@ TEST(TransportTimeout, WriteTimesOutWhenPeerStopsReading) {
     // Keep writing until the peer's receive window + our send buffer fill and
     // the write can no longer make progress. Bounded loop: if 256 MiB "sends"
     // without ever blocking, something is very wrong with the fixture.
-    const std::vector<char> chunk(64 * 1024, 'x');
+    const std::vector<char> chunk(std::size_t{64} * 1024, 'x');
     boost::system::error_code ec;
     for (int i = 0; i < 4096 && !ec; ++i) {
         transport->write_some(chunk.data(), chunk.size(), ec);

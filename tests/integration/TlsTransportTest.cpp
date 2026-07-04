@@ -122,7 +122,7 @@ done:
 // Save/set/restore an environment variable; nullopt clears it.
 class ScopedEnv {
 public:
-    ScopedEnv(const char* name, std::optional<std::string> value) : name_(name) {
+    ScopedEnv(const char* name, const std::optional<std::string>& value) : name_(name) {
         if (const char* prev = std::getenv(name)) {
             saved_ = prev;
         }

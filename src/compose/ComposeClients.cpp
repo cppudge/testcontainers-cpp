@@ -144,6 +144,8 @@ public:
             try {
                 client_.remove_container(cli_id_, /*force*/ true, /*remove_volumes*/ true);
             } catch (...) {
+                // Best-effort: the original failure rethrown below is the one
+                // to surface.
             }
             throw;
         }
@@ -154,6 +156,7 @@ public:
         try {
             client_.remove_container(cli_id_, /*force*/ true, /*remove_volumes*/ true);
         } catch (...) {
+            // Best-effort: teardown must never throw from a destructor.
         }
     }
 

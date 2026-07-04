@@ -26,7 +26,10 @@ CreateContainerSpec GenericImage::build_spec() const {
     spec.image = substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
 
     for (const auto& [key, value] : env_) {
-        spec.env.push_back(key + "=" + value);
+        // Build in place: chained + would allocate a temporary per entry.
+        std::string& entry = spec.env.emplace_back(key);
+        entry += '=';
+        entry += value;
     }
     for (const ContainerPort& p : exposed_ports_) {
         spec.exposed_ports.push_back(to_string(p));

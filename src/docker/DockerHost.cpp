@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // std::getenv on MSVC
-
 #include "testcontainers/docker/DockerHost.hpp"
 
 #include "docker/HostResolve.hpp"
@@ -136,10 +134,11 @@ std::string sha256_hex(const std::string& data) {
     for (std::size_t off = 0; off < msg.size(); off += 64) {
         std::uint32_t w[64];
         for (int i = 0; i < 16; ++i) {
-            const auto b0 = static_cast<unsigned char>(msg[off + i * 4 + 0]);
-            const auto b1 = static_cast<unsigned char>(msg[off + i * 4 + 1]);
-            const auto b2 = static_cast<unsigned char>(msg[off + i * 4 + 2]);
-            const auto b3 = static_cast<unsigned char>(msg[off + i * 4 + 3]);
+            const std::size_t base = off + static_cast<std::size_t>(i) * 4;
+            const auto b0 = static_cast<unsigned char>(msg[base + 0]);
+            const auto b1 = static_cast<unsigned char>(msg[base + 1]);
+            const auto b2 = static_cast<unsigned char>(msg[base + 2]);
+            const auto b3 = static_cast<unsigned char>(msg[base + 3]);
             w[i] = (static_cast<std::uint32_t>(b0) << 24) | (static_cast<std::uint32_t>(b1) << 16) |
                    (static_cast<std::uint32_t>(b2) << 8) | static_cast<std::uint32_t>(b3);
         }
@@ -204,7 +203,9 @@ std::optional<std::string> docker_host_from_properties(const std::string& proper
             continue;
         }
         if (trim(trimmed.substr(0, eq)) == "docker.host") {
-            const std::string value = trim(trimmed.substr(eq + 1));
+            // Not const: a const local disables the automatic move into the
+            // returned optional.
+            std::string value = trim(trimmed.substr(eq + 1));
             if (!value.empty()) {
                 return value;
             }
@@ -246,7 +247,8 @@ std::optional<std::string> docker_host_from_context_meta(const std::string& meta
         }
         if (const auto host = dockerep->find("Host");
             host != dockerep->end() && host->is_string()) {
-            const std::string value = host->get<std::string>();
+            // Not const: allows the automatic move into the returned optional.
+            std::string value = host->get<std::string>();
             if (!value.empty()) {
                 return value;
             }

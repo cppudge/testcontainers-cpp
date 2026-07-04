@@ -115,7 +115,7 @@ TEST(WaitFor, Copyable) {
     std::vector<WaitFor> waits;
     waits.push_back(wait_for::log("a"));
     waits.push_back(wait_for::seconds(1));
-    waits.push_back(wait::None{});
+    waits.emplace_back(wait::None{});
     EXPECT_EQ(waits.size(), 3u);
 }
 

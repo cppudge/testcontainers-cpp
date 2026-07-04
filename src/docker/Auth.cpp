@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // std::getenv on MSVC
-
 #include "docker/Auth.hpp"
 
 #include <array>
@@ -116,7 +114,8 @@ std::string resolve_registry(const std::string& image) {
         return kDockerHub;
     }
 
-    const std::string first = image.substr(0, slash);
+    // Not const: a const local disables the automatic move on `return first`.
+    std::string first = image.substr(0, slash);
     // The first segment is a registry host only if it looks like one: contains a
     // '.' (domain), a ':' (port), or is literally "localhost". Otherwise it is a
     // Docker Hub namespace (e.g. "confluentinc/cp-kafka").

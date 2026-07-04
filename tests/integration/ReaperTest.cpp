@@ -180,11 +180,13 @@ TEST_F(Reaper, RyukReapsOnDisconnect) {
             try {
                 client.remove_container(target_id, true, true);
             } catch (...) {
+                // Best-effort: still remove the dedicated Ryuk below.
             }
         }
         try {
             client.remove_container(ryuk.container_id, true, true);
         } catch (...) {
+            // Best-effort: the original failure rethrown below is the cause.
         }
         throw;
     }
@@ -194,6 +196,7 @@ TEST_F(Reaper, RyukReapsOnDisconnect) {
         try {
             client.remove_container(target_id, true, true);
         } catch (...) {
+            // Best-effort: the target may already be gone.
         }
     }
     EXPECT_NO_THROW(client.remove_container(ryuk.container_id, true, true));

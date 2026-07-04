@@ -28,7 +28,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-extern char** environ;
+// Redundant on glibc (unistd.h declares it) but required by POSIX portability:
+// macOS/BSD headers do not declare environ.
+extern char** environ; // NOLINT(readability-redundant-declaration)
 #endif
 
 namespace testcontainers::detail {

@@ -104,7 +104,7 @@ TEST_F(Copy, LargeFileRoundTrip) {
 
     // 2 MiB — comfortably over Beast's default 1 MiB body limit, so this only
     // passes because request() disables that limit.
-    std::string big(2 * 1024 * 1024, 'x');
+    std::string big(std::size_t{2} * 1024 * 1024, 'x');
     big[big.size() - 3] = 'A';
     big[big.size() - 2] = 'B';
     big[big.size() - 1] = 'C';
@@ -223,7 +223,7 @@ TEST_F(WindowsCopy, LargeFileRoundTrip) {
 
     // 2 MiB — comfortably over Beast's default 1 MiB body limit; on CI this
     // also rides the named-pipe transport rather than a socket.
-    std::string big(2 * 1024 * 1024, 'x');
+    std::string big(std::size_t{2} * 1024 * 1024, 'x');
     big[big.size() - 3] = 'A';
     big[big.size() - 2] = 'B';
     big[big.size() - 1] = 'C';

@@ -64,7 +64,7 @@ public:
 
     /// Inline YAML convenience: writes a temp `.yml` file (cleaned up on
     /// destruction) and uses it as the single compose file; default Local.
-    static DockerComposeContainer from_yaml(std::string compose_yaml);
+    static DockerComposeContainer from_yaml(const std::string& compose_yaml);
 
     DockerComposeContainer(const DockerComposeContainer&) = delete;
     DockerComposeContainer& operator=(const DockerComposeContainer&) = delete;

@@ -517,7 +517,8 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
     // the container stops). Streaming callers use follow_logs().
     const std::string target = build_logs_target(id, opts, /*follow*/ false);
 
-    const Response res = request("GET", target);
+    // Not const: the body / demuxed halves are moved out below.
+    Response res = request("GET", target);
     if (res.status_code != 200) {
         throw_status_error("logs(" + id + ")", res, id);
     }
@@ -530,7 +531,7 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
         return out;
     }
 
-    const docker::DemuxedLogs demuxed = docker::demux_all(res.body);
+    docker::DemuxedLogs demuxed = docker::demux_all(res.body);
     out.stdout_data = std::move(demuxed.stdout_data);
     out.stderr_data = std::move(demuxed.stderr_data);
     return out;
@@ -741,7 +742,8 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         // Raw, unframed single stream: route it all to stdout_data unchanged.
         out.stdout_data = std::move(body);
     } else {
-        const docker::DemuxedLogs demuxed = docker::demux_all(body);
+        // Not const: the demuxed halves are moved out.
+        docker::DemuxedLogs demuxed = docker::demux_all(body);
         out.stdout_data = std::move(demuxed.stdout_data);
         out.stderr_data = std::move(demuxed.stderr_data);
     }

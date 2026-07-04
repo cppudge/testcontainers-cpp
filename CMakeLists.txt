@@ -107,6 +107,13 @@ add_library(testcontainers
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
 tc_apply_warnings(testcontainers)
+if(MSVC)
+    # The library reads env vars via portable std::getenv (the _s variant is
+    # Windows-only); silence the CRT's C4996 deprecation. PRIVATE: our TUs
+    # only. (Defining the reserved identifier in source files instead would
+    # trip clang-tidy's bugprone-reserved-identifier.)
+    target_compile_definitions(testcontainers PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 target_include_directories(testcontainers
     PUBLIC
