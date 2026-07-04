@@ -219,13 +219,18 @@ DockerComposeContainer DockerComposeContainer::from_yaml(std::string compose_yam
     return c;
 }
 
-// Rule of zero (see the ActiveStack note above): TempFile and unique_ptr
-// carry all the move/teardown semantics, so nothing here is hand-written.
-// Defaulted out of line — ~unique_ptr<ActiveStack> needs the complete type.
+// Rule of zero for the moves (see the ActiveStack note above): TempFile and
+// unique_ptr carry all the transfer/release semantics, so no member list is
+// hand-written. Defaulted out of line — ~unique_ptr<ActiveStack> needs the
+// complete type. The destructor is stop(): member destruction alone would
+// delete the temp file BEFORE the teardown that may re-read it (members are
+// destroyed in reverse declaration order, and active_ is declared first so
+// that the move-ASSIGN — which runs in declaration order — releases the
+// target's stack before its temp file).
 DockerComposeContainer::DockerComposeContainer(DockerComposeContainer&&) noexcept = default;
 DockerComposeContainer&
 DockerComposeContainer::operator=(DockerComposeContainer&&) noexcept = default;
-DockerComposeContainer::~DockerComposeContainer() = default;
+DockerComposeContainer::~DockerComposeContainer() { stop(); }
 
 DockerComposeContainer& DockerComposeContainer::with_client(ComposeClientKind kind) & {
     client_kind_ = kind;
@@ -345,6 +350,13 @@ DockerComposeContainer&& DockerComposeContainer::with_remove_images(bool remove)
 }
 
 void DockerComposeContainer::start() {
+    // 0) A restart must tear the previous run down BEFORE the new `up`: both
+    //    runs share the project name/label, so tearing down afterwards (the
+    //    unique_ptr-assignment order) would down + sweep the containers the
+    //    new `up` just created. The temp file (if any) is still on disk here,
+    //    so the old stack's `down -f` re-reads it fine.
+    active_.reset();
+
     // 1) Build the stack-to-be: resolve the client (Local / Containerised /
     //    Auto — the containerised client starts its long-lived cli container
     //    here) and snapshot the teardown config. If anything below throws,
@@ -383,7 +395,7 @@ void DockerComposeContainer::start() {
         stack->service_to_id.emplace(it->second, summary.id);
     }
 
-    // Adopt: a restart replaces (and thereby tears down) a previous stack.
+    // Adopt (active_ is null here — any previous stack was torn down up top).
     active_ = std::move(stack);
 
     // 4) Extra guarantee on top of compose's `--wait`: wait for each exposed

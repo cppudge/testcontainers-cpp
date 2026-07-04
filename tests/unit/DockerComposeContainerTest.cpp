@@ -26,6 +26,7 @@
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
 //   DockerComposeContainer.MoveAssignReleasesTargetsOldTempFile - move-assigning over a handle releases (deletes) the temp file the target owned before.
+//   DockerComposeContainer.StopIsIdempotent - stop() before start() and repeated stop() are harmless; the from_yaml temp file is gone after the first stop().
 
 using namespace testcontainers;
 
@@ -193,4 +194,17 @@ TEST(DockerComposeContainer, MoveAssignReleasesTargetsOldTempFile) {
     EXPECT_FALSE(std::filesystem::exists(old_temp)) << "the target's old temp file leaked";
     EXPECT_TRUE(std::filesystem::exists(new_temp));
     EXPECT_EQ(target.compose_files().front(), new_temp);
+}
+
+TEST(DockerComposeContainer, StopIsIdempotent) {
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+    const std::string temp_path = compose.compose_files().front();
+    ASSERT_TRUE(std::filesystem::exists(temp_path));
+
+    // Never started: stop() must be harmless, and it releases the temp file.
+    compose.stop();
+    EXPECT_FALSE(std::filesystem::exists(temp_path));
+    compose.stop(); // and again
+    // The handle is still queryable (config is untouched by stop()).
+    EXPECT_EQ(compose.client_kind(), ComposeClientKind::Local);
 }

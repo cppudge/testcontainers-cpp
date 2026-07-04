@@ -125,6 +125,10 @@ public:
     DockerComposeContainer& with_wait_timeout(std::chrono::seconds timeout) &;
     DockerComposeContainer&& with_wait_timeout(std::chrono::seconds timeout) &&;
 
+    // Teardown behavior (env, remove_volumes, remove_images) is snapshotted
+    // by start(): changing these afterwards does not affect the pending
+    // teardown — consistent with the "set before start()" contract above.
+
     /// Remove volumes on teardown (`down --volumes`). Default true.
     DockerComposeContainer& with_remove_volumes(bool remove = true) &;
     DockerComposeContainer&& with_remove_volumes(bool remove = true) &&;
@@ -225,16 +229,20 @@ private:
     bool remove_images_ = false;
     /// The services (+ their published port) to wait for at start().
     std::vector<std::pair<std::string, ContainerPort>> exposed_services_;
-    /// The temp file written by from_yaml(). Declared BEFORE active_ on
-    /// purpose: teardown (which may re-read the compose file) must run before
-    /// the file is deleted on destruction.
-    TempFile temp_file_;
     /// The running project (created by start()): the compose client, a
     /// teardown snapshot of the config, and the discovered service ids.
-    /// Destroying it IS the teardown, so the defaulted special members above
-    /// inherit correct move/teardown semantics from unique_ptr.
+    /// Destroying it IS the teardown, so the defaulted moves inherit correct
+    /// transfer/release semantics from unique_ptr.
+    ///
+    /// Ordering invariant: teardown may re-read the compose file (`down -f`),
+    /// so it must run BEFORE temp_file_ deletes it. active_ is declared first
+    /// so the defaulted move-ASSIGN releases the target's stack before its
+    /// temp file; the destructor calls stop(), which encodes the same order
+    /// explicitly (plain member destruction would run it in reverse).
     struct ActiveStack;
     std::unique_ptr<ActiveStack> active_;
+    /// The temp file written by from_yaml() (deleted by stop()/destruction).
+    TempFile temp_file_;
 };
 
 } // namespace testcontainers

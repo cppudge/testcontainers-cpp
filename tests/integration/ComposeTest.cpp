@@ -21,6 +21,7 @@
 //   Compose.LocalClientBringsUpRedis - the LOCAL client (host `docker compose` CLI; default) brings up redis from a temp YAML, the published host port answers a raw TCP PING with PONG, and stop() removes every container carrying the project label. Skipped if the host has no `docker compose`.
 //   Compose.ContainerisedClientBringsUpRedis - the CONTAINERISED client (long-lived docker:26.1-cli + exec) brings up redis (pulling docker:26.1-cli on first run), PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
+//   Compose.RestartKeepsProjectAlive - start() on an already-started handle tears the OLD run down first, so the fresh containers survive (the shared project label makes teardown-after-up remove the new run's containers).
 
 using namespace testcontainers;
 
@@ -131,6 +132,32 @@ TEST_F(Compose, ContainerisedClientBringsUpRedis) {
                                          .with_client(ComposeClientKind::Containerised)
                                          .with_exposed_service("redis", tcp(6379));
     run_redis_roundtrip(compose);
+}
+
+TEST_F(Compose, RestartKeepsProjectAlive) {
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP() << "host `docker compose` CLI is not available";
+    }
+    DockerComposeContainer compose =
+        DockerComposeContainer::from_yaml(kRedisYaml).with_exposed_service("redis", tcp(6379));
+    ASSERT_NO_THROW(compose.start());
+
+    // Both runs share the project label, so tearing the old run down AFTER the
+    // new `up` would remove the fresh containers; a correct restart tears down
+    // first. The service must be alive and reachable after the second start().
+    ASSERT_NO_THROW(compose.start());
+    const std::string id = compose.get_service_container_id("redis");
+    DockerClient client = DockerClient::from_environment();
+    EXPECT_TRUE(client.inspect_container(id).running) << "restart removed its own container";
+    std::string reply;
+    ASSERT_NO_THROW(reply = redis_ping(compose.get_service_host("redis"),
+                                       compose.get_service_port("redis", tcp(6379))));
+    EXPECT_NE(reply.find("PONG"), std::string::npos);
+
+    ASSERT_NO_THROW(compose.stop());
+    const auto leftovers = client.list_containers(
+        {{"label", "com.docker.compose.project=" + compose.project_name()}}, /*all*/ true);
+    EXPECT_TRUE(leftovers.empty());
 }
 
 TEST_F(Compose, AutoClientBringsUpRedis) {
