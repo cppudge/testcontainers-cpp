@@ -48,7 +48,9 @@ find_package(Boost REQUIRED)            # header-only Beast + Asio
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(LibArchive REQUIRED)
-find_package(libssh2 REQUIRED)          # host-port-exposure sidecar tunnel
+# Case matters: Conan generates Libssh2Config.cmake (capital L) — the
+# lowercase name only resolves on case-insensitive filesystems (Windows).
+find_package(Libssh2 REQUIRED)          # host-port-exposure sidecar tunnel
 
 # ===== Library =====
 add_library(testcontainers

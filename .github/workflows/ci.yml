@@ -57,10 +57,11 @@ jobs:
       # socket — the primary POSIX transport. Pulls (redis, alpine,
       # docker:26.1-cli, ryuk, sshd) dominate the wall clock on cold runs.
       # The step timeout turns a wedged daemon into a fast red instead of
-      # eating the whole job timeout.
+      # eating the whole job timeout; full (non-brief) gtest output names
+      # every [ RUN ] test case so a hang points at its culprit.
       - name: Integration tests
         timeout-minutes: 20
-        run: ./build/ninja/bin/tc_integration_tests --gtest_brief=1
+        run: ./build/ninja/bin/tc_integration_tests
 
   windows:
     name: Windows (MSVC, Release)
@@ -111,7 +112,8 @@ jobs:
       # resolves the tag from the daemon's build (an unknown build FAILS, so a
       # runner-image upgrade cannot silently hollow this job out). The step
       # timeout turns a wedged daemon (observed once: 56 min of silence) into
-      # a bounded red instead of eating the whole job timeout.
+      # a bounded red instead of eating the whole job timeout; full gtest
+      # output names every [ RUN ] test case so a hang points at its culprit.
       - name: Integration tests (Windows engine)
         timeout-minutes: 25
-        run: ./build/ninja/bin/tc_integration_tests.exe --gtest_brief=1
+        run: ./build/ninja/bin/tc_integration_tests.exe
