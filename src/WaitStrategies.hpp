@@ -19,8 +19,10 @@ namespace detail {
 std::size_t count_occurrences(const std::string& haystack, const std::string& needle);
 
 /// Run each readiness condition in `waits` in order, under a single shared
-/// deadline (`timeout` from the moment this is called). Throws DockerError if
-/// the deadline passes before a condition is met. `tty` records whether the
+/// deadline (`timeout` from the moment this is called). Throws
+/// StartupTimeoutError if the deadline passes before a condition is met (and
+/// DockerError for non-timeout failures, e.g. a wrong exit code or a container
+/// with no healthcheck). `tty` records whether the
 /// container was created with Tty=true, so log-based waits read its raw/unframed
 /// stream instead of demuxing (which would garble it).
 ///

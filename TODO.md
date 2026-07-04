@@ -121,13 +121,13 @@ review are recorded here so they aren't lost between milestones.
   `with_started_hook`/`with_stopping_hook` (`LifecycleHook = std::function<void(DockerClient&, const
   std::string&)>`, so a hook gets the full low-level client + id) and `with_startup_attempts(n)`
   (retries the whole create→start→wait, removing each failed partial; the reuse-ADOPT path is not
-  retried). created/starting/started fire inside `start()`'s try (a throwing hook cleans up the partial
+  retried). created/starting/started fire inside the Runner's try (a throwing hook cleans up the partial
   container); stopping fires once from `Container` on `stop()`/auto-removing `drop()` (never on a
   persistent/reusable handle), swallowing exceptions in the noexcept teardown. Known limits / one-line
   notes: (a) no distinct `containerIsStopped` (only "stopping"), and stopping does NOT fire for a
   reused/persistent handle's drop; (b) no inter-attempt backoff/delay (immediate retry); (c) hooks get
   `(DockerClient&, id)` — there is no richer per-container facade (use the client's exec/copy/inspect by
-  id). (`include/testcontainers/Lifecycle.hpp`, `src/GenericImage.cpp`, `src/Container.cpp`)
+  id). (`include/testcontainers/Lifecycle.hpp`, `src/Runner.cpp`, `src/Container.cpp`)
 - **follow logs: blocking + cooperative-stop only** — `DockerClient::follow_logs` /
   `Container::follow_logs` stream incrementally (`read_some` + `LogDemuxer`) and stop when
   the consumer returns false, but it is BLOCKING: run it on your own `std::thread` for
@@ -273,7 +273,8 @@ review are recorded here so they aren't lost between milestones.
   (b) substitution is applied at the `GenericImage` layer only —
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are NOT substituted;
   (c) `ImagePullPolicy::Always` re-pulls on every `start()` (no pull-pause / dedup).
-  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/docker/Auth.cpp`)
+  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/Runner.cpp`,
+  `src/docker/Auth.cpp`)
 - **Docker Compose: three client modes (rust parity), published-ports-only** —
   `DockerComposeContainer` now has THREE client modes (`ComposeClientKind`): Local (DEFAULT —
   shells out to the host `docker compose` CLI; the documented compose-only exception to the
@@ -312,7 +313,7 @@ review are recorded here so they aren't lost between milestones.
   (e.g. `docker container prune` or a label sweep on `org.testcontainers.reuse.hash`);
   (c) there is no "reuse enabled" marker label and no reuse-across-different-images dedup beyond
   the exact-config hash (any config difference yields a different hash → a fresh container).
-  (`include/testcontainers/GenericImage.hpp`, `src/GenericImage.cpp`, `src/Reuse.cpp`,
+  (`include/testcontainers/GenericImage.hpp`, `src/Runner.cpp`, `src/Reuse.cpp`,
   `include/testcontainers/Container.hpp`)
 - **expose-host-ports NOT implemented (Tier 2.8, deferred by decision)** — there is no
   `Testcontainers::expose_host_ports(...)` yet (letting a container reach a service on the HOST at
@@ -341,29 +342,35 @@ review are recorded here so they aren't lost between milestones.
   containers first (the high-level handles already drop in reverse-declaration order).
   (`include/testcontainers/Volume.hpp`, `src/Volume.cpp`, `src/docker/DockerClient.cpp`)
 
-- **`start()` orchestration welded to `GenericImage` (planned split — responsibility + testability,
-  not a blocker)** — the whole container lifecycle (reaper bootstrap → reuse lookup → startup-attempt
-  retry → create → copy-to → created/starting hooks → start → wait-until-ready → started hooks → handle
-  construction) lives inside the private `GenericImage::start()`, reading every input off `*this`. PLAN:
-  split it in two, mirroring testcontainers-rs (`Image`/`ContainerRequest` + `Runner`): (1) a
-  `ContainerRequest` value type — the "what to run": the `CreateContainerSpec` plus the run-time fields
-  `start()` currently reads from the builder (waits, startup_timeout, registry_auth, copy_to_sources,
-  the four lifecycle-hook vectors, reuse, pull_policy, startup_attempts, declared `exposed_ports`); and
-  (2) a `Runner` / free `Container run(const ContainerRequest&)` holding the orchestration (Reaper /
-  Reuse / WaitStrategies stay internal `src/` helpers). `GenericImage::start()` then becomes a thin
-  `return run(to_request());` — its public API is unchanged. MOTIVATION is ONLY separation of
-  responsibility + unit-testability of the orchestration (drive `run()` against a fake/mock
-  `DockerClient` without constructing a `GenericImage`); there is **no functional blocker** today, so
-  this is a cleanliness/testing refactor, not urgent. Explicitly **NOT for modules**: future ecosystem
-  modules (Postgres/Redis/…) are to be built by COMPOSITION over `GenericImage` + a typed handle
-  wrapping `Container` (e.g. `PostgresContainer::connection_string()`), which already works on the
-  current code and needs none of this split; `to_request()`/`run()` would only become an *option* for a
-  module that needs run-level tweaks or polymorphic heterogeneity. (`src/GenericImage.cpp`; a future
-  `ContainerRequest` in `include/testcontainers/` + `src/Runner.*`)
+- **`start()` split into `ContainerRequest` + `Runner` (done), with known residuals** — the whole
+  container lifecycle orchestration (reuse lookup → startup-attempt retry → create → copy-to →
+  created/starting hooks → start → wait-until-ready → started hooks → handle construction) now
+  lives in `detail::Runner::run(DockerClient&, const ContainerRequest&)` (`src/Runner.*`),
+  mirroring testcontainers-rs. `ContainerRequest` (public,
+  `include/testcontainers/ContainerRequest.hpp`) is the "what to run" value: the fully-translated
+  `CreateContainerSpec` plus waits / copy-to sources / the four hook vectors / registry auth /
+  pull policy / reuse / startup attempts / declared ports; `ImagePullPolicy` moved there
+  (`GenericImage.hpp` re-exports it by include — no source break). Public free `run(request)`
+  (environment client) and `run(client, request)` (caller-supplied client) bootstrap the Reaper
+  and delegate; `GenericImage::start()` is now a thin `run(to_request())` with `to_request()`
+  public. The core deliberately skips reaper bootstrap so unit tests drive it against a canned
+  loopback responder (`tests/unit/RunnerTest.cpp`: happy path incl. session labels on the create
+  body, hook order around copy-to, partial-container cleanup on failed start / throwing hook,
+  retry + exhaustion, pull-policy Always, wait-timeout retry semantics, both reuse paths).
+  Known limits / one-line notes:
+  (a) the process-global Reaper binds to the FIRST daemon it starts against —
+  `run(client, request)` boots it on THAT client's daemon (not the environment one, fixed in
+  review), but a second daemon used later in the same process gets labels and NO crash-safe
+  reaping (a per-daemon reaper map would be the full fix; not warranted yet);
+  (b) a hand-built `ContainerRequest` owns the consistency of the port trio — typed
+  `exposed_ports` order vs the rendered `spec.exposed_ports` strings vs
+  `spec.publish_all_ports`; `to_request()` keeps them in sync (stated in the struct doc);
+  (c) modules (Postgres/Redis/…) remain planned as COMPOSITION over `GenericImage`;
+  `to_request()`/`run()` are only an option for run-level tweaks, not a module framework.
+  (`src/Runner.*`, `include/testcontainers/ContainerRequest.hpp`, `src/GenericImage.cpp`,
+  `src/Reaper.*`)
 
 ## Open / not yet built
-- **`ContainerRequest` + `Runner` split of `start()`** — responsibility + testability; not a
-  blocker. See the tech-debt item above.
 - **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an
   optional libssh2 dependency). See the tech-debt item above.
 - **Connection pooling / keep-alive** — `request()` opens one connection per call. See the

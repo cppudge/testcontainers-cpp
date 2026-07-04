@@ -57,6 +57,11 @@ public:
                   }
                   const std::size_t head_end = request.find("\r\n\r\n");
                   if (head_end != std::string::npos) {
+                      // Hazard: a request announcing MORE Content-Length than the
+                      // client actually sends deadlocks here (we block reading,
+                      // the client blocks waiting for the response). Our client
+                      // always sends exactly what it announces, and chunked
+                      // encoding is not supported.
                       const std::size_t total = head_end + 4 + content_length(request);
                       while (!ec && request.size() < total) {
                           const std::size_t n = socket.read_some(asio::buffer(buf), ec);

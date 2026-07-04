@@ -265,6 +265,7 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     img.with_exposed_port(tcp(6379))
         .with_env("MODE", "standalone")
         .with_cmd({"redis-server"})
+        .with_label("owner", "tc")
         .with_copy_to(CopyToContainer::content("hello", "/tmp/hello.txt"))
         .with_wait(wait_for::stdout_message("Ready"))
         .with_startup_timeout(std::chrono::milliseconds(5000))
@@ -288,6 +289,10 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     EXPECT_EQ(req.spec.env, (std::vector<std::string>{"MODE=standalone"}));
     EXPECT_EQ(req.spec.exposed_ports, (std::vector<std::string>{"6379/tcp"}));
     EXPECT_TRUE(req.spec.publish_all_ports);
+    // The snapshot carries EXACTLY the builder's labels: the session/reuse
+    // labels are layered on by run() (they depend on the run, not the request).
+    EXPECT_EQ(req.spec.labels,
+              (std::vector<std::pair<std::string, std::string>>{{"owner", "tc"}}));
 
     // The orchestration fields mirror the builders one-to-one.
     EXPECT_EQ(req.exposed_ports, (std::vector<ContainerPort>{tcp(6379)}));

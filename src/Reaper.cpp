@@ -153,9 +153,19 @@ void Reaper::ensure_started() {
     if (started_ || ryuk_disabled()) {
         return;
     }
-
     DockerClient client = DockerClient::from_environment();
+    start_locked(client);
+}
 
+void Reaper::ensure_started(DockerClient& client) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (started_ || ryuk_disabled()) {
+        return;
+    }
+    start_locked(client);
+}
+
+void Reaper::start_locked(DockerClient& client) {
     // No Linux Ryuk image can run on a Windows-containers engine, so we skip the
     // reaper entirely there (matching testcontainers-dotnet). The managed-by /
     // session-id labels still get applied to user containers — harmless, just

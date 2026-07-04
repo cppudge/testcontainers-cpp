@@ -11,6 +11,7 @@
 #include "testcontainers/RegistryAuth.hpp"
 #include "testcontainers/WaitFor.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
+#include "testcontainers/docker/DockerClient.hpp"
 
 namespace testcontainers {
 
@@ -27,7 +28,11 @@ enum class ImagePullPolicy {
 /// A plain copyable value, normally assembled by `GenericImage::to_request()`
 /// and consumed by `run()`. A caller with run-level needs (a custom
 /// DockerClient, a spec tweak no builder exposes) can edit or build one
-/// directly — the fields mirror the `GenericImage` builders one-to-one.
+/// directly — the fields mirror the `GenericImage` builders one-to-one. If you
+/// build one by hand rather than via `to_request()`, you own the consistency
+/// of the port trio: `exposed_ports` (typed, declaration order),
+/// `spec.exposed_ports` (the rendered "6379/tcp" strings), and
+/// `spec.publish_all_ports`.
 struct ContainerRequest {
     /// The Docker create body, fully translated: the image reference is already
     /// resolved/substituted, env entries are "KEY=VALUE", exposed ports are
@@ -75,7 +80,11 @@ struct ContainerRequest {
 Container run(const ContainerRequest& request);
 
 /// As above, but on a caller-supplied client — for a custom daemon endpoint or
-/// tuned transport timeouts. The client is copied into the returned handle.
+/// tuned transport timeouts. The reaper is booted on `client`'s daemon (not the
+/// environment one); note it is process-global and binds to the FIRST daemon it
+/// starts against — later runs against a different daemon in the same process
+/// get labels but no crash-safe reaping. The client is copied into the
+/// returned handle.
 Container run(DockerClient client, const ContainerRequest& request);
 
 } // namespace testcontainers

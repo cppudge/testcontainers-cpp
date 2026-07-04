@@ -165,7 +165,10 @@ Container run(const ContainerRequest& request) {
 }
 
 Container run(DockerClient client, const ContainerRequest& request) {
-    detail::Reaper::instance().ensure_started();
+    // Boot the reaper on the daemon the CALLER chose, not the environment one —
+    // otherwise a remote-endpoint run would start Ryuk locally (or fail with no
+    // local daemon) and the remote containers would never be watched.
+    detail::Reaper::instance().ensure_started(client);
     return detail::Runner::run(client, request);
 }
 

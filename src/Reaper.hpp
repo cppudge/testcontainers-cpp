@@ -70,12 +70,25 @@ public:
     /// is no crash-safe reaping on Windows — matching testcontainers-dotnet).
     /// Otherwise starts Ryuk and opens the persistent control connection exactly
     /// once. Throws DockerError on failure (so callers fail loudly rather than
-    /// silently leaking).
+    /// silently leaking). This overload targets the environment daemon
+    /// (DockerClient::from_environment()).
     void ensure_started();
+
+    /// As above, but starts Ryuk on the daemon `client` points at — used by
+    /// `run(DockerClient, ...)` so a caller-supplied endpoint gets its reaper on
+    /// THAT daemon, not the environment one. Singleton residual: the process-
+    /// global reaper binds to the FIRST daemon it is started against; later
+    /// calls against a different daemon are no-ops (labels applied, no reaping).
+    void ensure_started(DockerClient& client);
 
 private:
     Reaper();
     ~Reaper();
+
+    /// The actual bootstrap (Ryuk start + filter registration + ACK) against
+    /// `client`'s daemon. Assumes `mutex_` is held and `started_` is false;
+    /// sets `started_` on success (including the skip paths).
+    void start_locked(DockerClient& client);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
