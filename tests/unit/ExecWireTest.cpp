@@ -16,7 +16,7 @@
 // Tests in this file (DockerClient::exec wire behavior against a canned
 // loopback responder; no Docker daemon):
 //   ExecWire.StdinRequestsConnectionUpgrade - exec with stdin_data sends "Connection: Upgrade" + "Upgrade: tcp" on the start request (replacing the default "Connection: close"), and the 200 fallback (a daemon that ignores the upgrade) still returns the demuxed output — stdin is fed after the header without breaking the body read.
-//   ExecWire.NoStdinSendsPlainStart - exec WITHOUT stdin does not ask for an upgrade (the raw-stream switch stays scoped to the stdin path).
+//   ExecWire.NoStdinAlsoRequestsUpgrade - exec WITHOUT stdin sends the same upgrade headers (CLI parity; the non-upgraded exec-start response is never terminated by some daemons - observed on a Windows-containers 29.1.5), and a 200 from a daemon that ignores the upgrade still delivers the demuxed body.
 //   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
 
 namespace {
@@ -98,7 +98,7 @@ TEST(ExecWire, StdinRequestsConnectionUpgrade) {
     EXPECT_FALSE(contains(start_request, "Connection: close")) << start_request;
 }
 
-TEST(ExecWire, NoStdinSendsPlainStart) {
+TEST(ExecWire, NoStdinAlsoRequestsUpgrade) {
     CannedHttpServer server(std::vector<std::vector<std::string>>{
         {http_response(200, "OK", frame(1, "out"))},
         {exec_created()},
@@ -108,12 +108,19 @@ TEST(ExecWire, NoStdinSendsPlainStart) {
 
     const ExecResult res = client.exec("abc", {"echo", "out"});
 
+    // A daemon that ignores the upgrade answers 200 — the HTTP-body path
+    // still delivers the demuxed output.
     EXPECT_EQ(res.stdout_data, "out");
     const auto by_connection = server.requests_by_connection();
     ASSERT_FALSE(by_connection.empty());
     ASSERT_FALSE(by_connection[0].empty());
-    // No stdin — no upgrade request; the body read path is the plain one.
-    EXPECT_FALSE(contains(by_connection[0][0], "Upgrade: tcp")) << by_connection[0][0];
+    const std::string& start_request = by_connection[0][0];
+    // Every exec start hijacks like the docker CLI does, stdin or not: some
+    // daemons never terminate a NON-upgraded exec-start response (observed on
+    // a Windows-containers 29.1.5 — the body read hung waiting for an EOF
+    // that never came), while the upgraded stream is closed on exec exit.
+    EXPECT_TRUE(contains(start_request, "Connection: Upgrade\r\n")) << start_request;
+    EXPECT_TRUE(contains(start_request, "Upgrade: tcp\r\n")) << start_request;
 }
 
 TEST(ExecWire, UpgradedStreamReadsRaw) {

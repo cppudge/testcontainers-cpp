@@ -614,16 +614,20 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
 
     auto req = make_request<http::string_body>(http::verb::post, start_target, host);
     req.set(http::field::content_type, "application/json");
-    if (opts.stdin_data) {
-        // Ask the daemon to switch the connection to a raw bidirectional
-        // stream (101 UPGRADED) — how the docker CLI attaches stdin. Without
-        // the upgrade, HTTP-aware intermediaries (Docker Desktop's named-pipe
-        // proxy) treat client bytes sent after the completed POST as the start
-        // of the NEXT request and drop them: stdin (and its EOF) never reaches
-        // the container, even though a direct daemon connection tolerates it.
-        req.set(http::field::connection, "Upgrade");
-        req.set(http::field::upgrade, "tcp");
-    }
+    // ALWAYS ask the daemon to switch the connection to a raw bidirectional
+    // stream (101 UPGRADED) — the docker CLI runs every exec start this way,
+    // stdin or not, and the road less traveled is broken in real daemons:
+    // (1) HTTP-aware intermediaries (Docker Desktop's named-pipe proxy) treat
+    //     client bytes sent after a completed non-upgraded POST as the start
+    //     of the NEXT request and drop them — stdin and its EOF never arrive;
+    // (2) the Windows-containers daemon (observed on 29.1.5) never terminates
+    //     the NON-upgraded exec-start response: the output arrives but the
+    //     body read then waits forever for a close that never comes (pinned
+    //     by a CI hang dump; the upgraded stream IS closed on exec exit).
+    // A daemon that ignores the upgrade still answers 200 and the HTTP-body
+    // read path below handles it.
+    req.set(http::field::connection, "Upgrade");
+    req.set(http::field::upgrade, "tcp");
     req.body() = start_body;
     req.prepare_payload();
 
@@ -699,7 +703,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     http::response_parser<http::string_body> parser;
     parser.body_limit(boost::none);
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
-                   /*accept_upgraded=*/opts.stdin_data.has_value());
+                   /*accept_upgraded=*/true);
     // Stdin goes in only AFTER the response header: the connection is now the
     // raw hijacked stream end to end (see feed_stdin).
     feed_stdin(*transport, stream, exec_id, opts);
@@ -708,7 +712,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     transport->set_io_timeout(std::nullopt);
     std::string body;
     if (parser.get().result_int() == 101) {
-        // Upgraded (the stdin path): the exec stream arrives raw on the
+        // Upgraded (the normal path): the exec stream arrives raw on the
         // connection, not as an HTTP body; the header parse may already have
         // pulled some of it into `buffer`.
         const auto leftover = buffer.data();
@@ -774,14 +778,14 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     parser.body_limit(boost::none);
 
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
-                   /*accept_upgraded=*/opts.stdin_data.has_value());
+                   /*accept_upgraded=*/true);
     // Stdin goes in only AFTER the response header (see feed_stdin).
     feed_stdin(*transport, stream, exec_id, opts);
     // Streaming exec output idles until the command writes the next chunk —
     // waiting indefinitely is the intended behavior from here on.
     transport->set_io_timeout(std::nullopt);
     if (parser.get().result_int() == 101) {
-        // Upgraded (the stdin path): raw stream, not an HTTP body (see the
+        // Upgraded (the normal path): raw stream, not an HTTP body (see the
         // non-streaming overload).
         const auto leftover = buffer.data();
         docker::stream_raw_to_consumer(

@@ -102,10 +102,14 @@ cooperative stop via the consumer — run it on your own thread). TTY containers
 pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 
 **Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data) plus a
-streaming overload (`exec(cmd, opts, consumer)`). Exec-with-stdin requests a connection
-upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) and
-feeds stdin only AFTER the response header — both required through Docker Desktop's named-pipe
-proxy, which drops client bytes sent after the POST on a non-upgraded connection. Stdin EOF:
+streaming overload (`exec(cmd, opts, consumer)`). EVERY exec start requests a connection
+upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) —
+docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops client bytes
+sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never
+terminate a non-upgraded exec-start response at all (observed on a Windows-containers 29.1.5:
+output arrived, the EOF never did — CI hang pinned by a procdump stack). A daemon that ignores
+the upgrade answers 200 and the HTTP-body read handles it. Stdin is fed only AFTER the
+response header. Stdin EOF:
 TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirrors go-winio's
 `CloseWrite` (flush, then a zero-length message — message-mode pipes only, which is what every
 real daemon serves); TLS cannot half-close, so exec-with-stdin throws up front there (Go's
