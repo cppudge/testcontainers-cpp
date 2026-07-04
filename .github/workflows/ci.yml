@@ -141,7 +141,7 @@ jobs:
       # runner-image upgrade cannot silently hollow this job out). Full gtest
       # output names every [ RUN ] test case so a hang points at its culprit.
       #
-      # The tests run under a 15-minute watchdog: on expiry a FULL process
+      # The tests run under a 10-minute watchdog: on expiry a FULL process
       # dump is captured with Sysinternals procdump and uploaded as an
       # artifact (with the exe+pdb) so the hang can be debugged locally
       # (WinDbg: `~*k` for all thread stacks). The step timeout stays above
@@ -150,10 +150,10 @@ jobs:
         timeout-minutes: 25
         run: |
           $p = Start-Process -FilePath ./build/ninja/bin/tc_integration_tests.exe -NoNewWindow -PassThru
-          if ($p.WaitForExit(15 * 60 * 1000)) {
+          if ($p.WaitForExit(10 * 60 * 1000)) {
             exit $p.ExitCode
           }
-          Write-Warning "integration tests still running after 15 min - capturing a full dump of PID $($p.Id)"
+          Write-Warning "integration tests still running after 10 min - capturing a full dump of PID $($p.Id)"
           Invoke-WebRequest https://download.sysinternals.com/files/Procdump.zip -OutFile procdump.zip
           Expand-Archive procdump.zip -DestinationPath procdump
           ./procdump/procdump64.exe -accepteula -ma $p.Id hung-integration.dmp

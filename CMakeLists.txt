@@ -42,6 +42,13 @@ endif()
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
+if(WIN32)
+    # Boost.Asio wants the target Windows version; without it every Asio TU
+    # warns "Please define _WIN32_WINNT..." and falls back to a Windows 7
+    # target. 0x0A00 = Windows 10, the oldest OS a supported Docker engine
+    # runs on.
+    add_compile_definitions(_WIN32_WINNT=0x0A00)
+endif()
 
 # ===== Dependencies (provided by Conan / CMakeDeps) =====
 find_package(Boost REQUIRED)            # header-only Beast + Asio
