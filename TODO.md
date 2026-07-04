@@ -156,8 +156,31 @@ review are recorded here so they aren't lost between milestones.
   (c) `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` ARE handled now — by the TLS transport
   (`src/docker/TlsConfig.hpp`, see the TLS item), not by host resolution itself.
   (`src/docker/DockerHost.cpp`, `src/docker/HostResolve.hpp`)
-- **One connection per request** — `request()` opens/closes a transport each call
-  (no keep-alive / pooling).
+- **Connection reuse: scoped keep-alive sessions (done), no global pool (by decision)** —
+  `request()` still opens/closes a transport per call by default, but `DockerClient::Session`
+  (RAII, per instance) opts consecutive **idempotent (GET/HEAD)** requests into reusing one
+  kept-alive connection; `wait_until_ready` wraps its whole polling loop in one, so the ~200ms
+  readiness polls stop paying a fresh connect (a TCP/TLS handshake on remote daemons) each tick.
+  Staleness handling: a reused connection that died while idle (failed write, or EOF/reset
+  before a complete response — an EOF on a never-populated parser must NOT masquerade as an
+  empty success) is retried ONCE on a fresh connection; a `TransportTimeoutError` is never
+  retried (it would double the io budget); non-GET requests always use a fresh connection, so
+  a retry can never replay a side effect (double-create). Unit-tested against a multi-response
+  canned server (`tests/unit/DockerClientSessionTest.cpp`).
+  **Decision rationale (2026-07-05, from reading the reference implementations):**
+  testcontainers-rs/bollard deliberately POOLS NOTHING (`pool_max_idle_per_host(0)` on every
+  connector) — connection-per-request is the reference-validated correctness-first default;
+  testcontainers-java/docker-java runs an unbounded shared HttpClient5 pool with stale
+  validation OFF (`validateAfterInactivity=-1`), which is exactly the source of its podman
+  stale-socket breakage (testcontainers-java#7310) and idle-fd growth (moby#45539). dockerd
+  itself never idle-closes (only `ReadHeaderTimeout` is set in moby), but intermediaries
+  (Docker Desktop proxy, NAT, podman's ~5s idle close) do — hence retry-once + GET-only reuse.
+  A full shared pool (option B: keyed by endpoint behind a shared_ptr, ~90s idle TTL, 4-8 idle
+  per endpoint, retry-once-only-on-unsent) is DEFERRED until a real remote-TCP/TLS use case
+  shows up; sessions capture most of the practical win with a fraction of the risk.
+  Residual: a Session makes that one instance non-thread-safe while active (documented; copies
+  stay independent). (`include/testcontainers/docker/DockerClient.hpp`,
+  `src/docker/DockerClient.cpp`, `src/WaitStrategies.cpp`)
 - **port + inspect getters (done, uncached)** — `Container` now has `get_host_port` (IPv4-preferred),
   explicit `get_host_port_ipv4`/`get_host_port_ipv6` (throw if that family isn't published),
   `first_mapped_port()` (the FIRST exposed port via the order recorded by `start()`, else the
@@ -373,8 +396,9 @@ review are recorded here so they aren't lost between milestones.
 ## Open / not yet built
 - **`expose_host_ports` (Tier 2.8)** — deferred by decision (sshd sidecar + reverse tunnel via an
   optional libssh2 dependency). See the tech-debt item above.
-- **Connection pooling / keep-alive** — `request()` opens one connection per call. See the
-  "One connection per request" item above.
+- **Full connection pool (option B)** — deferred by decision until a real remote-TCP/TLS use
+  case appears; scoped keep-alive sessions cover the polling hot path today. See the
+  "Connection reuse" item above for the parameters to build it with.
 - **TLS end-to-end verification in CI** — the transport is implemented but unproven against a real
   remote TLS daemon. See the TLS item above.
 

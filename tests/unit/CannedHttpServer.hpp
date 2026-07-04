@@ -19,60 +19,81 @@
 
 namespace tcunit {
 
-/// A loopback HTTP responder: serves ONE connection per canned response (in
-/// order), each time reading until the end of the request head, writing the
-/// response verbatim, and closing. It records each request head so tests can
-/// assert the method + path sequence. Exactly enough server to drive
-/// DockerClient's status/parse error paths and the start orchestration.
+/// A loopback HTTP responder serving a canned script: one entry per accepted
+/// CONNECTION, each entry a list of responses served back-to-back on that
+/// connection (read a request, write the next response, repeat, then close).
+/// The single-level constructors keep the historical one-connection-per-
+/// response behavior. It records each request (head + body) globally and per
+/// connection, so tests can assert both the call sequence and which
+/// connection carried it. Exactly enough server to drive DockerClient's
+/// status/parse error paths, the start orchestration, and keep-alive reuse.
 class CannedHttpServer {
 public:
     explicit CannedHttpServer(std::string response)
         : CannedHttpServer(std::vector<std::string>{std::move(response)}) {}
 
+    /// One connection per response (each connection serves a single exchange).
     explicit CannedHttpServer(std::vector<std::string> responses)
+        : CannedHttpServer(to_connections(std::move(responses))) {}
+
+    /// Full script: connections[i] is the ordered response list served on the
+    /// i-th accepted connection.
+    explicit CannedHttpServer(std::vector<std::vector<std::string>> connections)
         : acceptor_(ioc_, boost::asio::ip::tcp::endpoint(
                               boost::asio::ip::make_address("127.0.0.1"), 0)),
           port_(acceptor_.local_endpoint().port()),
-          thread_([this, responses = std::move(responses)] {
+          thread_([this, connections = std::move(connections)] {
               namespace asio = boost::asio;
-              for (const std::string& response : responses) {
+              for (const std::vector<std::string>& responses : connections) {
                   boost::system::error_code ec;
                   asio::ip::tcp::socket socket(ioc_);
                   acceptor_.accept(socket, ec);
                   if (ec || stop_) {
-                      return; // destroyed before every response was requested
+                      return; // destroyed before every connection was made
                   }
-                  // Read the request head, then drain the body per its
-                  // Content-Length. Draining matters: closing the socket with
-                  // unread request bytes pending makes the OS send RST, which
-                  // kills the response in flight (bites on bodied PUTs/POSTs).
-                  std::string request;
-                  char buf[1024];
-                  while (request.find("\r\n\r\n") == std::string::npos) {
-                      const std::size_t n = socket.read_some(asio::buffer(buf), ec);
-                      if (ec) {
-                          break;
+                  {
+                      const std::lock_guard<std::mutex> lock(mutex_);
+                      requests_by_connection_.emplace_back();
+                  }
+                  for (const std::string& response : responses) {
+                      // Read the request head, then drain the body per its
+                      // Content-Length. Draining matters: closing the socket
+                      // with unread request bytes pending makes the OS send
+                      // RST, which kills the response in flight (bites on
+                      // bodied PUTs/POSTs).
+                      std::string request;
+                      char buf[1024];
+                      while (request.find("\r\n\r\n") == std::string::npos) {
+                          const std::size_t n = socket.read_some(asio::buffer(buf), ec);
+                          if (ec) {
+                              break;
+                          }
+                          request.append(buf, n);
                       }
-                      request.append(buf, n);
-                  }
-                  const std::size_t head_end = request.find("\r\n\r\n");
-                  if (head_end != std::string::npos) {
-                      // Hazard: a request announcing MORE Content-Length than the
-                      // client actually sends deadlocks here (we block reading,
-                      // the client blocks waiting for the response). Our client
-                      // always sends exactly what it announces, and chunked
-                      // encoding is not supported.
+                      const std::size_t head_end = request.find("\r\n\r\n");
+                      if (head_end == std::string::npos) {
+                          break; // client closed / gave up on this connection
+                      }
+                      // Hazard: a request announcing MORE Content-Length than
+                      // the client actually sends deadlocks here (we block
+                      // reading, the client blocks waiting for the response).
+                      // Our client always sends exactly what it announces, and
+                      // chunked encoding is not supported.
                       const std::size_t total = head_end + 4 + content_length(request);
                       while (!ec && request.size() < total) {
                           const std::size_t n = socket.read_some(asio::buffer(buf), ec);
                           request.append(buf, n);
                       }
+                      {
+                          const std::lock_guard<std::mutex> lock(mutex_);
+                          requests_.push_back(request);
+                          requests_by_connection_.back().push_back(request);
+                      }
+                      asio::write(socket, asio::buffer(response), ec);
+                      if (ec) {
+                          break;
+                      }
                   }
-                  {
-                      const std::lock_guard<std::mutex> lock(mutex_);
-                      requests_.push_back(request);
-                  }
-                  asio::write(socket, asio::buffer(response), ec);
                   boost::system::error_code ignore;
                   socket.shutdown(asio::ip::tcp::socket::shutdown_both, ignore);
                   socket.close(ignore);
@@ -108,7 +129,24 @@ public:
         return requests_;
     }
 
+    /// The raw requests grouped by the connection that carried them, in accept
+    /// order (an accepted connection appears even if it served no request).
+    std::vector<std::vector<std::string>> requests_by_connection() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return requests_by_connection_;
+    }
+
 private:
+    static std::vector<std::vector<std::string>> to_connections(
+        std::vector<std::string> responses) {
+        std::vector<std::vector<std::string>> connections;
+        connections.reserve(responses.size());
+        for (std::string& response : responses) {
+            connections.push_back({std::move(response)});
+        }
+        return connections;
+    }
+
     /// The Content-Length announced in `head`, or 0 when absent (our client
     /// always sends it on bodied requests; chunked encoding is not supported).
     static std::size_t content_length(const std::string& head) {
@@ -136,6 +174,7 @@ private:
     std::atomic<bool> stop_{false};
     mutable std::mutex mutex_;
     std::vector<std::string> requests_;
+    std::vector<std::vector<std::string>> requests_by_connection_;
     std::thread thread_;
 };
 

@@ -189,50 +189,107 @@ Response DockerClient::request_with_io_timeout(
     std::optional<std::chrono::milliseconds> io_timeout) {
     docker::TransportTimeouts timeouts = timeouts_;
     timeouts.io = io_timeout;
-    auto transport = docker::connect(host_, timeouts);
-    docker::TransportStream stream{*transport};
 
-    auto req = make_request<http::string_body>(http::string_to_verb(std::string(method)),
-                                               std::string(target), host_);
-    for (const auto& [key, value] : headers) {
-        req.set(key, value);
-    }
-    if (!body.empty()) {
-        req.body().assign(body);
-    }
-    req.prepare_payload();
+    // Session reuse applies to idempotent requests only: a stale-connection
+    // retry (below) can then never replay a side effect, and non-GET requests
+    // behave exactly as without a session (fresh connection, close after).
+    const bool reuse = session_enabled_ && (method == "GET" || method == "HEAD");
 
-    boost::system::error_code ec;
-    http::write(stream, req, ec);
-    if (ec) {
-        docker::throw_transport_error("Failed to send request to Docker (" + std::string(method) +
-                                          " " + std::string(target) + "): " + ec.message(),
-                                      ec);
+    // One request/response exchange on `transport`. Sets `conn_reusable` to
+    // whether the connection may serve another request afterwards (the whole
+    // response arrived and neither side asked to close).
+    const auto perform = [&](docker::ITransport& transport, bool keep_alive,
+                             bool& conn_reusable) -> Response {
+        conn_reusable = false;
+        docker::TransportStream stream{transport};
+
+        auto req = make_request<http::string_body>(http::string_to_verb(std::string(method)),
+                                                   std::string(target), host_);
+        req.keep_alive(keep_alive);
+        for (const auto& [key, value] : headers) {
+            req.set(key, value);
+        }
+        if (!body.empty()) {
+            req.body().assign(body);
+        }
+        req.prepare_payload();
+
+        boost::system::error_code ec;
+        http::write(stream, req, ec);
+        if (ec) {
+            docker::throw_transport_error("Failed to send request to Docker (" +
+                                              std::string(method) + " " + std::string(target) +
+                                              "): " + ec.message(),
+                                          ec);
+        }
+
+        boost::beast::flat_buffer buffer;
+        // Disable Beast's default 1 MiB body limit: Docker archive (copy-from)
+        // and log bodies can comfortably exceed it, and we always read the
+        // whole body.
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(boost::none);
+        http::read(stream, buffer, parser, ec);
+        if (ec == http::error::end_of_stream && !parser.is_done()) {
+            // EOF before a complete response. Without this check a stale
+            // kept-alive connection (peer closed it while idle) would read a
+            // never-populated parser and masquerade as an empty success.
+            throw DockerError("Failed to read response from Docker (" + std::string(method) +
+                              " " + std::string(target) +
+                              "): connection closed before the response completed");
+        }
+        if (ec && ec != http::error::end_of_stream) {
+            docker::throw_transport_error("Failed to read response from Docker (" +
+                                              std::string(method) + " " + std::string(target) +
+                                              "): " + ec.message(),
+                                          ec);
+        }
+        auto& res = parser.get();
+        // end_of_stream means the peer is closing (EOF-delimited body).
+        conn_reusable = keep_alive && res.keep_alive() && ec != http::error::end_of_stream;
+
+        Response out;
+        out.status_code = static_cast<int>(res.result_int());
+        out.reason = std::string(res.reason());
+        out.body = std::move(res.body());
+        for (const auto& field : res) {
+            out.headers.emplace_back(std::string(field.name_string()), std::string(field.value()));
+        }
+        return out;
+    };
+
+    // Fast path: reuse the session's kept-alive connection. The daemon (or an
+    // intermediary — Docker Desktop's proxy, NAT, podman's ~5s idle close) may
+    // have closed it while idle, which surfaces as a failed write or an EOF/
+    // reset on read; since only idempotent requests get here, retry ONCE on a
+    // fresh connection. A deadline expiry is NOT staleness — retrying would
+    // silently double the io budget — so it propagates.
+    if (reuse && session_transport_) {
+        auto transport = session_transport_;
+        transport->set_io_timeout(timeouts.io);
+        try {
+            bool conn_reusable = false;
+            Response out = perform(*transport, /*keep_alive*/ true, conn_reusable);
+            if (!conn_reusable) {
+                session_transport_.reset();
+            }
+            return out;
+        } catch (const TransportTimeoutError&) {
+            session_transport_.reset();
+            throw;
+        } catch (const DockerError&) {
+            session_transport_.reset(); // stale — fall through to a fresh connection
+        }
     }
 
-    boost::beast::flat_buffer buffer;
-    // Disable Beast's default 1 MiB body limit: Docker archive (copy-from) and
-    // log bodies can comfortably exceed it, and we always read the whole body.
-    http::response_parser<http::string_body> parser;
-    parser.body_limit(boost::none);
-    http::read(stream, buffer, parser, ec);
-    if (ec && ec != http::error::end_of_stream) {
-        docker::throw_transport_error("Failed to read response from Docker (" +
-                                          std::string(method) + " " + std::string(target) +
-                                          "): " + ec.message(),
-                                      ec);
+    std::shared_ptr<docker::ITransport> transport = docker::connect(host_, timeouts);
+    bool conn_reusable = false;
+    Response out = perform(*transport, /*keep_alive*/ reuse, conn_reusable);
+    if (reuse && conn_reusable) {
+        session_transport_ = std::move(transport);
+    } else {
+        transport->close();
     }
-    auto& res = parser.get();
-
-    Response out;
-    out.status_code = static_cast<int>(res.result_int());
-    out.reason = std::string(res.reason());
-    out.body = std::move(res.body());
-    for (const auto& field : res) {
-        out.headers.emplace_back(std::string(field.name_string()), std::string(field.value()));
-    }
-
-    transport->close();
     return out;
 }
 

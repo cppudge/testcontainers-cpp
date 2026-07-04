@@ -129,6 +129,7 @@ if(BUILD_TESTING)
         tests/unit/TransportTimeoutTest.cpp
         tests/unit/ErrorModelTest.cpp
         tests/unit/RunnerTest.cpp
+        tests/unit/DockerClientSessionTest.cpp
         tests/unit/ContainerPortTest.cpp
         tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp

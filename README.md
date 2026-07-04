@@ -165,6 +165,10 @@ Lessons from auditing the FFI fork ([`docs/03`](docs/03-cxx-interface-evaluation
   destruction); everything else is a value.
 - **Structured errors** (exception hierarchy carrying HTTP status / container id), since we own
   the HTTP layer.
+- **Connection-per-request, no global pool** — the correctness-first choice the Rust reference
+  (bollard) also makes; the Java reference's shared unvalidated pool is the source of its
+  stale-connection and fd-leak issues. Hot polling loops opt into scoped keep-alive reuse via
+  `DockerClient::Session` (idempotent requests only, retry-once on a stale connection).
 
 ## Project layout
 

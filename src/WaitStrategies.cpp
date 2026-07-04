@@ -344,6 +344,12 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
 void wait_until_ready(DockerClient& client, const std::string& id,
                       const std::vector<WaitFor>& waits, std::chrono::milliseconds timeout,
                       bool tty) {
+    // Readiness polling re-inspects / re-fetches logs every ~200ms; reuse one
+    // daemon connection for the whole wait instead of paying a fresh connect
+    // (a TCP/TLS handshake on remote daemons) per poll. Every daemon call in
+    // the polls is a GET, so the session's stale-connection retry is safe.
+    const DockerClient::Session session(client);
+
     const Clock::time_point deadline = Clock::now() + timeout;
 
     for (const WaitFor& w : waits) {

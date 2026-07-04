@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,6 +20,10 @@
 
 namespace testcontainers {
 
+namespace docker {
+class ITransport;
+}
+
 /// An HTTP response from the Docker Engine API.
 struct Response {
     int status_code = 0;
@@ -34,13 +39,63 @@ struct Response {
 
 /// A synchronous client for the Docker Engine HTTP API.
 ///
-/// Each request opens a fresh connection to the daemon over the resolved
-/// transport (unix socket / Windows named pipe / TCP). Connection reuse and
-/// streaming endpoints are added in later milestones.
+/// By default each request opens a fresh connection to the daemon over the
+/// resolved transport (unix socket / Windows named pipe / TCP / TLS) — the
+/// correctness-first choice the Rust reference (bollard) also makes. A scoped
+/// `Session` opts one instance into keep-alive reuse for consecutive GETs
+/// (used internally by the wait-strategy polling loops, where the per-request
+/// TCP/TLS handshake actually costs); a process-wide connection pool is
+/// deliberately NOT provided (see TODO.md for the analysis).
 class DockerClient {
 public:
     /// Construct a client for an explicitly resolved host.
     explicit DockerClient(DockerHost host);
+
+    /// While alive, THIS client instance keeps its daemon connection open
+    /// across requests and reuses it for consecutive idempotent (GET/HEAD)
+    /// calls — non-idempotent requests keep opening fresh connections, so a
+    /// stale-connection retry can never replay a side effect. If a reused
+    /// connection turns out dead (the daemon or an intermediary closed it
+    /// while idle), the request is transparently retried ONCE on a fresh
+    /// connection; a deadline expiry (TransportTimeoutError) is never
+    /// retried. The cached connection is closed when the session ends.
+    ///
+    /// Sessions make the instance stateful: do not share one DockerClient
+    /// instance across threads while a session is active (copies made while
+    /// a session is active do not inherit it and stay independent).
+    class Session {
+    public:
+        explicit Session(DockerClient& client)
+            : client_(client), owns_(!client.session_enabled_) {
+            client_.session_enabled_ = true;
+        }
+        ~Session() {
+            if (owns_) {
+                client_.end_session();
+            }
+        }
+        Session(const Session&) = delete;
+        Session& operator=(const Session&) = delete;
+
+    private:
+        DockerClient& client_;
+        bool owns_; ///< nested sessions: only the outermost one tears down
+    };
+
+    // The session connection is per-instance state: copies share the host
+    // config but never the live connection (two instances writing into one
+    // socket would interleave requests).
+    DockerClient(const DockerClient& other) : host_(other.host_), timeouts_(other.timeouts_) {}
+    DockerClient& operator=(const DockerClient& other) {
+        host_ = other.host_;
+        timeouts_ = other.timeouts_;
+        session_enabled_ = false;
+        session_transport_.reset();
+        return *this;
+    }
+    DockerClient(DockerClient&&) = default;
+    DockerClient& operator=(DockerClient&&) = default;
+    ~DockerClient() = default;
 
     /// Construct a client using DockerHost::resolve().
     static DockerClient from_environment();
@@ -222,8 +277,17 @@ private:
                                      const std::vector<std::pair<std::string, std::string>>& headers,
                                      std::optional<std::chrono::milliseconds> io_timeout);
 
+    /// Drop the session state: the cached connection (if any) is closed by its
+    /// destructor. Called by the outermost Session's destructor.
+    void end_session() noexcept {
+        session_enabled_ = false;
+        session_transport_.reset();
+    }
+
     DockerHost host_;
     docker::TransportTimeouts timeouts_;
+    bool session_enabled_ = false; ///< a Session is active on this instance
+    std::shared_ptr<docker::ITransport> session_transport_; ///< kept-alive connection
 };
 
 } // namespace testcontainers
