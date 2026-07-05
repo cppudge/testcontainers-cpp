@@ -149,7 +149,8 @@ TEST_F(BuildImage, BuildFailureCarriesStepOutput) {
     } catch (const DockerError& e) {
         const std::string what = e.what();
         EXPECT_NE(what.find("boom-diagnostic-marker"), std::string::npos) << what;
-        EXPECT_NE(what.find("7"), std::string::npos) << what; // the daemon's exit-code line
+        // The daemon's own failure line, e.g. "... returned a non-zero code: 7".
+        EXPECT_NE(what.find("non-zero code: 7"), std::string::npos) << what;
     }
 }
 
