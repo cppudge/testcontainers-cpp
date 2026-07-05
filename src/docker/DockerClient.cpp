@@ -176,19 +176,19 @@ DockerClient::DockerClient(DockerHost host) : host_(std::move(host)) {}
 DockerClient DockerClient::from_environment() { return DockerClient(DockerHost::resolve()); }
 
 const std::string& DockerClient::api_prefix() {
-    if (!api_prefix_) {
-        // One unversioned round-trip; the daemon's version middleware stamps
-        // its newest supported version on the reply. A daemon that answers
-        // without a parsable Api-Version (or a non-2xx) is cached as "no pin":
-        // unversioned paths keep working against its default version. A
-        // TRANSPORT failure propagates uncached — the call that triggered the
-        // negotiation would have failed the same way, and a later retry gets a
-        // fresh chance to negotiate.
-        const Response res = request("GET", "/_ping");
-        const std::string negotiated = docker::negotiate_api_version(res.header("Api-Version"));
-        api_prefix_ = negotiated.empty() ? std::string{} : "/v" + negotiated;
+    if (api_prefix_) {
+        return *api_prefix_;
     }
-    return *api_prefix_;
+    // One unversioned round-trip; the daemon's version middleware stamps its
+    // newest supported version on the reply. A daemon that answers without a
+    // parsable Api-Version (or a non-2xx) is cached as "no pin": unversioned
+    // paths keep working against its default version. A TRANSPORT failure
+    // propagates uncached — the call that triggered the negotiation would
+    // have failed the same way, and a later retry gets a fresh chance to
+    // negotiate.
+    const Response res = request("GET", "/_ping");
+    const std::string negotiated = docker::negotiate_api_version(res.header("Api-Version"));
+    return api_prefix_.emplace(negotiated.empty() ? std::string{} : "/v" + negotiated);
 }
 
 std::string DockerClient::versioned(std::string_view target) {
