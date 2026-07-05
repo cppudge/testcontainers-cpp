@@ -3,7 +3,7 @@
 # testcontainers is a static library whose third-party dependencies are
 # PRIVATE, so consumers still need their link lines ($<LINK_ONLY:...> in the
 # exported target). The dependency TARGET NAMES below follow Conan's CMakeDeps
-# naming (boost::boost, Libssh2::libssh2, ...) — the supported non-Conan
+# naming (Boost::headers, Libssh2::libssh2, ...) — the supported non-Conan
 # consumption path is therefore "deps provided by `conan install`, library
 # consumed via this config". Purely system-package dependency resolution would
 # need find modules that reproduce those target names.

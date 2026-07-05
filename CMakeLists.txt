@@ -142,9 +142,12 @@ target_include_directories(testcontainers
 target_compile_features(testcontainers PUBLIC cxx_std_20)
 
 # Third-party deps are implementation details: keep them PRIVATE so the public
-# headers stay free of Boost/OpenSSL/json/libarchive types.
+# headers stay free of Boost/OpenSSL/json/libarchive types. Boost::headers,
+# not the umbrella boost::boost: Beast/Asio/System are header-only, and against
+# a COMPILED Boost (dependency options are the consumer's, e.g. on ConanCenter)
+# the umbrella would drag every built libboost_* into consumers' link lines.
 target_link_libraries(testcontainers PRIVATE
-    boost::boost
+    Boost::headers
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -215,7 +218,7 @@ if(BUILD_TESTING)
         # StreamReadTest drives the internal Beast streaming loop over a fake
         # ITransport; TransportTimeoutTest runs in-process Asio loopback servers
         # (allowed in a test translation unit — not a public header).
-        boost::boost
+        Boost::headers
         GTest::gtest
         GTest::gtest_main
     )
@@ -252,7 +255,7 @@ if(BUILD_TESTING)
         testcontainers::testcontainers
         # RedisMvpTest / ReaperTest open raw TCP sockets with Boost.Asio (allowed
         # in a test translation unit — it is not a public header).
-        boost::boost
+        Boost::headers
         # ReaperTest parses raw inspect JSON to read back a container's labels.
         nlohmann_json::nlohmann_json
         # TlsTransportTest runs an in-process Boost.Asio TLS echo server and

@@ -5,6 +5,7 @@ from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMakeToolchain, CMake, cmake_layout, CMakeDeps
 from conan.tools.files import copy, load, rmdir
+from conan.tools.scm import Version
 
 
 class TestcontainersCppRecipe(ConanFile):
@@ -82,6 +83,18 @@ class TestcontainersCppRecipe(ConanFile):
         # them); require the profile to say so rather than fail mid-build.
         if self.settings.compiler.get_safe("cppstd"):
             check_min_cppstd(self, 20)
+        # Keep in sync with packaging/conan-center/.../conanfile.py.
+        minimum_versions = {
+            "gcc": "12",
+            "clang": "15",
+            "apple-clang": "15",
+            "msvc": "193",
+        }
+        minimum = minimum_versions.get(str(self.settings.compiler))
+        if minimum and Version(self.settings.compiler.version) < minimum:
+            raise ConanInvalidConfiguration(
+                f"{self.name} requires C++20; {self.settings.compiler} "
+                f"{self.settings.compiler.version} < {minimum} is not supported")
         if self.options.get_safe("shared") and self.settings.os == "Windows":
             # The sources carry no dllexport/visibility macros yet, so a
             # Windows DLL would export nothing and consumers could not link.
