@@ -60,6 +60,12 @@ bool is_session_fatal(int rc) {
            rc == LIBSSH2_ERROR_BAD_SOCKET;
 }
 
+/// Serializes libssh2_init/libssh2_exit (refcounted but not thread-safe).
+std::mutex& global_init_mu() {
+    static std::mutex mu;
+    return mu;
+}
+
 /// An SSH connection to the sshd sidecar carrying the remote port forwards.
 ///
 /// libssh2 multiplexes every forward over ONE session on ONE socket, and a
@@ -74,8 +80,15 @@ public:
     SshTunnel(const std::string& host, std::uint16_t port, const std::string& user,
               const std::string& password)
         : ssh_sock_(io_) {
-        static std::once_flag init_once;
-        std::call_once(init_once, [] { libssh2_init(0); });
+        // Paired with libssh2_exit() in the destructor (and the ctor failure
+        // path): libssh2 refcounts init/exit, so the last tunnel releases the
+        // crypto backend's global allocations — a fire-once init would hold
+        // them until process exit and read as a leak under LeakSanitizer.
+        // The pair is refcounted but NOT thread-safe, hence the mutex.
+        {
+            const std::lock_guard<std::mutex> lk(global_init_mu());
+            libssh2_init(0);
+        }
 
         try {
             tcp::resolver resolver(io_);
@@ -117,6 +130,8 @@ public:
                 libssh2_session_free(session_);
                 session_ = nullptr;
             }
+            const std::lock_guard<std::mutex> lk(global_init_mu());
+            libssh2_exit();
             throw;
         }
 
@@ -147,6 +162,9 @@ public:
         libssh2_session_free(session_);
         boost::system::error_code ignored;
         ssh_sock_.close(ignored);
+        // Release the refcounted global init taken in the constructor.
+        const std::lock_guard<std::mutex> lk(global_init_mu());
+        libssh2_exit();
     }
 
     /// Ask sshd to listen on `port` (all interfaces — GatewayPorts=yes) and
