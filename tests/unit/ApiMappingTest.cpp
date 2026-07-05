@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstddef>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -62,8 +65,11 @@
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
 //   ApiMapping.PullNonStringErrorThrows - a pull stream entry whose "error" is not a string still throws DockerError (dumped payload), never a raw json type_error.
-//   ApiMapping.BuildErrorThrows - a build stream containing error/errorDetail throws DockerError.
-//   ApiMapping.BuildSuccessDoesNotThrow - a clean build progress stream does not throw.
+//   ApiMapping.BuildScannerEmitsStreamLines - BuildStreamScanner reassembles lines split across feed() chunks and hands each "stream" payload to the consumer in order.
+//   ApiMapping.BuildScannerErrorThrowsWithOutputTail - finish() after an error line throws DockerError carrying the daemon message, the preceding step output, and the tag as resource_id.
+//   ApiMapping.BuildScannerErrorDetailWithoutError - an errorDetail-only line still records the failure.
+//   ApiMapping.BuildScannerTrailingLineWithoutNewline - a final error line with no trailing newline is scanned by finish().
+//   ApiMapping.BuildScannerSuccessAndJunkLines - blank and non-JSON lines are ignored and a clean stream does not throw (no consumer attached).
 //   ApiMapping.BuildQueryBasics - build_build_query always emits t, dockerfile and forcerm=1 (a failed build's intermediate container must not leak) and includes nocache/pull/target only when set.
 //   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
 //   ApiMapping.ExpectStringFieldExtracts - expect_string_field returns the named top-level string field.
@@ -79,6 +85,7 @@ using testcontainers::docker::build_exec_create_body;
 using testcontainers::docker::build_network_create_body;
 using testcontainers::docker::build_volume_create_body;
 using testcontainers::docker::BuildOptions;
+using testcontainers::docker::BuildStreamScanner;
 using testcontainers::docker::expect_string_field;
 using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
@@ -86,7 +93,6 @@ using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::split_image;
-using testcontainers::docker::throw_if_build_error;
 using testcontainers::docker::throw_if_pull_error;
 
 namespace {
@@ -764,20 +770,80 @@ TEST(ApiMapping, PullNonStringErrorThrows) {
     EXPECT_THROW(throw_if_pull_error(stream, "alpine:3.20"), DockerError);
 }
 
-TEST(ApiMapping, BuildErrorThrows) {
-    const std::string stream = R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
+TEST(ApiMapping, BuildScannerEmitsStreamLines) {
+    // Lines split across feed() chunks at arbitrary byte boundaries must still
+    // come out whole and in order.
+    const std::string stream = R"({"stream":"Step 1/2 : FROM alpine:3.20\n"})"
+                               "\n"
+                               R"({"stream":"step-output\n"})"
+                               "\n"
+                               R"({"stream":"Successfully built abc123\n"})"
+                               "\n";
+
+    std::vector<std::string> seen;
+    BuildStreamScanner scanner("img:latest", [&](std::string_view s) { seen.emplace_back(s); });
+    // Feed in awkward 7-byte chunks to exercise the carry-over buffer.
+    for (std::size_t at = 0; at < stream.size(); at += 7) {
+        scanner.feed(std::string_view(stream).substr(at, 7));
+    }
+    EXPECT_NO_THROW(scanner.finish());
+
+    ASSERT_EQ(seen.size(), 3u);
+    EXPECT_EQ(seen[0], "Step 1/2 : FROM alpine:3.20\n");
+    EXPECT_EQ(seen[1], "step-output\n");
+    EXPECT_EQ(seen[2], "Successfully built abc123\n");
+}
+
+TEST(ApiMapping, BuildScannerErrorThrowsWithOutputTail) {
+    // The daemon's error message AND the step output that preceded it must both
+    // be in the exception — that output is what makes the failure debuggable.
+    const std::string stream = R"({"stream":"Step 2/2 : RUN make\n"})"
+                               "\n"
+                               R"({"stream":"make: missing-dep not found\n"})"
                                "\n"
                                R"({"errorDetail":{"message":"boom"},"error":"boom"})"
                                "\n";
-    EXPECT_THROW(throw_if_build_error(stream), DockerError);
+
+    BuildStreamScanner scanner("img:latest");
+    scanner.feed(stream);
+    try {
+        scanner.finish();
+        FAIL() << "finish() must throw on a recorded build error";
+    } catch (const DockerError& e) {
+        const std::string what = e.what();
+        EXPECT_NE(what.find("boom"), std::string::npos) << what;
+        EXPECT_NE(what.find("missing-dep not found"), std::string::npos) << what;
+        EXPECT_EQ(e.resource_id(), "img:latest");
+    }
 }
 
-TEST(ApiMapping, BuildSuccessDoesNotThrow) {
-    const std::string stream = R"({"stream":"Step 1/2 : FROM alpine:3.20"})"
-                               "\n"
-                               R"({"stream":"Successfully built abc123"})"
-                               "\n";
-    EXPECT_NO_THROW(throw_if_build_error(stream));
+TEST(ApiMapping, BuildScannerErrorDetailWithoutError) {
+    // Some daemons emit only errorDetail; a non-string payload is dumped.
+    BuildStreamScanner scanner("img:latest");
+    scanner.feed(R"({"errorDetail":{"message":"detail-only"}})"
+                 "\n");
+    EXPECT_THROW(scanner.finish(), DockerError);
+}
+
+TEST(ApiMapping, BuildScannerTrailingLineWithoutNewline) {
+    // A truncated stream whose final (error) line lacks the trailing '\n' must
+    // still be scanned by finish() — otherwise the failure would be swallowed.
+    BuildStreamScanner scanner("img:latest");
+    scanner.feed(R"({"error":"cut off"})"); // no newline
+    EXPECT_THROW(scanner.finish(), DockerError);
+}
+
+TEST(ApiMapping, BuildScannerSuccessAndJunkLines) {
+    // No consumer attached, a blank and a non-JSON line in the stream: nothing
+    // throws on a successful build (best-effort parse, same as the pull scan).
+    BuildStreamScanner scanner("img:latest");
+    scanner.feed(R"({"stream":"Step 1/1 : FROM alpine:3.20\n"})"
+                 "\n"
+                 "\n"
+                 "this is not json\n"
+                 R"({"stream":"Successfully built abc123\n"})"
+                 "\n");
+    EXPECT_NO_THROW(scanner.finish());
 }
 
 TEST(ApiMapping, BuildQueryBasics) {

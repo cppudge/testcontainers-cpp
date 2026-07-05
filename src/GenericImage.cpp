@@ -7,12 +7,18 @@
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
+#include "testcontainers/docker/DockerClient.hpp"
 
 namespace testcontainers {
 
 GenericImage GenericImage::from_reference(const std::string& reference) {
     const auto [image, tag] = docker::split_image(reference);
     return GenericImage(image, tag);
+}
+
+bool GenericImage::exists(const std::string& name, const std::string& tag) {
+    DockerClient client = DockerClient::from_environment();
+    return client.image_exists(name + ":" + tag);
 }
 
 CreateContainerSpec GenericImage::build_spec() const {

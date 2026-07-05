@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <string_view>
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/Error.hpp"
@@ -18,8 +19,12 @@
 //   BuildImage.BuildFailureThrows - a Dockerfile whose RUN exits non-zero makes build() throw DockerError.
 //   BuildImage.ContextFilesBuildArgsNoCache - with_data + with_file land in the build context (COPY works), with_build_arg reaches RUN, with_no_cache still builds.
 //   BuildImage.DockerfilePathAndTargetStage - with_dockerfile(host path) + with_target build only the named multi-stage target; with_pull refreshes the base.
+//   BuildImage.BuildLogConsumerStreamsSteps - with_build_log_consumer receives the step banners and a RUN step's own echo output during build().
+//   BuildImage.BuildFailureCarriesStepOutput - a failing RUN's own output (echoed before the exit) appears in the DockerError message, not just the daemon's exit-code line.
+//   BuildImage.ExistsReflectsLocalImages - GenericImage::exists is true for a just-built tag and false for a name that was never built.
 //   WindowsBuildImage.BuildsAndRunsInlineDockerfile - the same round-trip on a Windows daemon: a nanoserver-based Dockerfile bakes a file, the built image types it out.
 //   WindowsBuildImage.BuildFailureThrows - a failing RUN (cmd `exit 3`) in a Windows build surfaces as DockerError.
+//   WindowsBuildImage.ExistsAndBuildLogConsumer - on a Windows daemon: the consumer sees build output and GenericImage::exists reflects the built tag.
 
 using namespace testcontainers;
 
@@ -115,6 +120,50 @@ TEST_F(BuildImage, DockerfilePathAndTargetStage) {
         << "the extra stage must not have built; stdout was: " << out.stdout_data;
 }
 
+TEST_F(BuildImage, BuildLogConsumerStreamsSteps) {
+    // no_cache forces the RUN to really execute, so its echo output is in the
+    // stream (a cache hit would replace it with "Using cache").
+    std::string log;
+    GenericBuildableImage("tc-build-consumer", "latest")
+        .with_dockerfile_string("FROM alpine:3.20\n"
+                                "RUN echo consumer-sees-this\n")
+        .with_no_cache()
+        .with_build_log_consumer([&](std::string_view line) { log.append(line); })
+        .build();
+
+    EXPECT_NE(log.find("Step"), std::string::npos) << "log was: " << log;
+    EXPECT_NE(log.find("consumer-sees-this"), std::string::npos) << "log was: " << log;
+}
+
+TEST_F(BuildImage, BuildFailureCarriesStepOutput) {
+    // The failing RUN echoes a marker before exiting: that output — the part a
+    // human needs to debug the step — must be inside the thrown error, even
+    // with no consumer attached.
+    try {
+        GenericBuildableImage("tc-build-fail-output", "latest")
+            .with_dockerfile_string("FROM alpine:3.20\n"
+                                    "RUN echo boom-diagnostic-marker && exit 7\n")
+            .with_no_cache()
+            .build();
+        FAIL() << "build() must throw on a failing RUN";
+    } catch (const DockerError& e) {
+        const std::string what = e.what();
+        EXPECT_NE(what.find("boom-diagnostic-marker"), std::string::npos) << what;
+        EXPECT_NE(what.find("7"), std::string::npos) << what; // the daemon's exit-code line
+    }
+}
+
+TEST_F(BuildImage, ExistsReflectsLocalImages) {
+    // Self-contained: build the probe image here rather than depending on
+    // another test's tag.
+    GenericBuildableImage("tc-exists-probe", "latest")
+        .with_dockerfile_string("FROM alpine:3.20\n")
+        .build();
+
+    EXPECT_TRUE(GenericImage::exists("tc-exists-probe"));
+    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built", "v9"));
+}
+
 // The Windows mirror. The FROM line must name the tag matching the daemon
 // host's build (process isolation), so the Dockerfile is assembled at runtime.
 class WindowsBuildImage : public tcit::WindowsEngineTest {
@@ -150,4 +199,20 @@ TEST_F(WindowsBuildImage, BuildFailureThrows) {
                      .with_dockerfile_string(from_line() + "RUN exit 3")
                      .build(),
                  DockerError);
+}
+
+TEST_F(WindowsBuildImage, ExistsAndBuildLogConsumer) {
+    // One mirror covers both new pieces on the Windows daemon: the consumer
+    // sees the streamed step output, and exists() reflects the built tag.
+    std::string log;
+    GenericBuildableImage("tc-exists-probe-win", "latest")
+        .with_dockerfile_string(from_line() + "USER ContainerAdministrator\n"
+                                              "RUN echo win-consumer-sees-this\n")
+        .with_no_cache()
+        .with_build_log_consumer([&](std::string_view line) { log.append(line); })
+        .build();
+
+    EXPECT_NE(log.find("win-consumer-sees-this"), std::string::npos) << "log was: " << log;
+    EXPECT_TRUE(GenericImage::exists("tc-exists-probe-win"));
+    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built-win", "v9"));
 }

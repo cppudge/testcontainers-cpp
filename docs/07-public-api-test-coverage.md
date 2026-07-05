@@ -42,6 +42,7 @@ suite.
 |---|---|---|---|---|
 | `GenericImage(image, tag)` | ✅ | ✅ | ✅ many (RedisMvp, WaitStrategies, Exec, …) | ✅ via `nanoserver()` (WindowsContainer.*, etc.) |
 | `from_reference(ref)` | ✅ | ✅ | ✅ PortGetters.*, Volumes.PopulateThenReadBack, Lifecycle.* | ❌ |
+| `exists(name, tag)` (static) | ✅ | ✅ | ✅ BuildImage.ExistsReflectsLocalImages | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
 | `start()` | ✅ | ✅ | ✅ RedisMvp.StartsConnectsAndAutoRemoves (+ most suites) | ✅ WindowsContainer.EchoExitsWithExpectedLogs |
 | `to_request()` | ✅ | ✅ | ❌ (unit-tested; every `start()` uses it internally) | ❌ |
 | `with_exposed_port` | ✅ | ✅ | ✅ RedisMvp, PortGetters.*, WaitStrategies.* | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
@@ -109,7 +110,8 @@ Notes:
 | `with_target` | ✅ | ✅ | ✅ BuildImage.DockerfilePathAndTargetStage | ❌ |
 | `with_no_cache` | ✅ | ✅ | ✅ BuildImage.ContextFilesBuildArgsNoCache | ❌ |
 | `with_pull` | ✅ | ✅ | ✅ BuildImage.DockerfilePathAndTargetStage | ❌ |
-| `build()` | ✅ | ✅ | ✅ BuildImage.BuildsAndRunsInlineDockerfile, BuildImage.BuildFailureThrows | ✅ WindowsBuildImage.BuildsAndRunsInlineDockerfile, WindowsBuildImage.BuildFailureThrows |
+| `with_build_log_consumer` | ✅ | ✅ | ✅ BuildImage.BuildLogConsumerStreamsSteps | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
+| `build()` | ✅ | ✅ | ✅ BuildImage.BuildsAndRunsInlineDockerfile, BuildImage.BuildFailureThrows, BuildImage.BuildFailureCarriesStepOutput | ✅ WindowsBuildImage.BuildsAndRunsInlineDockerfile, WindowsBuildImage.BuildFailureThrows |
 | `descriptor()`, getters | ✅ | ✅ | unit-tested | unit-tested |
 
 The full builder surface (host-path Dockerfile, file/dir/in-memory context,
@@ -318,7 +320,8 @@ Network / Volume) on Windows.
 | `server_os()` | ✅ | ✅ | ✅ WindowsEngine tag resolution | ✅ WindowsEngine (implicitly, via is_windows_engine) |
 | `is_windows_engine()` | ✅ | ✅ | ✅ EngineGuard | ✅ EngineGuard |
 | `pull_image(image, auth?)` | ✅ | ✅ | ✅ DockerLifecycle, AuthTest, DockerLogs | ❌ (pull happens via create in Windows tests) |
-| `build_image(tar, opts)` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
+| `image_exists(reference)` | ✅ | ✅ | ✅ via GenericImage::exists (BuildImage.ExistsReflectsLocalImages) | ✅ via GenericImage::exists (WindowsBuildImage.ExistsAndBuildLogConsumer) |
+| `build_image(tar, opts[, consumer])` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
 | `create_container(spec, auth?)` | ✅ | ✅ | ✅ DockerLifecycle.*, ReaperTest, DockerLogs | ❌ (Windows tests go through `start()`) |
 | `start_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.CreateStartInspectRemove | ❌ |
 | `inspect_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.*, Compose.RestartKeepsProjectAlive | ❌ (indirect via is_running) |

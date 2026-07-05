@@ -1,10 +1,18 @@
 #pragma once
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace testcontainers::docker {
+
+/// Receives decoded build output as the daemon emits it: one call per "stream"
+/// payload of the build progress (typically a single newline-terminated line,
+/// e.g. "Step 2/4 : RUN make\n" or a RUN step's own output). Called from the
+/// thread running the build. An empty function disables streaming delivery.
+using BuildLogConsumer = std::function<void(std::string_view)>;
 
 /// Options for `POST /build` — the knobs the Docker build endpoint accepts that
 /// we surface. A plain, copyable value type (std only): the tar build context is

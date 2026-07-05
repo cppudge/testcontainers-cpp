@@ -389,28 +389,89 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
     docker::throw_if_pull_error(res.body, image);
 }
 
-void DockerClient::build_image(const std::string& context_tar,
-                               const docker::BuildOptions& options) {
+bool DockerClient::image_exists(const std::string& reference) {
+    // The reference goes into the path verbatim: image references cannot contain
+    // characters that break a path, and the daemon's route accepts ':' and '/'.
+    const Response res = request("GET", versioned("/images/" + reference + "/json"));
+    if (res.status_code == 200) {
+        return true;
+    }
+    if (res.status_code == 404) {
+        return false;
+    }
+    throw_status_error("image_exists('" + reference + "')", res, reference);
+}
+
+void DockerClient::build_image(const std::string& context_tar, const docker::BuildOptions& options,
+                               const docker::BuildLogConsumer& consumer) {
     const std::string target =
         versioned("/build" + docker::build_build_query(
                                  options, [](const std::string& v) { return url_encode(v); }));
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/x-tar"}};
+
+    // Stream the response instead of buffering it: build output is decoded as
+    // the daemon emits it, so a consumer sees steps live and a failure carries
+    // the output that preceded it (mirrors follow_logs).
+    auto transport = docker::connect(host_, timeouts_);
+    docker::TransportStream stream{*transport};
+
+    auto req = make_request<http::string_body>(http::verb::post, target, host_);
+    req.set(http::field::content_type, "application/x-tar");
+    req.body() = context_tar;
+    req.prepare_payload();
+
+    boost::system::error_code ec;
+    http::write(stream, req, ec);
+    if (ec) {
+        transport->close();
+        docker::throw_transport_error(
+            "Failed to send request to Docker (POST " + target + "): " + ec.message(), ec);
+    }
+
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::buffer_body> parser;
+    parser.body_limit(boost::none);
+
+    const std::string context = "build_image('" + options.tag + "')";
+    read_ok_header(*transport, stream, buffer, parser, context, options.tag);
 
     // The legacy /build endpoint streams output only when a step produces it —
     // a silent RUN step can legitimately idle for minutes — so widen the io
     // deadline instead of misreading a quiet build as a wedged daemon.
-    std::optional<std::chrono::milliseconds> io = timeouts_.io;
-    if (io) {
-        io = std::max(*io, std::chrono::milliseconds(std::chrono::minutes(10)));
+    if (timeouts_.io) {
+        transport->set_io_timeout(
+            std::max(*timeouts_.io, std::chrono::milliseconds(std::chrono::minutes(10))));
     }
-    const Response res = request_with_io_timeout("POST", target, context_tar, headers, io);
-    if (res.status_code != 200) {
-        throw_status_error("build_image('" + options.tag + "')", res, options.tag);
+
+    docker::BuildStreamScanner scanner(options.tag, consumer);
+    std::array<char, 8192> buf{};
+    while (!parser.is_done()) {
+        parser.get().body().data = buf.data();
+        parser.get().body().size = buf.size();
+
+        http::read_some(stream, buffer, parser, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {}; // the buffer filled up: not an error, just keep reading
+        }
+        if (ec) {
+            break; // handled below, after the decoded output is accounted for
+        }
+        const std::size_t n = buf.size() - parser.get().body().size;
+        if (n != 0) {
+            scanner.feed(std::string_view(buf.data(), n));
+        }
     }
-    // Docker streams build output as newline-delimited JSON and returns 200 even
-    // on a build failure, embedding the error in the stream.
-    docker::throw_if_build_error(res.body, options.tag);
+    transport->close();
+
+    // A build error recorded in the stream beats a transport error: when the
+    // daemon reset the connection right after reporting the failure, the
+    // failure is the diagnosis. finish() throws it (with the output tail).
+    scanner.finish();
+    if (ec) {
+        // The body ended early without a build error: surface the transport
+        // problem (a deadline expiry becomes TransportTimeoutError).
+        docker::throw_transport_error(context + " failed reading the build stream: " + ec.message(),
+                                      ec);
+    }
 }
 
 std::string DockerClient::create_container(const CreateContainerSpec& spec,

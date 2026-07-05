@@ -8,6 +8,7 @@
 
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/GenericImage.hpp"
+#include "testcontainers/docker/BuildOptions.hpp"
 
 namespace testcontainers {
 
@@ -98,6 +99,15 @@ public:
         return *this;
     }
 
+    /// Stream the build output live: `consumer` is called from build() with each
+    /// decoded output line (step banners and the steps' own stdout/stderr) as
+    /// the daemon emits it, instead of the output staying invisible until the
+    /// build ends. Errors are still thrown as DockerError either way.
+    GenericBuildableImage& with_build_log_consumer(docker::BuildLogConsumer consumer) {
+        build_log_consumer_ = std::move(consumer);
+        return *this;
+    }
+
     // --- Getters ---
 
     const std::string& name() const noexcept { return name_; }
@@ -111,6 +121,9 @@ public:
     const std::string& target() const noexcept { return target_; }
     bool no_cache() const noexcept { return no_cache_; }
     bool pull() const noexcept { return pull_; }
+    const docker::BuildLogConsumer& build_log_consumer() const noexcept {
+        return build_log_consumer_;
+    }
 
     /// Build the image (tagged `<name>:<tag>`) from the configured Dockerfile and
     /// build context, and return a runnable `GenericImage` for it. Throws
@@ -126,6 +139,7 @@ private:
     std::string target_;
     bool no_cache_ = false;
     bool pull_ = false;
+    docker::BuildLogConsumer build_log_consumer_; ///< empty = no streaming delivery
 };
 
 } // namespace testcontainers

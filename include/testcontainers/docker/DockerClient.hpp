@@ -169,10 +169,19 @@ public:
     void pull_image(const std::string& image,
                     const std::optional<RegistryAuth>& auth = std::nullopt);
 
+    /// `GET /images/{reference}/json` — true when `reference` ("name[:tag]" or an
+    /// image ID) resolves on the daemon. A purely local check: no registry is
+    /// contacted. Throws DockerError on any daemon error other than a 404.
+    bool image_exists(const std::string& reference);
+
     /// `POST /build` — build an image from a tar build context (`context_tar`, an
-    /// `application/x-tar` body). Blocks until the build finishes. Throws DockerError
-    /// on a non-200 status or a build error embedded in the streamed output.
-    void build_image(const std::string& context_tar, const docker::BuildOptions& options);
+    /// `application/x-tar` body). Blocks until the build finishes. The build
+    /// progress is decoded as it arrives: each output line goes to `consumer`
+    /// (when set), so long builds are observable live. Throws DockerError on a
+    /// non-200 status or a build error embedded in the streamed output — the
+    /// error message carries the tail of the step output for debugging.
+    void build_image(const std::string& context_tar, const docker::BuildOptions& options,
+                     const docker::BuildLogConsumer& consumer = {});
 
     // --- Container lifecycle ---
 

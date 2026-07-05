@@ -102,7 +102,10 @@ Builders: `with_cmd`, `with_entrypoint`, `with_env`, `with_label`, `with_exposed
 `with_working_dir`, `with_user`, `with_privileged`, `with_mount` (`Mount::bind/volume/tmpfs`),
 `with_healthcheck` (`Healthcheck::cmd_shell/cmd`), `with_copy_to`, `with_network`,
 `with_network_alias`, `with_static_ipv4`, `with_container_name`, `with_registry_auth`,
-`with_wait`, `with_startup_timeout`.
+`with_wait`, `with_startup_timeout`. Statics: `from_reference("name[:tag]")` and
+`exists(name, tag)` — a local-presence probe, e.g. to skip an expensive
+`GenericBuildableImage::build()` (which can stream its output live via
+`with_build_log_consumer`) when a previous run already built the image.
 
 Wait strategies — `with_wait(wait_for::…)`: `stdout_message` / `stderr_message` / `log`,
 `seconds` / `millis`, `exit` / `exit_code`, `healthy` (Docker healthcheck), `http(path, port, status)`.

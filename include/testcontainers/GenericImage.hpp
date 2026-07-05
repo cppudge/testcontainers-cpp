@@ -49,6 +49,20 @@ public:
     /// GenericBuildableImage, prefer its `build()`, which returns a GenericImage.
     static GenericImage from_reference(const std::string& reference);
 
+    /// True when the image `<name>:<tag>` is already present on the daemon —
+    /// a purely local check (`GET /images/{ref}/json`), no registry is
+    /// contacted. Useful to skip an expensive `GenericBuildableImage::build()`
+    /// when a previous run already produced the image:
+    /// ```cpp
+    /// GenericImage img = GenericImage::exists("app", "v1")
+    ///                        ? GenericImage("app", "v1")
+    ///                        : app_buildable.build();
+    /// ```
+    /// Note: presence says nothing about freshness — if the build inputs can
+    /// change under the same tag, derive the tag from a hash of the inputs.
+    /// Throws DockerError when the daemon cannot be reached or errors.
+    static bool exists(const std::string& name, const std::string& tag = "latest");
+
     // --- In-place builders (single overload; chains on lvalues and temporaries) ---
 
     GenericImage& with_exposed_port(ContainerPort p) {

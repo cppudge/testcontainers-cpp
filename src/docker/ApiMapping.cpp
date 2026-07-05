@@ -597,34 +597,71 @@ std::string build_build_query(const BuildOptions& options,
     return query;
 }
 
-void throw_if_build_error(const std::string& build_stream, const std::string& tag) {
+BuildStreamScanner::BuildStreamScanner(std::string tag, BuildLogConsumer consumer)
+    : tag_(std::move(tag)), consumer_(std::move(consumer)) {}
+
+void BuildStreamScanner::feed(std::string_view chunk) {
+    pending_.append(chunk);
     std::size_t start = 0;
-    while (start < build_stream.size()) {
-        const std::size_t nl = build_stream.find('\n', start);
-        const std::string line =
-            build_stream.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
-        start = (nl == std::string::npos) ? build_stream.size() : nl + 1;
-        if (line.empty()) {
-            continue;
+    for (std::size_t nl = pending_.find('\n', start); nl != std::string::npos;
+         nl = pending_.find('\n', start)) {
+        scan_line(pending_.substr(start, nl - start));
+        start = nl + 1;
+    }
+    pending_.erase(0, start);
+}
+
+void BuildStreamScanner::finish() {
+    if (!pending_.empty()) {
+        // A well-formed stream ends in '\n'; scan a trailing fragment anyway so
+        // a truncated error line is not lost.
+        scan_line(pending_);
+        pending_.clear();
+    }
+    if (error_) {
+        std::string message = "image build failed: " + *error_;
+        if (!tail_.empty()) {
+            message += "\n--- build output (tail) ---\n" + tail_;
         }
-        try {
-            const nlohmann::json json = nlohmann::json::parse(line);
-            // ANY "error" key means the build failed (see throw_if_pull_error).
-            if (const auto err = json.find("error"); err != json.end()) {
-                throw DockerError("image build failed: " +
-                                      (err->is_string() ? err->get<std::string>() : err->dump()),
-                                  std::nullopt, tag);
+        throw DockerError(message, std::nullopt, tag_);
+    }
+}
+
+void BuildStreamScanner::scan_line(const std::string& line) {
+    if (line.empty()) {
+        return;
+    }
+    try {
+        const nlohmann::json json = nlohmann::json::parse(line);
+        if (const auto out = json.find("stream"); out != json.end() && out->is_string()) {
+            const std::string& text = out->get_ref<const std::string&>();
+            if (consumer_) {
+                consumer_(text);
             }
-            if (const auto detail = json.find("errorDetail"); detail != json.end()) {
-                const auto msg = detail->is_object() ? detail->find("message") : detail->end();
-                throw DockerError("image build failed: " + (msg != detail->end() && msg->is_string()
-                                                                ? msg->get<std::string>()
-                                                                : detail->dump()),
-                                  std::nullopt, tag);
+            // Keep only the LAST few KB: with a failing RUN the useful context
+            // is the output right before the error, not the whole build log.
+            constexpr std::size_t kTailCap = 4096;
+            tail_.append(text);
+            if (tail_.size() > kTailCap) {
+                tail_.erase(0, tail_.size() - kTailCap);
             }
-        } catch (const nlohmann::json::parse_error&) {
-            // Best-effort parse: a non-JSON line (shouldn't happen) is ignored.
+            return;
         }
+        if (error_) {
+            return; // first error wins; later lines only get drained
+        }
+        // ANY "error" key means the build failed (see throw_if_pull_error).
+        if (const auto err = json.find("error"); err != json.end()) {
+            error_ = err->is_string() ? err->get<std::string>() : err->dump();
+            return;
+        }
+        if (const auto detail = json.find("errorDetail"); detail != json.end()) {
+            const auto msg = detail->is_object() ? detail->find("message") : detail->end();
+            error_ = (msg != detail->end() && msg->is_string()) ? msg->get<std::string>()
+                                                                : detail->dump();
+        }
+    } catch (const nlohmann::json::parse_error&) {
+        // Best-effort parse: a non-JSON line (shouldn't happen) is ignored.
     }
 }
 

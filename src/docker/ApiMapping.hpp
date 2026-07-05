@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -100,10 +101,37 @@ std::pair<std::string, std::string> split_image(const std::string& image);
 std::string build_build_query(const BuildOptions& options,
                               const std::function<std::string(const std::string&)>& encode);
 
-/// Scan a `POST /build` progress stream (newline-delimited JSON) and throw
-/// DockerError if any line reports an error ("error"/"errorDetail"). Docker
-/// returns HTTP 200 even on build failure (the error is embedded in the stream),
-/// exactly like the pull stream. `tag` becomes the error's resource_id().
-void throw_if_build_error(const std::string& build_stream, const std::string& tag = {});
+/// Incremental scanner for the `POST /build` progress stream (newline-delimited
+/// JSON; Docker answers HTTP 200 even when the build fails, embedding the error
+/// in the stream, exactly like the pull stream). feed() it body chunks as they
+/// arrive — lines may be split across chunks arbitrarily. Each complete line's
+/// "stream" payload is handed to the consumer (when set) and remembered in a
+/// bounded tail; an "error"/"errorDetail" line records the failure. finish()
+/// scans a trailing unterminated line and, if the build failed, throws
+/// DockerError carrying the daemon's message plus the tail of the step output
+/// (so the failing RUN's own stdout/stderr is in the exception even when no
+/// consumer was attached). `tag` becomes the error's resource_id().
+///
+/// Pure chunk-in/lines-out logic — unit-testable without a daemon.
+class BuildStreamScanner {
+public:
+    explicit BuildStreamScanner(std::string tag, BuildLogConsumer consumer = {});
+
+    /// Consume the next chunk of the response body.
+    void feed(std::string_view chunk);
+
+    /// Flush a trailing unterminated line and throw DockerError if the stream
+    /// reported a build error. Call exactly once, after the last feed().
+    void finish();
+
+private:
+    void scan_line(const std::string& line);
+
+    std::string tag_;
+    BuildLogConsumer consumer_;
+    std::string pending_;              ///< carry-over of an incomplete trailing line
+    std::string tail_;                 ///< bounded tail of "stream" output (error context)
+    std::optional<std::string> error_; ///< first "error"/"errorDetail" seen
+};
 
 } // namespace testcontainers::docker

@@ -74,7 +74,7 @@ GenericImage GenericBuildableImage::build() const {
     options.pull = pull_;
 
     DockerClient client = DockerClient::from_environment();
-    client.build_image(context_tar, options);
+    client.build_image(context_tar, options, build_log_consumer_);
 
     // The image now exists locally tagged "<name>:<tag>"; hand back a runnable
     // GenericImage for it (start() finds it locally, no pull).
