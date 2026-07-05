@@ -32,6 +32,13 @@
 
 using namespace testcontainers;
 
+// Everything below lives in an anonymous namespace so this alias — not the
+// global ::wait(2) that macOS system headers drag in — is what unqualified
+// `wait::` finds. At global scope the using-directive above would make the
+// name ambiguous on macOS.
+namespace {
+namespace wait = testcontainers::wait;
+
 TEST(GenericImage, DefaultsTagAndTimeout) {
     const GenericImage img("redis");
     EXPECT_EQ(img.image(), "redis");
@@ -333,3 +340,5 @@ TEST(GenericImage, ExposedHostPortsAccumulateAndSnapshot) {
     // the snapshot must NOT have touched the create spec.
     EXPECT_TRUE(req.spec.extra_hosts.empty());
 }
+
+} // namespace

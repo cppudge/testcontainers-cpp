@@ -1,7 +1,7 @@
 import os
 import re
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration
+from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMakeToolchain, CMake, cmake_layout, CMakeDeps
 from conan.tools.files import copy, load, rmdir
@@ -64,7 +64,10 @@ class TestcontainersCppRecipe(ConanFile):
     def set_version(self):
         # Single source of truth: TC_VERSION_FULL in CMakeLists.txt.
         cml = load(self, os.path.join(self.recipe_folder, "CMakeLists.txt"))
-        self.version = re.search(r'set\(TC_VERSION_FULL "([^"]+)"\)', cml).group(1)
+        match = re.search(r'set\s*\(\s*TC_VERSION_FULL\s+"([^"]+)"', cml)
+        if not match:
+            raise ConanException("could not parse TC_VERSION_FULL from CMakeLists.txt")
+        self.version = match.group(1)
 
     def config_options(self):
         if self.settings.os == "Windows":
@@ -89,7 +92,7 @@ class TestcontainersCppRecipe(ConanFile):
         cmake_layout(self)
 
     def build_requirements(self):
-        if not self.conf.get("tools.build:skip_test", default=False):
+        if not self.conf.get("tools.build:skip_test", default=False, check_type=bool):
             self.test_requires("gtest/1.14.0")
 
     def generate(self):
@@ -105,6 +108,11 @@ class TestcontainersCppRecipe(ConanFile):
         tc.cache_variables["SKIP_CONAN_PROVIDER_CMAKE"] = True
         # A package build ships the library only — examples are for the repo.
         tc.cache_variables["TC_BUILD_EXAMPLES"] = False
+        # Pin the GNUInstallDirs layout: on non-Debian 64-bit Linux it would
+        # pick lib64, and then the package()'s rmdir("lib/cmake") and the
+        # default cpp_info.libdirs=["lib"] would both point past the real
+        # install location.
+        tc.cache_variables["CMAKE_INSTALL_LIBDIR"] = "lib"
         if self.conf.get("tools.build:skip_test", default=False, check_type=bool):
             # CMakeToolchain sets this itself on current Conan versions;
             # keep it explicit so the behavior doesn't hang on that detail.

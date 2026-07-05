@@ -33,6 +33,13 @@
 
 using namespace testcontainers;
 
+// Everything below lives in an anonymous namespace so this alias — not the
+// global ::wait(2) that macOS system headers drag in — is what unqualified
+// `wait::` finds. At global scope the using-directive above would make the
+// name ambiguous on macOS.
+namespace {
+namespace wait = testcontainers::wait;
+
 TEST(WaitFor, StdoutMessageFactory) {
     const WaitFor w = wait_for::stdout_message("ready", 3);
     ASSERT_TRUE(std::holds_alternative<wait::LogMessage>(w));
@@ -234,3 +241,5 @@ TEST(WaitFor, OccurrenceCounterMatchesAfterPrefixTrim) {
     counter.feed("ker");
     EXPECT_EQ(counter.count(), 1u);
 }
+
+} // namespace
