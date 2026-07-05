@@ -42,7 +42,7 @@ suite.
 |---|---|---|---|---|
 | `GenericImage(image, tag)` | ✅ | ✅ | ✅ many (RedisMvp, WaitStrategies, Exec, …) | ✅ via `nanoserver()` (WindowsContainer.*, etc.) |
 | `from_reference(ref)` | ✅ | ✅ | ✅ PortGetters.*, Volumes.PopulateThenReadBack, Lifecycle.* | ❌ |
-| `exists(reference)` (static) | ✅ | ✅ | ✅ BuildImage.ExistsReflectsLocalImages | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
+| `exists(name, tag)` (static) | ✅ | ✅ | ✅ BuildImage.ExistsReflectsLocalImages | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
 | `start()` | ✅ | ✅ | ✅ RedisMvp.StartsConnectsAndAutoRemoves (+ most suites) | ✅ WindowsContainer.EchoExitsWithExpectedLogs |
 | `to_request()` | ✅ | ✅ | ❌ (unit-tested; every `start()` uses it internally) | ❌ |
 | `with_exposed_port` | ✅ | ✅ | ✅ RedisMvp, PortGetters.*, WaitStrategies.* | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
