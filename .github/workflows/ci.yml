@@ -233,6 +233,13 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: conan-${{ runner.os }}-
 
+      # Kernels with 32-bit mmap ASLR entropy break ASan's shadow mapping:
+      # the process dies in a recursive "AddressSanitizer:DEADLYSIGNAL" loop
+      # (observed locally on a 6.6 kernel — a 100%-CPU hang, not a crash).
+      # 28 bits is the documented workaround.
+      - name: Lower mmap ASLR entropy for ASan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
       - name: Configure
         run: >
           cmake --preset ninja
