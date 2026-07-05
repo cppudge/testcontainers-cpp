@@ -22,6 +22,7 @@
 //   Volumes.RaiiRemovesOnDrop - a Volume removes its backing volume at scope exit, so inspect_volume on the captured name throws NotFoundError afterward.
 //   Volumes.BuilderSetsNameAndLabels - Volume::builder() name + labels land on the created volume (asserted via inspect()).
 //   Volumes.PopulateThenReadBack - populate() seeds a file into the volume via a helper container; a fresh container mounting the volume reads the seeded content back, proving it persisted in the volume.
+//   Volumes.PopulateDirSource - populate() with a host_dir source seeds a whole tree into the volume (nested file readable from a fresh container mounting it).
 //   WindowsVolumes.CreateInspectRemove - the same create/inspect/remove round-trip against a Windows daemon (the RAII variant is client-side logic and needs no per-engine mirror).
 //   WindowsVolumes.DataPersistsAcrossContainers - a file written into a mounted volume from inside one container survives that container's removal and is read back by a fresh container mounting the same volume. (No populate() mirror: a Windows daemon extracts archive uploads into the container's layer, bypassing mounts — populate is Linux-only, see Volume.hpp.)
 
@@ -104,6 +105,23 @@ TEST_F(Volumes, PopulateThenReadBack) {
 
     // RAII tears down the container before the volume at scope exit (a volume in
     // use cannot be removed); the helper from populate() is already gone.
+}
+
+TEST_F(Volumes, PopulateDirSource) {
+    const tcit::TempTree tree;
+    Volume v = Volume::create();
+    // Seed a whole host tree at "/media" inside the volume.
+    v.populate({CopyToContainer::host_dir(tree.path(), "/media")});
+
+    Container c = GenericImage::from_reference("alpine:3.20")
+                      .with_cmd({"sleep", "30"})
+                      .with_mount(Mount::volume(v.name(), "/data"))
+                      .start();
+
+    const ExecResult res = c.exec({"cat", "/data/media/sub/nested.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("nested-body"), std::string::npos)
+        << "seeded tree did not appear in the volume; stdout: " << res.stdout_data;
 }
 
 // The Windows mirror: the volume API itself is engine-agnostic, but the helper

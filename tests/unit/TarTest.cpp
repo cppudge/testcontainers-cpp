@@ -32,6 +32,7 @@
 //   Tar.DirSourceEntries - a host_dir source emits the target's directory chain plus every subdirectory (0755) and file (with body), sorted with parents first; empty directories are preserved.
 //   Tar.DirSourceModeAppliesToFiles - with_mode on a host_dir source applies to every file entry while directories stay 0755.
 //   Tar.DirSourceWindowsTarget - a host_dir source with a "C:\..." target roots the tree under the drive-stripped name.
+//   Tar.DirSourceTrailingSlashTarget - "/opt/data/" and "/opt/data" produce byte-identical archives (no doubled separators).
 //   Tar.MissingHostDirThrows - a host_dir source pointing at a missing path or at a regular file throws DockerError.
 
 using testcontainers::CopyToContainer;
@@ -276,6 +277,13 @@ TEST(Tar, DirSourceWindowsTarget) {
     for (const TarEntry& e : entries) {
         EXPECT_EQ(e.name.rfind("data/", 0), 0u) << e.name; // all rooted under it
     }
+}
+
+TEST(Tar, DirSourceTrailingSlashTarget) {
+    const TempTree tree;
+    const std::string with_slash = build_tar(CopyToContainer::host_dir(tree.path(), "/opt/data/"));
+    const std::string without = build_tar(CopyToContainer::host_dir(tree.path(), "/opt/data"));
+    EXPECT_EQ(with_slash, without); // same archive byte-for-byte
 }
 
 TEST(Tar, MissingHostDirThrows) {

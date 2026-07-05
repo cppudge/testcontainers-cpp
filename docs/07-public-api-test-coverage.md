@@ -193,7 +193,7 @@ Notes:
 | `name()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove | ✅ WindowsVolumes.CreateInspectRemove |
 | `remove()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove, Volumes.RaiiRemovesOnDrop | ✅ WindowsVolumes.CreateInspectRemove |
 | `inspect()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove | ✅ WindowsVolumes.CreateInspectRemove |
-| `populate(sources, …)` | ✅ | ❌ (Linux-only; archive upload lands in the layer, bypassing the mount) | ✅ Volumes.PopulateThenReadBack | n/a [a] |
+| `populate(sources, …)` | ✅ | ❌ (Linux-only; archive upload lands in the layer, bypassing the mount) | ✅ Volumes.PopulateThenReadBack, Volumes.PopulateDirSource | n/a [a] |
 | `builder()` + `create()` | ✅ | ✅ | ✅ Volumes.BuilderSetsNameAndLabels | ❌ |
 | `Builder::with_name` / `with_label` | ✅ | ✅ | ✅ Volumes.BuilderSetsNameAndLabels | ❌ |
 | `Builder::with_driver` / `with_driver_opt` | ✅ | ✅ | ❌ | ❌ |

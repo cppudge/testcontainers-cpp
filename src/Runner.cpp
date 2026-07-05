@@ -124,8 +124,10 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
         // labels, plus the copy-to descriptors (so copied content participates).
         std::string canonical = docker::build_create_body(spec).dump();
         for (const CopyToContainer& s : request.copy_to_sources) {
-            canonical +=
-                "\n" + s.target() + "\n" + (s.is_file() ? s.host_path().string() : s.bytes());
+            // Host-path sources (file or dir) contribute their path, byte
+            // sources their content.
+            canonical += "\n" + s.target() + "\n" +
+                         (s.is_file() || s.is_dir() ? s.host_path().string() : s.bytes());
         }
         const std::string hash = detail::reuse_hash(canonical);
 

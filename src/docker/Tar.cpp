@@ -124,12 +124,19 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
                           "' does not exist or is not a directory");
     }
 
+    // A trailing '/' on the target ("/opt/data/") would double the separator in
+    // every entry name; drop it so both spellings produce the same archive.
+    std::string root = base;
+    if (!root.empty() && root.back() == '/') {
+        root.pop_back();
+    }
+
     std::vector<PendingEntry> out;
     // Directory entries for the target and every intermediate component, so the
     // copy does not depend on the target chain pre-existing in the image
     // (extraction treats an already-existing directory as a no-op).
-    for (std::size_t pos = base.find('/');; pos = base.find('/', pos + 1)) {
-        const std::string component = (pos == std::string::npos) ? base : base.substr(0, pos);
+    for (std::size_t pos = root.find('/');; pos = root.find('/', pos + 1)) {
+        const std::string component = (pos == std::string::npos) ? root : root.substr(0, pos);
         if (!component.empty()) {
             out.push_back(PendingEntry{component + "/", "", 0755, true});
         }
@@ -141,8 +148,11 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
     try {
         for (const std::filesystem::directory_entry& item :
              std::filesystem::recursive_directory_iterator(dir)) {
-            const std::string rel = item.path().lexically_relative(dir).generic_string();
-            const std::string name = base.empty() ? rel : base + "/" + rel;
+            // u8string keeps entry names UTF-8 regardless of the host code page
+            // (generic_string would re-encode through the ANSI page on Windows).
+            const std::u8string rel8 = item.path().lexically_relative(dir).generic_u8string();
+            const std::string rel(rel8.begin(), rel8.end());
+            const std::string name = root.empty() ? rel : root + "/" + rel;
             if (item.is_directory()) {
                 // Not descended into when it is a symlink (iterator default);
                 // it still lands as a (possibly empty) directory.

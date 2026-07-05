@@ -136,10 +136,13 @@ TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirro
 real daemon serves); TLS cannot half-close, so exec-with-stdin throws up front there (Go's
 `tls.Conn` cannot either — the docker CLI hangs where we throw).
 
-**Copy to / from container** — `CopyToContainer` (host file or in-memory bytes, `with_mode`)
-is PUT as a single-entry USTAR tar per source (entry path ≤ 100/255 chars); the target's parent
-directory must already exist. Copy-from covers single regular files (`read_file` /
-`copy_file_from`); for trees, run `docker::extract_tar` on the raw `copy_from_container` bytes.
+**Copy to / from container** — `CopyToContainer` (host file, in-memory bytes, or a recursive
+host directory; `with_mode` applies to file entries) is PUT as a USTAR tar per source (entry
+paths ≤ 100/255 chars; the whole tree is buffered in memory). Targets may be drive-rooted
+(`C:\dir\x` ⇒ `/dir/x`). A single-file source needs a pre-existing parent directory; a
+directory source ships its own target chain (dirs 0755, empty dirs preserved, dir symlinks
+not descended). Copy-from covers single regular files (`read_file` / `copy_file_from`); for
+trees, run `docker::extract_tar` on the raw `copy_from_container` bytes.
 
 **Build from Dockerfile** (`GenericBuildableImage`) — Dockerfile from a host path or an inline
 string; context from host files/dirs (recursive walk, no `.dockerignore` filtering) and

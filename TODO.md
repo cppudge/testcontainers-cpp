@@ -76,7 +76,9 @@ when it lands (adding a short note there if it needs one).
   one tar + PUT per source (no batching); no directory-tree copy-FROM helper (use
   `extract_tar` on the raw bytes; copy-to has `CopyToContainer::host_dir`). `host_dir` does
   not descend into directory symlinks and skips non-regular files (no cycle guard needed, but
-  symlink-heavy trees copy shallower than `cp -r`).
+  symlink-heavy trees copy shallower than `cp -r`), and it buffers the entire tree in memory
+  (every file body plus the finished tar) — fine for test fixtures, wrong tool for
+  multi-gigabyte trees until the build/PUT path streams.
 - **Build from Dockerfile** — no `.dockerignore` filtering on `with_file` directory walks;
   build output is fully buffered (no live streaming consumer — could reuse the `follow_logs`
   chunked-read approach); built images are not session-labeled (not reaped). No secrets / ssh /

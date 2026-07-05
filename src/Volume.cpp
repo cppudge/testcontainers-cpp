@@ -86,12 +86,16 @@ void Volume::populate(const std::vector<CopyToContainer>& sources, const std::st
             // Rebase the (absolute) target under the mount path so it lands at that
             // path inside the volume (e.g. "/seed.txt" -> "<mount_path>/seed.txt").
             const std::string rebased_target = mount_path + source.target();
-            CopyToContainer rebased =
-                source.is_file() ? CopyToContainer::host_file(source.host_path(), rebased_target)
-                                       .with_mode(source.mode())
-                                 : CopyToContainer::content(source.bytes(), rebased_target)
-                                       .with_mode(source.mode());
-            client_.copy_to_container(helper_id, rebased);
+            CopyToContainer rebased = [&] {
+                if (source.is_dir()) {
+                    return CopyToContainer::host_dir(source.host_path(), rebased_target);
+                }
+                if (source.is_file()) {
+                    return CopyToContainer::host_file(source.host_path(), rebased_target);
+                }
+                return CopyToContainer::content(source.bytes(), rebased_target);
+            }();
+            client_.copy_to_container(helper_id, rebased.with_mode(source.mode()));
         }
     } catch (...) {
         // Always remove the helper even if a copy failed, so we never leak it.
