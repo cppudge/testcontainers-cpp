@@ -70,6 +70,7 @@
 //   ApiMapping.BuildScannerErrorDetailWithoutError - an errorDetail-only line still records the failure.
 //   ApiMapping.BuildScannerTrailingLineWithoutNewline - a final error line with no trailing newline is scanned by finish().
 //   ApiMapping.BuildScannerSuccessAndJunkLines - blank and non-JSON lines are ignored and a clean stream does not throw (no consumer attached).
+//   ApiMapping.BuildScannerTailIsBounded - the error message keeps only the LAST few KB of step output: bounded overall and ending with the most recent line.
 //   ApiMapping.BuildQueryBasics - build_build_query always emits t, dockerfile and forcerm=1 (a failed build's intermediate container must not leak) and includes nocache/pull/target only when set.
 //   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
 //   ApiMapping.ExpectStringFieldExtracts - expect_string_field returns the named top-level string field.
@@ -831,6 +832,30 @@ TEST(ApiMapping, BuildScannerTrailingLineWithoutNewline) {
     BuildStreamScanner scanner("img:latest");
     scanner.feed(R"({"error":"cut off"})"); // no newline
     EXPECT_THROW(scanner.finish(), DockerError);
+}
+
+TEST(ApiMapping, BuildScannerTailIsBounded) {
+    // Far more than the 4 KiB tail cap of step output, then a failure: the
+    // exception must carry the LAST bytes (the output near the error), bounded,
+    // with the early lines dropped.
+    BuildStreamScanner scanner("img:latest");
+    for (int i = 0; i < 200; ++i) {
+        scanner.feed(R"({"stream":"line-)" + std::to_string(i) + std::string(60, 'x') + "\\n\"}\n");
+    }
+    scanner.feed(R"({"stream":"just-before-the-error\n"})"
+                 "\n"
+                 R"({"error":"boom"})"
+                 "\n");
+    try {
+        scanner.finish();
+        FAIL() << "finish() must throw on a recorded build error";
+    } catch (const DockerError& e) {
+        const std::string what = e.what();
+        EXPECT_LT(what.size(), 4096u + 256u) << "tail not bounded; size=" << what.size();
+        EXPECT_NE(what.find("just-before-the-error"), std::string::npos) << what;
+        EXPECT_NE(what.find("line-199"), std::string::npos) << what; // recent output kept
+        EXPECT_EQ(what.find("line-0x"), std::string::npos) << what;  // early output dropped
+    }
 }
 
 TEST(ApiMapping, BuildScannerSuccessAndJunkLines) {

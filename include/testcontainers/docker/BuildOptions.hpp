@@ -12,6 +12,8 @@ namespace testcontainers::docker {
 /// payload of the build progress (typically a single newline-terminated line,
 /// e.g. "Step 2/4 : RUN make\n" or a RUN step's own output). Called from the
 /// thread running the build. An empty function disables streaming delivery.
+/// An exception thrown by the consumer aborts the build read (the connection
+/// is closed) and propagates to the caller unchanged.
 using BuildLogConsumer = std::function<void(std::string_view)>;
 
 /// Options for `POST /build` — the knobs the Docker build endpoint accepts that

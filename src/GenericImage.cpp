@@ -16,9 +16,12 @@ GenericImage GenericImage::from_reference(const std::string& reference) {
     return GenericImage(image, tag);
 }
 
-bool GenericImage::exists(const std::string& name, const std::string& tag) {
+bool GenericImage::exists(const std::string& reference) {
+    // Normalize exactly like from_reference: "name" gains ":latest", while a
+    // reference that already carries a tag round-trips unchanged.
+    const auto [image, tag] = docker::split_image(reference);
     DockerClient client = DockerClient::from_environment();
-    return client.image_exists(name + ":" + tag);
+    return client.image_exists(image + ":" + tag);
 }
 
 CreateContainerSpec GenericImage::build_spec() const {

@@ -443,22 +443,29 @@ void DockerClient::build_image(const std::string& context_tar, const docker::Bui
     }
 
     docker::BuildStreamScanner scanner(options.tag, consumer);
-    std::array<char, 8192> buf{};
-    while (!parser.is_done()) {
-        parser.get().body().data = buf.data();
-        parser.get().body().size = buf.size();
+    try {
+        std::array<char, 8192> buf{};
+        while (!parser.is_done()) {
+            parser.get().body().data = buf.data();
+            parser.get().body().size = buf.size();
 
-        http::read_some(stream, buffer, parser, ec);
-        if (ec == http::error::need_buffer) {
-            ec = {}; // the buffer filled up: not an error, just keep reading
+            http::read_some(stream, buffer, parser, ec);
+            if (ec == http::error::need_buffer) {
+                ec = {}; // the buffer filled up: not an error, just keep reading
+            }
+            if (ec) {
+                break; // handled below, after the decoded output is accounted for
+            }
+            const std::size_t n = buf.size() - parser.get().body().size;
+            if (n != 0) {
+                scanner.feed(std::string_view(buf.data(), n));
+            }
         }
-        if (ec) {
-            break; // handled below, after the decoded output is accounted for
-        }
-        const std::size_t n = buf.size() - parser.get().body().size;
-        if (n != 0) {
-            scanner.feed(std::string_view(buf.data(), n));
-        }
+    } catch (...) {
+        // A throwing consumer aborts the build read: close gracefully and let
+        // the consumer's exception propagate to the build() caller.
+        transport->close();
+        throw;
     }
     transport->close();
 

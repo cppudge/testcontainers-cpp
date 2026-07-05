@@ -149,7 +149,7 @@ string; context from host files/dirs (recursive walk, no `.dockerignore` filteri
 in-memory data; `build()` returns a runnable `GenericImage`. Build output streams live to
 `with_build_log_consumer` (decoded line by line as the daemon emits it), and a failed build's
 DockerError carries the tail of the step output — the failing RUN's own stdout/stderr — even
-without a consumer. `GenericImage::exists(name, tag)` (backed by
+without a consumer. `GenericImage::exists("name[:tag]")` (backed by
 `DockerClient::image_exists`) is the local-presence probe for skip-if-built flows; presence
 says nothing about freshness, so derive the tag from a hash of the build inputs when they can
 change. Built images carry no session label (not reaped). `forcerm=1` is always sent —

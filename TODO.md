@@ -80,8 +80,9 @@ when it lands (adding a short note there if it needs one).
   (every file body plus the finished tar) — fine for test fixtures, wrong tool for
   multi-gigabyte trees until the build/PUT path streams.
 - **Build from Dockerfile** — no `.dockerignore` filtering on `with_file` directory walks;
-  built images are not session-labeled (not reaped). No secrets / ssh /
-  cache-from / squash / platform-on-build.
+  built images are not session-labeled (not reaped). The context tar is fully buffered and
+  its upload runs under the base io deadline (the 10-minute silent-step widening starts only
+  after the response header). No secrets / ssh / cache-from / squash / platform-on-build.
 - **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
   still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
   surface Memory/CpuQuota/etc., so those can't be asserted via inspect.

@@ -161,8 +161,10 @@ TEST_F(BuildImage, ExistsReflectsLocalImages) {
         .with_dockerfile_string("FROM alpine:3.20\n")
         .build();
 
+    // Both reference spellings: bare name (":latest" implied) and "name:tag".
     EXPECT_TRUE(GenericImage::exists("tc-exists-probe"));
-    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built", "v9"));
+    EXPECT_TRUE(GenericImage::exists("tc-exists-probe:latest"));
+    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built:v9"));
 }
 
 // The Windows mirror. The FROM line must name the tag matching the daemon
@@ -215,5 +217,5 @@ TEST_F(WindowsBuildImage, ExistsAndBuildLogConsumer) {
 
     EXPECT_NE(log.find("win-consumer-sees-this"), std::string::npos) << "log was: " << log;
     EXPECT_TRUE(GenericImage::exists("tc-exists-probe-win"));
-    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built-win", "v9"));
+    EXPECT_FALSE(GenericImage::exists("tc-definitely-never-built-win:v9"));
 }
