@@ -56,13 +56,14 @@ suite.
 | `with_mount` (bind) | ✅ | ✅ | ✅ ContainerConfig.BindMountReadOnly | ❌ |
 | `with_mount` (volume) | ✅ | ✅ | ✅ Volumes.PopulateThenReadBack | ✅ WindowsVolumes.DataPersistsAcrossContainers |
 | `with_mount` (tmpfs) | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.TmpfsMount | n/a |
-| `with_copy_to` | ✅ | ✅ | ✅ Copy.CopyAtStartData, Copy.CopyAtStartHostFile | ✅ WindowsCopy.CopyAtStartData, WindowsCopy.CopyAtStartHostFile |
+| `with_copy_to` | ✅ | ✅ | ✅ Copy.CopyAtStartData, Copy.CopyAtStartHostFile, Copy.CopyDirAtStart | ✅ WindowsCopy.CopyAtStartData, WindowsCopy.CopyAtStartHostFile, WindowsCopy.CopyDirAtStart |
 | `with_label` | ✅ | ✅ | ❌ [b] | ❌ |
 | `with_wait` | ✅ | ✅ | ✅ WaitStrategies.* (+ most suites) | ✅ WindowsWaitStrategies.* (+ WindowsContainer.EchoExitsWithExpectedLogs) |
 | `with_startup_timeout` | ✅ | ✅ | ✅ WaitStrategies.TimeoutThrowsStartupTimeoutError, Lifecycle.StartupRetriesOnFailure | ✅ WindowsLifecycle.StartupRetriesOnFailure |
 | `with_healthcheck` | ✅ | ✅ | ✅ WaitStrategies.HealthcheckWaitBecomesHealthy | ✅ WindowsWaitStrategies.HealthcheckWaitBecomesHealthy |
 | `with_network` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName | ✅ WindowsNetworks.PeerNameRegisteredAndReachable |
 | `with_network_alias` | ✅ | ✅ | ✅ Networks.AliasResolvesOnCustomNetwork | ✅ WindowsNetworks.AliasRegisteredOnCustomNetwork |
+| `with_static_ipv4` | ✅ | ✅ | ✅ Networks.StaticIpv4Assigned | ❌ |
 | `with_container_name` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName | ✅ WindowsNetworks.PeerNameRegisteredAndReachable |
 | `with_platform` | ✅ | ✅ | ❌ | ❌ |
 | `with_registry_auth` | ✅ | ✅ | ❌ [c] | ❌ |
@@ -278,6 +279,7 @@ that consume them (rows above). Summary of where each is exercised:
 | `Mount::tmpfs` (+ size/mode) | ✅ ContainerConfig.TmpfsMount | n/a (Linux-only) |
 | `CopyToContainer::content` | ✅ Copy.CopyAtStartData | ✅ WindowsCopy.CopyAtStartData |
 | `CopyToContainer::host_file` | ✅ Copy.CopyAtStartHostFile | ✅ WindowsCopy.CopyAtStartHostFile |
+| `CopyToContainer::host_dir` | ✅ Copy.CopyDirAtStart, Copy.CopyDirIntoRunningContainer | ✅ WindowsCopy.CopyDirAtStart |
 | `CopyToContainer::with_mode` | ✅ Copy.ModeAppliedToCopiedFile | ❌ |
 | `ExecOptions` (env/working_dir/user/tty/stdin_data) | ✅ Exec.* | ✅ WindowsExec.* |
 | `ExecOptions.privileged` | ✅ Exec.PrivilegedExecExpandsCapabilities | ❌ |

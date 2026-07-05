@@ -28,8 +28,10 @@ struct CreateContainerSpec {
     std::optional<std::string> platform;                     ///< "<os>/<arch>" (?platform=)
     std::optional<std::string> network;                      ///< HostConfig.NetworkMode
     std::vector<std::string> network_aliases; ///< DNS aliases on `network` (NetworkingConfig)
-    std::optional<std::string> working_dir;   ///< WorkingDir
-    std::optional<std::string> user;          ///< User
+    /// Fixed IPv4 address on `network` (NetworkingConfig ... IPAMConfig.IPv4Address).
+    std::optional<std::string> static_ipv4;
+    std::optional<std::string> working_dir; ///< WorkingDir
+    std::optional<std::string> user;        ///< User
     bool tty = false;               ///< Tty (allocate a pseudo-TTY; raw/unframed log stream)
     bool publish_all_ports = false; ///< HostConfig.PublishAllPorts
     bool privileged = false;        ///< HostConfig.Privileged

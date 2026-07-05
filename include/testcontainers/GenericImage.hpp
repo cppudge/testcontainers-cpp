@@ -112,9 +112,11 @@ public:
         return *this;
     }
 
-    /// Copy a host file or in-memory bytes into the container after it is
-    /// created and before it is started (the target's parent directory must
-    /// already exist in the image). Add several to copy multiple entries.
+    /// Copy a host file, in-memory bytes, or a host directory tree into the
+    /// container after it is created and before it is started. For a
+    /// single-file source the target's parent directory must already exist in
+    /// the image; a directory source creates the target chain itself. Add
+    /// several to copy multiple entries.
     GenericImage& with_copy_to(CopyToContainer source) {
         copy_to_sources_.push_back(std::move(source));
         return *this;
@@ -153,6 +155,16 @@ public:
     /// effect; aliases without a target network are ignored.
     GenericImage& with_network_alias(std::string alias) {
         spec_.network_aliases.push_back(std::move(alias));
+        return *this;
+    }
+
+    /// Assign a fixed IPv4 address to this container on its network
+    /// (`NetworkingConfig` endpoint `IPAMConfig.IPv4Address`). Requires
+    /// `with_network(...)` on a user-defined network whose subnet contains the
+    /// address (e.g. one created via `Network::builder().with_subnet(...)`);
+    /// without a target network there is no endpoint to pin, so this is ignored.
+    GenericImage& with_static_ipv4(std::string ip) {
+        spec_.static_ipv4 = std::move(ip);
         return *this;
     }
 
@@ -343,6 +355,7 @@ public:
     const std::vector<std::string>& network_aliases() const noexcept {
         return spec_.network_aliases;
     }
+    const std::optional<std::string>& static_ipv4() const noexcept { return spec_.static_ipv4; }
     const std::optional<std::string>& container_name() const noexcept { return spec_.name; }
     const std::optional<std::string>& platform() const noexcept { return spec_.platform; }
     const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }

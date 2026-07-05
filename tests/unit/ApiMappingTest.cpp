@@ -31,6 +31,7 @@
 //   ApiMapping.BuildCreateBodyNetworkMode - a set network maps to HostConfig.NetworkMode.
 //   ApiMapping.BuildCreateBodyNoNetworkModeByDefault - a spec without a network emits no HostConfig.NetworkMode.
 //   ApiMapping.BuildCreateBodyNetworkAliases - a network plus aliases maps to NetworkingConfig.EndpointsConfig.<net>.Aliases, and aliases without a network emit no NetworkingConfig.
+//   ApiMapping.BuildCreateBodyStaticIpv4 - a network plus static_ipv4 maps to the endpoint's IPAMConfig.IPv4Address (no Aliases key without aliases; combines with aliases; no-op without a network).
 //   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
 //   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
 //   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
@@ -328,6 +329,32 @@ TEST(ApiMapping, BuildCreateBodyNetworkAliases) {
     CreateContainerSpec orphan;
     orphan.image = "alpine:3.20";
     orphan.network_aliases = {"db"};
+    EXPECT_FALSE(build_create_body(orphan).contains("NetworkingConfig"));
+}
+
+TEST(ApiMapping, BuildCreateBodyStaticIpv4) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.network = "netX";
+    spec.static_ipv4 = "10.246.200.11";
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("NetworkingConfig"));
+    const auto& endpoint = body["NetworkingConfig"]["EndpointsConfig"]["netX"];
+    EXPECT_EQ(endpoint["IPAMConfig"]["IPv4Address"], "10.246.200.11");
+    EXPECT_FALSE(endpoint.contains("Aliases")); // no aliases were set
+
+    // A static IP and aliases share the same endpoint object.
+    spec.network_aliases = {"db"};
+    const auto both = build_create_body(spec);
+    const auto& ep = both["NetworkingConfig"]["EndpointsConfig"]["netX"];
+    EXPECT_EQ(ep["IPAMConfig"]["IPv4Address"], "10.246.200.11");
+    EXPECT_EQ(ep["Aliases"], nlohmann::json({"db"}));
+
+    // A static IP without a target network has no endpoint to pin: no-op.
+    CreateContainerSpec orphan;
+    orphan.image = "alpine:3.20";
+    orphan.static_ipv4 = "10.246.200.11";
     EXPECT_FALSE(build_create_body(orphan).contains("NetworkingConfig"));
 }
 

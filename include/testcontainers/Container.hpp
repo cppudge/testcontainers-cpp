@@ -156,9 +156,11 @@ public:
     ExecResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
                     const LogConsumer& consumer) const;
 
-    /// Copy a host file or in-memory bytes into this already-running container
-    /// (`PUT /containers/{id}/archive`). The target's parent directory must
-    /// already exist. Throws DockerError on failure.
+    /// Copy a host file, in-memory bytes, or a host directory tree into this
+    /// already-running container (`PUT /containers/{id}/archive`). For a
+    /// single-file source the target's parent directory must already exist; a
+    /// directory source creates the target directory chain itself. Throws
+    /// DockerError on failure.
     void copy_to(const CopyToContainer& source) const;
 
     /// Read a single regular file out of the container and return its bytes.

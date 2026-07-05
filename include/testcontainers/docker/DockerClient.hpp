@@ -263,11 +263,13 @@ public:
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
                     const ExecOptions& opts, const LogConsumer& consumer);
 
-    /// `PUT /containers/{id}/archive?path=/` — copy a host file or in-memory
-    /// bytes into the container by extracting a single-entry tar at the root.
-    /// The entry name is the target with its leading '/' stripped, so the
-    /// target's parent directory must already exist in the container. Throws
-    /// DockerError on failure (non-200, or the host file cannot be read).
+    /// `PUT /containers/{id}/archive?path=/` — copy a host file, in-memory
+    /// bytes, or a host directory tree into the container by extracting a tar
+    /// at the root. Entry names are the target normalized (leading '/'
+    /// stripped; a Windows drive-rooted target like "C:\x" becomes "x"). A
+    /// single-file source needs its parent directory to already exist in the
+    /// container; a directory source creates the target chain itself. Throws
+    /// DockerError on failure (non-200, or the host source cannot be read).
     void copy_to_container(const std::string& id, const CopyToContainer& source);
 
     /// `GET /containers/{id}/archive?path=<container_path>` — fetch the tar archive

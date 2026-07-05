@@ -101,7 +101,8 @@ Container b = postgres.start();
 Builders: `with_cmd`, `with_entrypoint`, `with_env`, `with_label`, `with_exposed_port`,
 `with_working_dir`, `with_user`, `with_privileged`, `with_mount` (`Mount::bind/volume/tmpfs`),
 `with_healthcheck` (`Healthcheck::cmd_shell/cmd`), `with_copy_to`, `with_network`,
-`with_container_name`, `with_registry_auth`, `with_wait`, `with_startup_timeout`.
+`with_network_alias`, `with_static_ipv4`, `with_container_name`, `with_registry_auth`,
+`with_wait`, `with_startup_timeout`.
 
 Wait strategies — `with_wait(wait_for::…)`: `stdout_message` / `stderr_message` / `log`,
 `seconds` / `millis`, `exit` / `exit_code`, `healthy` (Docker healthcheck), `http(path, port, status)`.
@@ -236,12 +237,12 @@ testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignore
       codec. Credential helpers (`credsStore`/`credHelpers`) are not yet
       supported (no shelling out). Covered by 17 unit tests.
 - [x] **Copy files/data into containers**: a `CopyToContainer` value type
-      (`host_file` / `content` + `with_mode`) PUT as a single-entry tar to
-      `PUT /containers/{id}/archive?path=/` (libarchive USTAR, built in-memory).
+      (`host_file` / `content` / recursive `host_dir` + `with_mode`) PUT as a tar
+      to `PUT /containers/{id}/archive?path=/` (libarchive USTAR, built
+      in-memory; Windows drive-rooted targets like `C:\dir\x` are normalized).
       Supported both at creation (`GenericImage::with_copy_to`, applied
       create→copy→start so a copy failure removes the container) and into a
-      running container (`Container::copy_to`). Covered by 6 unit tests (tar
-      built and read back with libarchive) + 3 integration tests.
+      running container (`Container::copy_to`).
 - [x] **Windows-container support** (parity with testcontainers-dotnet): daemon-OS
       detection (`DockerClient::server_os()` / `is_windows_engine()` via `GET /version`,
       cached process-wide), a free-form create `platform` (`GenericImage::with_platform`,

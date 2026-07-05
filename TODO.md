@@ -73,8 +73,10 @@ when it lands (adding a short note there if it needs one).
   alongside the per-pull config re-read); no end-to-end private-registry integration test
   against a real authenticated registry. (`src/docker/Auth.cpp`)
 - **copy-to / copy-from** — USTAR caps entry path length (100/255 chars; pax would lift it);
-  one tar + PUT per source (no batching); no directory-tree copy-from helper (use
-  `extract_tar` on the raw bytes).
+  one tar + PUT per source (no batching); no directory-tree copy-FROM helper (use
+  `extract_tar` on the raw bytes; copy-to has `CopyToContainer::host_dir`). `host_dir` does
+  not descend into directory symlinks and skips non-regular files (no cycle guard needed, but
+  symlink-heavy trees copy shallower than `cp -r`).
 - **Build from Dockerfile** — no `.dockerignore` filtering on `with_file` directory walks;
   build output is fully buffered (no live streaming consumer — could reuse the `follow_logs`
   chunked-read approach); built images are not session-labeled (not reaped). No secrets / ssh /
@@ -90,8 +92,7 @@ when it lands (adding a short note there if it needs one).
 - **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, a
   socat ambassador for UNPUBLISHED ports, and Ryuk-reaping of compose containers (they carry no
   session label) are all unsupported.
-- **Windows containers** — copy-to Unix-normalizes entry paths, so `C:\...` targets aren't
-  handled (use `/x.txt` = `C:\x.txt`). `Volume::populate` cannot seed a Windows volume — the
+- **Windows containers** — `Volume::populate` cannot seed a Windows volume — the
   daemon extracts archives into the container LAYER, bypassing mounts (`docker cp` shares the
   blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.
   Remaining Windows-mode test gaps: the http wait (needs a real HTTP server image —

@@ -177,11 +177,17 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         body["HostConfig"] = std::move(host_config);
     }
 
-    // Network aliases require a target network to attach to; without one there is
-    // nothing to alias, so they are ignored (no-op) when `network` is unset.
-    if (spec.network && !spec.network_aliases.empty()) {
+    // Aliases and a static IP both configure the endpoint on a specific target
+    // network; without one there is nothing to attach them to, so they are
+    // ignored (no-op) when `network` is unset.
+    if (spec.network && (!spec.network_aliases.empty() || spec.static_ipv4)) {
         nlohmann::json endpoint = nlohmann::json::object();
-        endpoint["Aliases"] = spec.network_aliases;
+        if (!spec.network_aliases.empty()) {
+            endpoint["Aliases"] = spec.network_aliases;
+        }
+        if (spec.static_ipv4) {
+            endpoint["IPAMConfig"]["IPv4Address"] = *spec.static_ipv4;
+        }
         nlohmann::json endpoints = nlohmann::json::object();
         endpoints[*spec.network] = std::move(endpoint);
         nlohmann::json networking = nlohmann::json::object();

@@ -20,6 +20,7 @@
 //   Networks.BuilderCreatesNetwork - Network::builder() with a driver, attachable, and an IPAM subnet creates a real network with a non-empty id/name.
 //   Networks.ConnectAttachesRunningContainerWithAlias - Network::connect attaches an already-running container (started WITHOUT with_network) and its runtime alias resolves from a peer on the network.
 //   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via GET /networks/{id}).
+//   Networks.StaticIpv4Assigned - with_static_ipv4 on a subnet-bearing network pins the endpoint to exactly the requested address (asserted via container inspect).
 //   WindowsNetworks.CreateAndRemove - the same create/remove round-trip on a Windows daemon (the default driver there is "nat").
 //   WindowsNetworks.PeerNameRegisteredAndReachable - two nanoserver containers on a user-defined nat network: the daemon registers the peer's container name in DNSNames, and a `ping` of the peer's network IP proves the data path.
 //   WindowsNetworks.AliasRegisteredOnCustomNetwork - with_network_alias lands in the endpoint's Aliases/DNSNames, and the alias-bearing peer is reachable by its network IP.
@@ -36,6 +37,30 @@ protected:
         }
     }
 };
+
+namespace {
+
+/// The container's IPv4 address on `network`, scraped from the raw inspect
+/// JSON (ContainerInspect does not model per-network endpoint settings).
+/// Assumes the endpoint's "IPAddress" key follows the network-name key in the
+/// body (true for every daemon we drive) and that the random network name
+/// collides with nothing else in it.
+std::string ip_on_network(DockerClient& client, const std::string& id, const std::string& network) {
+    const std::string body = client.request("GET", "/containers/" + id + "/json").body;
+    const std::size_t net_at = body.find("\"" + network + "\"");
+    if (net_at == std::string::npos) {
+        return "";
+    }
+    const std::string marker = "\"IPAddress\":\"";
+    const std::size_t ip_at = body.find(marker, net_at);
+    if (ip_at == std::string::npos) {
+        return "";
+    }
+    const std::size_t start = ip_at + marker.size();
+    return body.substr(start, body.find('"', start) - start);
+}
+
+} // namespace
 
 TEST_F(Networks, ResolvesPeerByContainerName) {
     // A user-defined network gives containers DNS resolution by container name.
@@ -153,29 +178,24 @@ TEST_F(Networks, BuilderInternalGatewayAndLabels) {
     // RAII removes the network at scope exit.
 }
 
-namespace {
+TEST_F(Networks, StaticIpv4Assigned) {
+    // A fixed address needs a user-defined network whose subnet contains it
+    // (distinct subnet from the other suites so shared daemons never collide).
+    Network net = Network::builder().with_subnet("172.31.254.0/24").create();
+    ASSERT_FALSE(net.name().empty());
 
-/// The container's IPv4 address on `network`, scraped from the raw inspect
-/// JSON (ContainerInspect does not model per-network endpoint settings).
-/// Assumes the endpoint's "IPAddress" key follows the network-name key in the
-/// body (true for every daemon we drive) and that the random network name
-/// collides with nothing else in it.
-std::string ip_on_network(DockerClient& client, const std::string& id, const std::string& network) {
-    const std::string body = client.request("GET", "/containers/" + id + "/json").body;
-    const std::size_t net_at = body.find("\"" + network + "\"");
-    if (net_at == std::string::npos) {
-        return "";
-    }
-    const std::string marker = "\"IPAddress\":\"";
-    const std::size_t ip_at = body.find(marker, net_at);
-    if (ip_at == std::string::npos) {
-        return "";
-    }
-    const std::size_t start = ip_at + marker.size();
-    return body.substr(start, body.find('"', start) - start);
+    Container c = GenericImage("alpine", "3.20")
+                      .with_network(net.name())
+                      .with_static_ipv4("172.31.254.10")
+                      .with_cmd({"sleep", "60"})
+                      .start();
+
+    // The endpoint must carry exactly the requested address, not a pool pick.
+    DockerClient dc = DockerClient::from_environment();
+    EXPECT_EQ(ip_on_network(dc, c.id(), net.name()), "172.31.254.10");
+
+    // The container and the network are torn down by RAII at scope exit.
 }
-
-} // namespace
 
 // The Windows mirror: user-defined networks use the "nat" driver (the Windows
 // daemon's default). Unlike the Linux tests, these do NOT resolve peers by

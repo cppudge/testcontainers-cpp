@@ -852,8 +852,10 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 void DockerClient::copy_to_container(const std::string& id, const CopyToContainer& source) {
     const std::string tar = docker::build_tar(source);
-    // Always extract at the root with relative entry names (build_tar strips the
-    // leading '/'), so the target's parent directory must already exist.
+    // Always extract at the root with relative entry names (build_tar normalizes
+    // the target — leading '/' stripped, Windows drive prefixes dropped). A
+    // single-file source needs its parent directory to already exist; a
+    // directory source ships its own directory entries.
     const std::string target =
         versioned("/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false");
     const std::vector<std::pair<std::string, std::string>> headers = {

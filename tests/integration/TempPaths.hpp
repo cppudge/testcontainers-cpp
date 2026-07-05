@@ -50,6 +50,30 @@ private:
     std::filesystem::path path_;
 };
 
+/// A self-cleaning temp directory tree for the directory-copy tests:
+///   root.txt ("root-body"), sub/nested.txt ("nested-body"), empty/ (no files).
+class TempTree {
+public:
+    TempTree() {
+        dir_ = std::filesystem::temp_directory_path() / ("tc_tree_" + random_suffix());
+        std::filesystem::create_directories(dir_ / "sub");
+        std::filesystem::create_directories(dir_ / "empty");
+        std::ofstream(dir_ / "root.txt", std::ios::binary) << "root-body";
+        std::ofstream(dir_ / "sub" / "nested.txt", std::ios::binary) << "nested-body";
+    }
+    ~TempTree() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+    TempTree(const TempTree&) = delete;
+    TempTree& operator=(const TempTree&) = delete;
+
+    const std::filesystem::path& path() const { return dir_; }
+
+private:
+    std::filesystem::path dir_;
+};
+
 /// A self-cleaning temp directory holding one file, for bind-mount tests.
 class TempDirWithFile {
 public:

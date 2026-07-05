@@ -29,6 +29,8 @@
 //   Copy.CopyFileFromWritesHost - copy_file_from writes the container file's contents to a host path.
 //   Copy.ReadFileRejectsDirectory - read_file on a directory throws DockerError (not a single regular file).
 //   Copy.ModeAppliedToCopiedFile - CopyToContainer::with_mode(0755) lands as the file's permission bits (stat -c %a -> 755).
+//   Copy.CopyDirAtStart - with_copy_to(host_dir) lands the whole tree under a target whose chain did not pre-exist: nested file contents match and the empty subdirectory exists.
+//   Copy.CopyDirIntoRunningContainer - Container::copy_to with a host_dir source copies the tree into an already-running container.
 //   WindowsCopy.CopyAtStartData - the same copy-at-start round-trip into a Windows container (targets live at the C: root — extraction runs as the daemon, no parent-dir assumptions).
 //   WindowsCopy.CopyAtStartHostFile - with_copy_to(host_file) into a Windows container.
 //   WindowsCopy.CopyIntoRunningContainer - Container::copy_to against a running Windows container.
@@ -36,6 +38,8 @@
 //   WindowsCopy.LargeFileRoundTrip - a 2 MiB round-trip against a Windows daemon (named-pipe transport on CI).
 //   WindowsCopy.CopyFileFromWritesHost - copy_file_from a Windows container to a host path.
 //   WindowsCopy.ReadFileRejectsDirectory - read_file on a (freshly mkdir'd, empty) directory throws DockerError.
+//   WindowsCopy.CopyAtStartDriveTarget - a drive-rooted "C:\..." target is normalized (drive dropped, '/'-separated) and the file lands at that path.
+//   WindowsCopy.CopyDirAtStart - with_copy_to(host_dir) with a "C:\..." target creates the directory chain and lands the tree (nested file readable, empty dir present).
 
 using namespace testcontainers;
 
@@ -156,6 +160,43 @@ TEST_F(Copy, ModeAppliedToCopiedFile) {
     EXPECT_NE(res.stdout_data.find("755"), std::string::npos) << "mode was: " << res.stdout_data;
 }
 
+TEST_F(Copy, CopyDirAtStart) {
+    const tcit::TempTree tree;
+
+    // "/opt/data/deep" does not exist in alpine: the dir source must create the
+    // whole target chain itself.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_copy_to(CopyToContainer::host_dir(tree.path(), "/opt/data/deep"))
+                      .with_cmd({"sleep", "60"})
+                      .start();
+
+    const ExecResult root = c.exec({"cat", "/opt/data/deep/root.txt"});
+    EXPECT_EQ(root.exit_code, 0) << "stderr: " << root.stderr_data;
+    EXPECT_NE(root.stdout_data.find("root-body"), std::string::npos)
+        << "stdout was: " << root.stdout_data;
+
+    const ExecResult nested = c.exec({"cat", "/opt/data/deep/sub/nested.txt"});
+    EXPECT_EQ(nested.exit_code, 0) << "stderr: " << nested.stderr_data;
+    EXPECT_NE(nested.stdout_data.find("nested-body"), std::string::npos)
+        << "stdout was: " << nested.stdout_data;
+
+    // Empty directories must survive the copy.
+    const ExecResult empty = c.exec({"test", "-d", "/opt/data/deep/empty"});
+    EXPECT_EQ(empty.exit_code, 0) << "empty/ was not preserved";
+}
+
+TEST_F(Copy, CopyDirIntoRunningContainer) {
+    const tcit::TempTree tree;
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    c.copy_to(CopyToContainer::host_dir(tree.path(), "/rt-tree"));
+
+    const ExecResult res = c.exec({"cat", "/rt-tree/sub/nested.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("nested-body"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
 // The Windows mirror. All targets live at the filesystem root ("/x.txt" is
 // C:\x.txt to the daemon): the copy endpoint extracts as the daemon, not the
 // container user, so no writable-parent-directory assumptions are needed and
@@ -266,4 +307,38 @@ TEST_F(WindowsCopy, ReadFileRejectsDirectory) {
     ASSERT_EQ(mk.exit_code, 0) << "stderr: " << mk.stderr_data;
 
     EXPECT_THROW(c.read_file("/tc-empty"), DockerError);
+}
+
+TEST_F(WindowsCopy, CopyAtStartDriveTarget) {
+    // The natural Windows spelling of a target: drive-rooted with backslashes.
+    // Root-level, like every other file target here (single-file sources make
+    // no parent-directory assumptions about nanoserver).
+    Container c = nanoserver()
+                      .with_copy_to(CopyToContainer::content("via-drive", "C:\\drive-target.txt"))
+                      .with_cmd(keep_alive_cmd())
+                      .start();
+
+    const ExecResult res = c.exec({"cmd", "/c", "type C:\\drive-target.txt"});
+    EXPECT_EQ(res.exit_code, 0) << "stderr: " << res.stderr_data;
+    EXPECT_NE(res.stdout_data.find("via-drive"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
+TEST_F(WindowsCopy, CopyDirAtStart) {
+    const tcit::TempTree tree;
+
+    // C:\tcdata does not exist in nanoserver: the dir source must create it.
+    Container c = nanoserver()
+                      .with_copy_to(CopyToContainer::host_dir(tree.path(), "C:\\tcdata"))
+                      .with_cmd(keep_alive_cmd())
+                      .start();
+
+    const ExecResult nested = c.exec({"cmd", "/c", "type C:\\tcdata\\sub\\nested.txt"});
+    EXPECT_EQ(nested.exit_code, 0) << "stderr: " << nested.stderr_data;
+    EXPECT_NE(nested.stdout_data.find("nested-body"), std::string::npos)
+        << "stdout was: " << nested.stdout_data;
+
+    // `dir` exits 0 for an existing (even empty) directory, 1 otherwise.
+    const ExecResult empty = c.exec({"cmd", "/c", "dir C:\\tcdata\\empty"});
+    EXPECT_EQ(empty.exit_code, 0) << "empty/ was not preserved";
 }

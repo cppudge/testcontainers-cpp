@@ -154,8 +154,9 @@ AFTER the typed fields, so it overrides them; nest HostConfig fields under `"Hos
 
 **Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / one
 IPAM subnet+gateway pair / driver options / labels); `with_network_alias` (per-network DNS
-aliases); `Network::connect` attaches a running container. No network inspect and no
-process-wide dedup — every `create()` makes a brand-new network.
+aliases); `with_static_ipv4` (a fixed endpoint address — needs a user-defined network whose
+subnet contains it); `Network::connect` attaches a running container. No network inspect and
+no process-wide dedup — every `create()` makes a brand-new network.
 
 **Host access (`with_exposed_host_port`)** — services listening on the test host become
 reachable from containers at `host.testcontainers.internal:<port>` through the standard
@@ -205,9 +206,10 @@ label sweep), so moves/destruction need no hand-written member lists and a faile
 
 **Windows containers** (docs/04) — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the
-Windows engine (RAII + AutoRemove only — testcontainers-dotnet parity). copy-to still
-Unix-normalizes entry paths, so `C:\...` targets are unhandled — target `/x.txt` (= `C:\x.txt`
-to the daemon). The nanoserver test image tag is host-build-locked (`ltsc2025` on build 26100;
+Windows engine (RAII + AutoRemove only — testcontainers-dotnet parity). copy-to accepts
+drive-rooted targets: `C:\dir\x.txt` is normalized to the `/dir/x.txt` form the daemon
+extracts relative to `C:\` (plain `/x.txt` targets keep working). The nanoserver test image
+tag is host-build-locked (`ltsc2025` on build 26100;
 `tcit::WindowsEngineTest` in tests/integration/WindowsEngine.hpp resolves it from the daemon).
 
 **Isolation (`with_isolation`)** — `HostConfig.Isolation` ("process"/"hyperv"), Windows daemons
