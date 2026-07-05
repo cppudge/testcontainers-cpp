@@ -232,3 +232,19 @@ Windows Dockerfile RUN needs `USER ContainerAdministrator` to write to `C:\`.
 **TTY containers** — `with_tty()` sets `Tty=true`; `logs()` / `follow_logs()` and the log wait
 handle the raw stream automatically (`Container` remembers its TTY-ness). No interactive
 attach loop (exec's stdin path is the interactive tool).
+
+## Packaging
+
+**Conan package** (2026-07-05) — `conan create .` produces a consumer-grade package:
+`test_package/` proves find_package + link + run from a downstream project (no daemon
+needed), the recipe runs the unit suite via ctest unless `tools.build:skip_test`, and a
+CI job creates the package on Linux/Windows/macOS (macOS coverage lives ONLY there).
+The version is written once, in CMakeLists' `TC_VERSION_FULL`: `project()` takes the
+numeric prefix, `version.cpp` compiles the full string in, `set_version()` parses it out.
+Consumers get `find_package(testcontainers)` + `testcontainers::testcontainers` on both
+paths — Conan (CMakeDeps-generated configs; the installed lib/cmake is deleted from the
+package to not shadow them) and plain `cmake --install` (installed package config; its
+find_dependency calls prefer CONFIG mode because the exported target links Conan-named
+dep targets). `shared` is validated away on Windows — the sources carry no export macros.
+ConanCenter-specific work (conandata.yml recipe shape, unforced dependency options,
+compiler floor in validate()) is scoped in TODO.md.
