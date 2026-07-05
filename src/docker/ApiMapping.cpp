@@ -4,7 +4,9 @@
 
 #include <charconv>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -314,6 +316,34 @@ std::string parse_server_os(const std::string& version_json) {
         const nlohmann::json json = nlohmann::json::parse(version_json);
         return json.value("Os", std::string{});
     });
+}
+
+std::string negotiate_api_version(std::string_view daemon_reported) {
+    // Parse "major.minor" (digits only, both parts required). Anything else —
+    // an empty header, a proxy's HTML, a future exotic scheme — yields nullopt
+    // and the caller falls back to unversioned paths.
+    const auto parse = [](std::string_view v) -> std::optional<std::pair<unsigned, unsigned>> {
+        const std::size_t dot = v.find('.');
+        if (dot == std::string_view::npos || dot == 0 || dot + 1 == v.size()) {
+            return std::nullopt;
+        }
+        unsigned major = 0;
+        unsigned minor = 0;
+        const auto [mp, mec] = std::from_chars(v.data(), v.data() + dot, major);
+        const auto [np, nec] = std::from_chars(v.data() + dot + 1, v.data() + v.size(), minor);
+        if (mec != std::errc{} || nec != std::errc{} || mp != v.data() + dot ||
+            np != v.data() + v.size()) {
+            return std::nullopt;
+        }
+        return std::pair{major, minor};
+    };
+
+    const auto daemon = parse(daemon_reported);
+    const auto client = parse(kClientApiVersion);
+    if (!daemon || !client) {
+        return {};
+    }
+    return *daemon < *client ? std::string(daemon_reported) : std::string(kClientApiVersion);
 }
 
 std::string build_create_query(const CreateContainerSpec& spec,

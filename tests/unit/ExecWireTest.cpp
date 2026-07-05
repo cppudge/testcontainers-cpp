@@ -45,6 +45,10 @@ std::string frame(unsigned char kind, std::string_view payload) {
 std::string exec_created() { return http_response(201, "Created", R"({"Id":"e1"})"); }
 std::string exec_inspected() { return http_response(200, "OK", R"({"ExitCode":0})"); }
 
+/// The API-version negotiation `GET /_ping` every fresh client issues before
+/// its first typed call (no Api-Version header -> unversioned paths).
+std::string ping_ok() { return http_response(200, "OK", "OK"); }
+
 bool contains(const std::string& haystack, std::string_view needle) {
     return haystack.find(needle) != std::string::npos;
 }
@@ -61,8 +65,8 @@ DockerClient fast_client(const CannedHttpServer& server) {
 
 // Connection order (== accept order): exec connects its hijack transport
 // FIRST (its request arrives only after the create round-trip), so
-// connection 0 is the exec-start stream, 1 is the create POST, 2 the
-// inspect GET.
+// connection 0 is the exec-start stream, 1 the version-negotiation ping
+// (triggered by the exec-create call), 2 the create POST, 3 the inspect GET.
 
 } // namespace
 
@@ -72,6 +76,7 @@ TEST(ExecWire, StdinRequestsConnectionUpgrade) {
     // bytes + EOF the client sends after the header.
     CannedHttpServer server(std::vector<std::vector<std::string>>{
         {http_response(200, "OK", frame(1, "out")), ""},
+        {ping_ok()},
         {exec_created()},
         {exec_inspected()},
     });
@@ -101,6 +106,7 @@ TEST(ExecWire, StdinRequestsConnectionUpgrade) {
 TEST(ExecWire, NoStdinAlsoRequestsUpgrade) {
     CannedHttpServer server(std::vector<std::vector<std::string>>{
         {http_response(200, "OK", frame(1, "out"))},
+        {ping_ok()},
         {exec_created()},
         {exec_inspected()},
     });
@@ -133,6 +139,7 @@ TEST(ExecWire, UpgradedStreamReadsRaw) {
                                  frame(1, "out") + frame(2, "err");
     CannedHttpServer server(std::vector<std::vector<std::string>>{
         {upgraded, ""}, // "": absorb the client's stdin + EOF, then close
+        {ping_ok()},
         {exec_created()},
         {exec_inspected()},
     });

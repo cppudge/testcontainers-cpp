@@ -1,9 +1,12 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 
+#include <boost/asio/error.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/system/error_code.hpp>
@@ -57,19 +60,34 @@ inline bool deliver_chunk(LogDemuxer& demuxer, std::string_view chunk, bool tty,
 /// output to the end; read_some returns after each socket read, so frames
 /// arrive as the daemon flushes them. With `tty` the stream is raw/unframed
 /// and is delivered verbatim as stdout; otherwise the multiplexed frames are
-/// demuxed. Returns when the stream ends, the daemon resets it, or `consumer`
-/// returns false — the caller closes the connection either way.
-inline void stream_body_to_consumer(
-    TransportStream& stream, boost::beast::flat_buffer& buffer,
+/// demuxed.
+///
+/// With a `deadline`, `transport`'s io deadline is re-armed with the remaining
+/// budget before every read, so the whole delivery — chunks trickling or none
+/// arriving at all — is bounded by the deadline; without one, the transport's
+/// current io deadline (the caller typically disables it for follow streams)
+/// stays in effect. Returns why delivery ended; the caller closes the
+/// connection in every case.
+inline FollowEnd stream_body_to_consumer(
+    ITransport& transport, TransportStream& stream, boost::beast::flat_buffer& buffer,
     boost::beast::http::response_parser<boost::beast::http::buffer_body>& parser, bool tty,
-    const LogConsumer& consumer) {
+    const LogConsumer& consumer,
+    std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt) {
     namespace http = boost::beast::http;
 
     LogDemuxer demuxer;
     std::array<char, 8192> buf{};
     boost::system::error_code ec;
-    bool stop = false;
-    while (!stop && !parser.is_done()) {
+    while (!parser.is_done()) {
+        if (deadline) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                *deadline - std::chrono::steady_clock::now());
+            if (remaining <= std::chrono::milliseconds::zero()) {
+                return FollowEnd::DeadlineExpired;
+            }
+            transport.set_io_timeout(remaining);
+        }
+
         parser.get().body().data = buf.data();
         parser.get().body().size = buf.size();
 
@@ -77,16 +95,23 @@ inline void stream_body_to_consumer(
         if (ec == http::error::need_buffer) {
             ec = {}; // the buffer filled up: not an error, just keep reading
         }
+        if (ec == boost::asio::error::timed_out) {
+            return FollowEnd::DeadlineExpired; // the re-armed io deadline fired
+        }
         if (ec) {
-            break; // end_of_stream (the stream ended) or reset by the daemon
+            // end_of_stream (the stream ended) or reset by the daemon.
+            return FollowEnd::StreamEnded;
         }
 
         const std::size_t n = buf.size() - parser.get().body().size;
         if (n == 0) {
             continue;
         }
-        stop = !detail::deliver_chunk(demuxer, std::string_view(buf.data(), n), tty, consumer);
+        if (!detail::deliver_chunk(demuxer, std::string_view(buf.data(), n), tty, consumer)) {
+            return FollowEnd::ConsumerStopped;
+        }
     }
+    return FollowEnd::StreamEnded;
 }
 
 /// Read a hijacked (101-upgraded) stream to completion and return its raw

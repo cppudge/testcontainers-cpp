@@ -41,6 +41,12 @@ using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
 using testcontainers::detail::Runner;
 
+/// The API-version negotiation `GET /_ping` every fresh client issues before
+/// its first typed call. No Api-Version header on purpose: the client then
+/// falls back to unversioned paths, so the path assertions below stay
+/// version-independent (the pinning itself is covered by ApiVersionTest).
+std::string ping_ok() { return http_response(200, "OK", "OK"); }
+
 std::string created(const std::string& id) {
     return http_response(201, "Created", R"({"Id":")" + id + R"("})");
 }
@@ -96,7 +102,7 @@ private:
 } // namespace
 
 TEST(Runner, CreateStartWaitReturnsHandle) {
-    CannedHttpServer server({created("abc123"), started(), removed()});
+    CannedHttpServer server({ping_ok(), created("abc123"), started(), removed()});
     {
         testcontainers::DockerClient client{server.host()};
         const Container c = Runner::run(client, busybox_request());
@@ -105,20 +111,24 @@ TEST(Runner, CreateStartWaitReturnsHandle) {
     } // drop -> DELETE
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 3u);
-    EXPECT_TRUE(request_is(requests[0], "POST /containers/create")) << requests[0];
-    EXPECT_TRUE(request_is(requests[1], "POST /containers/abc123/start")) << requests[1];
-    EXPECT_TRUE(request_is(requests[2], "DELETE /containers/abc123")) << requests[2];
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_TRUE(request_is(requests[0], "GET /_ping")) << requests[0];
+    EXPECT_TRUE(request_is(requests[1], "POST /containers/create")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /containers/abc123/start")) << requests[2];
+    // The handle's client is a COPY, and copies inherit the negotiated API
+    // version — the drop-time DELETE must not re-ping.
+    EXPECT_TRUE(request_is(requests[3], "DELETE /containers/abc123")) << requests[3];
 
     // The normal path tags the create body so Ryuk (and tooling) can find the
     // container. (The session-id label depends on TESTCONTAINERS_RYUK_DISABLED,
     // so only the unconditional label is pinned here.)
-    EXPECT_NE(requests[0].find("org.testcontainers.managed-by"), std::string::npos) << requests[0];
+    EXPECT_NE(requests[1].find("org.testcontainers.managed-by"), std::string::npos) << requests[1];
 }
 
 TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {
     const std::string no_logs = http_response(200, "OK", "");
     CannedHttpServer server({
+        ping_ok(), // version negotiation, once per client
         created("one"),
         started(),
         no_logs,
@@ -146,15 +156,16 @@ TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {
     }
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 8u);
-    EXPECT_TRUE(request_is(requests[2], "GET /containers/one/logs")) << requests[2];
-    EXPECT_TRUE(request_is(requests[3], "DELETE /containers/one")) << requests[3];
-    EXPECT_TRUE(request_is(requests[7], "DELETE /containers/two")) << requests[7];
+    ASSERT_EQ(requests.size(), 9u);
+    EXPECT_TRUE(request_is(requests[3], "GET /containers/one/logs")) << requests[3];
+    EXPECT_TRUE(request_is(requests[4], "DELETE /containers/one")) << requests[4];
+    EXPECT_TRUE(request_is(requests[8], "DELETE /containers/two")) << requests[8];
 }
 
 TEST(Runner, ReuseAdoptsRunningMatch) {
     const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
-    CannedHttpServer server(http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])"));
+    CannedHttpServer server(
+        {ping_ok(), http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])")});
 
     ContainerRequest request = busybox_request();
     request.reuse = true;
@@ -166,13 +177,14 @@ TEST(Runner, ReuseAdoptsRunningMatch) {
     } // a persistent handle must NOT issue a DELETE on drop
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 1u); // the label-filtered list; NO create
-    EXPECT_TRUE(request_is(requests[0], "GET /containers/json")) << requests[0];
+    ASSERT_EQ(requests.size(), 2u); // ping + the label-filtered list; NO create
+    EXPECT_TRUE(request_is(requests[1], "GET /containers/json")) << requests[1];
 }
 
 TEST(Runner, ReuseCreateBodyCarriesHashNotSessionLabel) {
     const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
     CannedHttpServer server({
+        ping_ok(),
         http_response(200, "OK", "[]"), // no running match
         created("fresh1"),
         started(),
@@ -188,16 +200,17 @@ TEST(Runner, ReuseCreateBodyCarriesHashNotSessionLabel) {
     }
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 3u); // list, create, start — and no DELETE on drop
+    ASSERT_EQ(requests.size(), 4u); // ping, list, create, start — no DELETE on drop
     // The create body is tagged for reuse discovery but NEVER session-labeled
     // (Ryuk would reap the container it is supposed to outlive).
-    EXPECT_NE(requests[1].find("org.testcontainers.reuse.hash"), std::string::npos) << requests[1];
-    EXPECT_NE(requests[1].find("org.testcontainers.managed-by"), std::string::npos) << requests[1];
-    EXPECT_EQ(requests[1].find("org.testcontainers.session-id"), std::string::npos) << requests[1];
+    EXPECT_NE(requests[2].find("org.testcontainers.reuse.hash"), std::string::npos) << requests[2];
+    EXPECT_NE(requests[2].find("org.testcontainers.managed-by"), std::string::npos) << requests[2];
+    EXPECT_EQ(requests[2].find("org.testcontainers.session-id"), std::string::npos) << requests[2];
 }
 
 TEST(Runner, HooksFireInOrderAroundCopy) {
     CannedHttpServer server({
+        ping_ok(),
         created("abc123"),
         http_response(200, "OK", "{}"), // PUT /containers/abc123/archive
         started(),
@@ -227,15 +240,15 @@ TEST(Runner, HooksFireInOrderAroundCopy) {
                                                 "started:abc123", "stopping:abc123"}));
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 4u);
+    ASSERT_EQ(requests.size(), 5u);
     // The copy-to PUT sits between create and start (created hook -> copy ->
     // starting hook -> start).
-    EXPECT_TRUE(request_is(requests[1], "PUT /containers/abc123/archive")) << requests[1];
-    EXPECT_TRUE(request_is(requests[2], "POST /containers/abc123/start")) << requests[2];
+    EXPECT_TRUE(request_is(requests[2], "PUT /containers/abc123/archive")) << requests[2];
+    EXPECT_TRUE(request_is(requests[3], "POST /containers/abc123/start")) << requests[3];
 }
 
 TEST(Runner, FailedStartRemovesPartialContainer) {
-    CannedHttpServer server({created("abc123"), server_error("boom"), removed()});
+    CannedHttpServer server({ping_ok(), created("abc123"), server_error("boom"), removed()});
     testcontainers::DockerClient client{server.host()};
 
     try {
@@ -247,12 +260,12 @@ TEST(Runner, FailedStartRemovesPartialContainer) {
     }
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 3u);
-    EXPECT_TRUE(request_is(requests[2], "DELETE /containers/abc123")) << requests[2];
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_TRUE(request_is(requests[3], "DELETE /containers/abc123")) << requests[3];
 }
 
 TEST(Runner, ThrowingCreatedHookRemovesContainer) {
-    CannedHttpServer server({created("abc123"), removed()});
+    CannedHttpServer server({ping_ok(), created("abc123"), removed()});
     testcontainers::DockerClient client{server.host()};
 
     ContainerRequest request = busybox_request();
@@ -263,12 +276,13 @@ TEST(Runner, ThrowingCreatedHookRemovesContainer) {
     EXPECT_THROW(Runner::run(client, request), std::runtime_error);
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 2u);
-    EXPECT_TRUE(request_is(requests[1], "DELETE /containers/abc123")) << requests[1];
+    ASSERT_EQ(requests.size(), 3u);
+    EXPECT_TRUE(request_is(requests[2], "DELETE /containers/abc123")) << requests[2];
 }
 
 TEST(Runner, RetryCreatesFreshContainer) {
     CannedHttpServer server({
+        ping_ok(),
         created("one"),
         server_error("first attempt fails"),
         removed(), // attempt 1
@@ -286,14 +300,15 @@ TEST(Runner, RetryCreatesFreshContainer) {
     }
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 6u);
-    EXPECT_TRUE(request_is(requests[2], "DELETE /containers/one")) << requests[2];
-    EXPECT_TRUE(request_is(requests[3], "POST /containers/create")) << requests[3];
-    EXPECT_TRUE(request_is(requests[5], "DELETE /containers/two")) << requests[5];
+    ASSERT_EQ(requests.size(), 7u);
+    EXPECT_TRUE(request_is(requests[3], "DELETE /containers/one")) << requests[3];
+    EXPECT_TRUE(request_is(requests[4], "POST /containers/create")) << requests[4];
+    EXPECT_TRUE(request_is(requests[6], "DELETE /containers/two")) << requests[6];
 }
 
 TEST(Runner, RetryExhaustionRethrowsLast) {
     CannedHttpServer server({
+        ping_ok(),
         created("one"),
         server_error("first", 500),
         removed(),
@@ -315,11 +330,12 @@ TEST(Runner, RetryExhaustionRethrowsLast) {
         EXPECT_EQ(e.resource_id(), "two");
     }
 
-    EXPECT_EQ(server.requests().size(), 6u);
+    EXPECT_EQ(server.requests().size(), 7u);
 }
 
 TEST(Runner, PullPolicyAlwaysPullsBeforeCreate) {
     CannedHttpServer server({
+        ping_ok(),
         http_response(200, "OK", "{\"status\":\"Pulling from library/busybox\"}\n"),
         created("abc123"),
         started(),
@@ -338,7 +354,7 @@ TEST(Runner, PullPolicyAlwaysPullsBeforeCreate) {
     }
 
     const auto requests = server.requests();
-    ASSERT_EQ(requests.size(), 4u);
-    EXPECT_TRUE(request_is(requests[0], "POST /images/create")) << requests[0];
-    EXPECT_TRUE(request_is(requests[1], "POST /containers/create")) << requests[1];
+    ASSERT_EQ(requests.size(), 5u);
+    EXPECT_TRUE(request_is(requests[1], "POST /images/create")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /containers/create")) << requests[2];
 }

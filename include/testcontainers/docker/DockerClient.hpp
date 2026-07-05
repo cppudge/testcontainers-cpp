@@ -87,23 +87,28 @@ public:
     // transfer it (a moved-into instance would be stuck in reuse mode with no
     // Session guard to end it, and two instances writing into one socket
     // would interleave requests). The source of a move keeps its session
-    // state, so its guard still tears it down.
-    DockerClient(const DockerClient& other) : host_(other.host_), timeouts_(other.timeouts_) {}
+    // state, so its guard still tears it down. The negotiated API version DOES
+    // carry over — it belongs to the daemon, not to the connection.
+    DockerClient(const DockerClient& other)
+        : host_(other.host_), timeouts_(other.timeouts_), api_prefix_(other.api_prefix_) {}
     DockerClient& operator=(const DockerClient& other) {
         if (this != &other) {
             host_ = other.host_;
             timeouts_ = other.timeouts_;
+            api_prefix_ = other.api_prefix_;
             session_enabled_ = false;
             session_transport_.reset();
         }
         return *this;
     }
     DockerClient(DockerClient&& other) noexcept
-        : host_(std::move(other.host_)), timeouts_(other.timeouts_) {}
+        : host_(std::move(other.host_)), timeouts_(other.timeouts_),
+          api_prefix_(std::move(other.api_prefix_)) {}
     DockerClient& operator=(DockerClient&& other) noexcept {
         if (this != &other) {
             host_ = std::move(other.host_);
             timeouts_ = other.timeouts_;
+            api_prefix_ = std::move(other.api_prefix_);
             session_enabled_ = false;
             session_transport_.reset();
         }
@@ -125,7 +130,10 @@ public:
     const docker::TransportTimeouts& transport_timeouts() const noexcept { return timeouts_; }
 
     /// Perform an HTTP request against the daemon and return the full response.
-    /// `target` is the path (e.g. "/_ping", "/v1.43/containers/json").
+    /// `target` is the path, sent VERBATIM (e.g. "/_ping",
+    /// "/v1.43/containers/json") — this raw escape hatch does no API-version
+    /// pinning; an unversioned path gets the daemon's default (newest) version.
+    /// The typed methods below all pin their paths to the negotiated version.
     Response request(std::string_view method, std::string_view target, std::string_view body = {},
                      const std::vector<std::pair<std::string, std::string>>& headers = {});
 
@@ -200,6 +208,18 @@ public:
     /// background consumption. Always streams (`follow=1`). Throws DockerError if the
     /// initial response is not 200.
     void follow_logs(const std::string& id, const LogOptions& opts, const LogConsumer& consumer);
+
+    /// Deadline-bounded follow_logs: same streaming, but the wait for the next
+    /// chunk is additionally bounded by the absolute `deadline` — when it
+    /// passes, the stream is closed and DeadlineExpired reported instead of
+    /// blocking until the container stops. Returns why the stream ended. Used
+    /// by the log wait strategy; also handy for "collect output for at most N
+    /// seconds" consumers. Throws like the unbounded overload (a deadline that
+    /// expires while CONNECTING or reading the response header surfaces as the
+    /// transport's own TransportTimeoutError, not as DeadlineExpired).
+    FollowEnd follow_logs(const std::string& id, const LogOptions& opts,
+                          const LogConsumer& consumer,
+                          std::chrono::steady_clock::time_point deadline);
 
     /// Run `cmd` inside the running container and capture its output and exit
     /// code, using default options. Equivalent to the `opts` overload with a
@@ -300,9 +320,28 @@ private:
     /// abruptly). Called by the outermost Session's destructor.
     void end_session() noexcept;
 
+    /// Shared body of both follow_logs overloads; nullopt = no deadline
+    /// (stream until the container stops or the consumer declines).
+    FollowEnd follow_logs_impl(const std::string& id, const LogOptions& opts,
+                               const LogConsumer& consumer,
+                               std::optional<std::chrono::steady_clock::time_point> deadline);
+
+    /// The "/v1.NN" prefix every typed method pins its path with. Negotiated
+    /// on first use — one unversioned `GET /_ping`, then
+    /// min(kClientApiVersion, the daemon's `Api-Version` header) — and cached
+    /// for the life of the instance (copies inherit it: the version belongs
+    /// to the daemon). "" when the daemon reveals no parsable version: paths
+    /// then stay unversioned (the daemon's default). Lazy mutation, same
+    /// thread-safety rule as the session state: one instance, one thread.
+    const std::string& api_prefix();
+
+    /// `api_prefix()` + `target` — the pinned form of an Engine API path.
+    std::string versioned(std::string_view target);
+
     DockerHost host_;
     docker::TransportTimeouts timeouts_;
-    bool session_enabled_ = false; ///< a Session is active on this instance
+    std::optional<std::string> api_prefix_; ///< negotiated "/v1.NN" ("" = none)
+    bool session_enabled_ = false;          ///< a Session is active on this instance
     std::shared_ptr<docker::ITransport> session_transport_; ///< kept-alive connection
 };
 

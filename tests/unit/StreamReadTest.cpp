@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -28,6 +30,10 @@
 //   StreamRead.RawStreamTreatsBrokenPipeAsCleanEnd - a peer-closed NAMED PIPE ends the stream with broken_pipe (not eof) — that is the normal completion on the primary Windows transport, never an error.
 //   StreamRead.RawConsumerDemuxesLeftoverFirst - stream_raw_to_consumer demuxes frames split between the header-parse leftover and the transport reads.
 //   StreamRead.RawConsumerStopsWhenConsumerReturnsFalse - returning false stops the raw stream delivery early.
+//   StreamRead.ReportsWhyDeliveryEnded - stream_body_to_consumer returns StreamEnded on EOF and ConsumerStopped on an early stop.
+//   StreamRead.DeadlineArmsIoTimeoutPerRead - with a deadline, the transport's io deadline is re-armed with a positive remaining budget before every read.
+//   StreamRead.TimedOutReadReportsDeadlineExpired - a read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
+//   StreamRead.ExpiredDeadlineEndsBeforeReading - a deadline already in the past reports DeadlineExpired without reading or delivering anything.
 
 using namespace testcontainers;
 namespace http = boost::beast::http;
@@ -66,8 +72,14 @@ public:
     }
     void shutdown_send() override {}
     bool supports_half_close() const noexcept override { return true; }
-    void set_io_timeout(std::optional<std::chrono::milliseconds> /*timeout*/) override {}
+    void set_io_timeout(std::optional<std::chrono::milliseconds> timeout) override {
+        io_timeouts_set.push_back(timeout);
+    }
     void close() override {}
+
+    /// Every set_io_timeout call, in order (the bounded delivery re-arms the
+    /// io deadline before each read).
+    std::vector<std::optional<std::chrono::milliseconds>> io_timeouts_set;
 
 private:
     std::vector<std::string> chunks_;
@@ -91,12 +103,13 @@ std::string frame(unsigned char kind, std::string_view payload) {
 
 constexpr const char* kHeader = "HTTP/1.1 200 OK\r\nServer: test\r\n\r\n";
 
-/// Read the header off the fake stream, then run stream_body_to_consumer,
-/// collecting (source, chunk) pairs until `keep_going` says stop.
-std::vector<std::pair<LogSource, std::string>>
-run_stream(std::vector<std::string> chunks, bool tty,
-           const std::function<bool(std::size_t delivered)>& keep_going = {}) {
-    FakeTransport transport(std::move(chunks));
+/// Read the header off `transport`, then run stream_body_to_consumer,
+/// collecting (source, chunk) pairs until `keep_going` says stop. Returns why
+/// the delivery ended (the collected chunks land in `out`).
+FollowEnd run_stream_on(docker::ITransport& transport, bool tty,
+                        std::vector<std::pair<LogSource, std::string>>& out,
+                        const std::function<bool(std::size_t delivered)>& keep_going = {},
+                        std::optional<std::chrono::steady_clock::time_point> deadline = {}) {
     docker::TransportStream stream{transport};
     boost::beast::flat_buffer buffer;
     http::response_parser<http::buffer_body> parser;
@@ -106,12 +119,23 @@ run_stream(std::vector<std::string> chunks, bool tty,
     http::read_header(stream, buffer, parser, ec);
     EXPECT_FALSE(ec) << ec.message();
 
+    return docker::stream_body_to_consumer(
+        transport, stream, buffer, parser, tty,
+        [&](LogSource source, std::string_view data) {
+            out.emplace_back(source, std::string(data));
+            return keep_going ? keep_going(out.size()) : true;
+        },
+        deadline);
+}
+
+/// One-shot convenience over run_stream_on for the tests that only care about
+/// the delivered chunks.
+std::vector<std::pair<LogSource, std::string>>
+run_stream(std::vector<std::string> chunks, bool tty,
+           const std::function<bool(std::size_t delivered)>& keep_going = {}) {
+    FakeTransport transport(std::move(chunks));
     std::vector<std::pair<LogSource, std::string>> out;
-    docker::stream_body_to_consumer(stream, buffer, parser, tty,
-                                    [&](LogSource source, std::string_view data) {
-                                        out.emplace_back(source, std::string(data));
-                                        return keep_going ? keep_going(out.size()) : true;
-                                    });
+    run_stream_on(transport, tty, out, keep_going);
     return out;
 }
 
@@ -249,6 +273,82 @@ TEST(StreamRead, RawConsumerStopsWhenConsumerReturnsFalse) {
 
     ASSERT_EQ(got.size(), 1u);
     EXPECT_EQ(got[0], "first");
+}
+
+TEST(StreamRead, ReportsWhyDeliveryEnded) {
+    const std::string body = frame(1, "first") + frame(1, "second");
+    {
+        FakeTransport transport({kHeader + body});
+        std::vector<std::pair<LogSource, std::string>> got;
+        EXPECT_EQ(run_stream_on(transport, /*tty*/ false, got), FollowEnd::StreamEnded);
+        EXPECT_EQ(got.size(), 2u);
+    }
+    {
+        FakeTransport transport({kHeader + body});
+        std::vector<std::pair<LogSource, std::string>> got;
+        EXPECT_EQ(run_stream_on(transport, /*tty*/ false, got,
+                                [](std::size_t delivered) { return delivered < 1; }),
+                  FollowEnd::ConsumerStopped);
+        EXPECT_EQ(got.size(), 1u);
+    }
+}
+
+TEST(StreamRead, DeadlineArmsIoTimeoutPerRead) {
+    const std::string body = frame(1, "one") + frame(2, "two");
+    FakeTransport transport({kHeader, body.substr(0, 10), body.substr(10)});
+    std::vector<std::pair<LogSource, std::string>> got;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    EXPECT_EQ(run_stream_on(transport, /*tty*/ false, got, {}, deadline), FollowEnd::StreamEnded);
+    EXPECT_EQ(joined(got, LogSource::Stdout), "one");
+    EXPECT_EQ(joined(got, LogSource::Stderr), "two");
+
+    // Every read was preceded by a re-arm with the remaining (positive,
+    // deadline-bounded) budget — this is what bounds a silent stream.
+    ASSERT_FALSE(transport.io_timeouts_set.empty());
+    for (const auto& timeout : transport.io_timeouts_set) {
+        ASSERT_TRUE(timeout.has_value());
+        EXPECT_GT(*timeout, std::chrono::milliseconds::zero());
+        EXPECT_LE(*timeout, std::chrono::minutes(5));
+    }
+}
+
+TEST(StreamRead, TimedOutReadReportsDeadlineExpired) {
+    // The re-armed io deadline firing surfaces as asio timed_out from the
+    // transport read; delivery must end with DeadlineExpired, keeping the
+    // chunks that made it.
+    FailingTransport transport({kHeader + frame(1, "partial")}, boost::asio::error::timed_out);
+    std::vector<std::pair<LogSource, std::string>> got;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    EXPECT_EQ(run_stream_on(transport, /*tty*/ false, got, {}, deadline),
+              FollowEnd::DeadlineExpired);
+    EXPECT_EQ(joined(got, LogSource::Stdout), "partial");
+}
+
+TEST(StreamRead, ExpiredDeadlineEndsBeforeReading) {
+    FakeTransport transport({kHeader + frame(1, "never delivered")});
+    docker::TransportStream stream{transport};
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::buffer_body> parser;
+    parser.body_limit(boost::none);
+    boost::system::error_code ec;
+    http::read_header(stream, buffer, parser, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const auto deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    bool delivered = false;
+    const FollowEnd end = docker::stream_body_to_consumer(
+        transport, stream, buffer, parser, /*tty*/ false,
+        [&](LogSource, std::string_view) {
+            delivered = true;
+            return true;
+        },
+        deadline);
+
+    EXPECT_EQ(end, FollowEnd::DeadlineExpired);
+    EXPECT_FALSE(delivered);
+    EXPECT_TRUE(transport.io_timeouts_set.empty()); // ended before any re-arm
 }
 
 TEST(StreamRead, TtyPassthroughIsRawStdout) {

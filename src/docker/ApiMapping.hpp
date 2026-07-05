@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -39,6 +40,20 @@ VolumeInspect parse_volume_inspect(const std::string& body);
 /// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
 /// the engine-OS detection in DockerClient can be unit-tested.
 std::string parse_server_os(const std::string& version_json);
+
+/// The newest Engine API version this client is written against. Every request
+/// is pinned to at most this version so daemon upgrades cannot silently change
+/// endpoint behavior underneath us. 1.44 covers everything the library uses
+/// (the newest-needed feature, `?platform=` on container create, is 1.41) and
+/// is the negotiation floor of daemons that have dropped the older versions.
+inline constexpr std::string_view kClientApiVersion = "1.44";
+
+/// Choose the API version to pin requests to: the smaller of kClientApiVersion
+/// and `daemon_reported` (the `Api-Version` header of `GET /_ping`), compared
+/// numerically per component — "1.9" is OLDER than "1.44". Returns "" when
+/// `daemon_reported` is empty or not "major.minor" digits; the caller then
+/// falls back to unversioned paths (the daemon's default version).
+std::string negotiate_api_version(std::string_view daemon_reported);
 
 /// Build the query string (including the leading '?', or "" when empty) for
 /// `POST /containers/create`. Appends `name=` and/or `platform=` when set, each

@@ -25,6 +25,11 @@
 //   WaitFor.CountOccurrencesBasics - count_occurrences counts disjoint matches, including at the ends, and 0 for no match.
 //   WaitFor.CountOccurrencesNonOverlapping - overlapping candidates count once per consumed match ("aaaa"/"aa" -> 2).
 //   WaitFor.CountOccurrencesEmptyNeedleIsZero - an empty needle yields 0 (never "instantly satisfied").
+//   WaitFor.OccurrenceCounterMatchesAcrossChunkBoundaries - the streaming counter finds a needle split at arbitrary chunk boundaries (single-byte feeds included).
+//   WaitFor.OccurrenceCounterAgreesWithSnapshotCount - for any chunking of the same text, the streaming count equals count_occurrences on the whole.
+//   WaitFor.OccurrenceCounterDoesNotRescanConsumedBytes - bytes consumed by a match cannot seed a new match with later chunks ("baa"+"a"/"aa" stays 1, like the snapshot count of "baaa").
+//   WaitFor.OccurrenceCounterEmptyNeedleCountsNothing - parity with count_occurrences.
+//   WaitFor.OccurrenceCounterMatchesAfterPrefixTrim - a match still lands after the internal >64KiB consumed-prefix compaction.
 
 using namespace testcontainers;
 
@@ -160,4 +165,72 @@ TEST(WaitFor, CountOccurrencesEmptyNeedleIsZero) {
     // An empty needle must not read as "message already seen".
     EXPECT_EQ(count_occurrences("anything", ""), 0u);
     EXPECT_EQ(count_occurrences("", ""), 0u);
+}
+
+TEST(WaitFor, OccurrenceCounterMatchesAcrossChunkBoundaries) {
+    using testcontainers::detail::OccurrenceCounter;
+
+    OccurrenceCounter split("Ready!");
+    split.feed("almost Rea");
+    EXPECT_EQ(split.count(), 0u);
+    split.feed("dy! and more");
+    EXPECT_EQ(split.count(), 1u);
+
+    OccurrenceCounter byte_by_byte("ready");
+    for (const char c : std::string("ready... ready")) {
+        byte_by_byte.feed(std::string_view(&c, 1));
+    }
+    EXPECT_EQ(byte_by_byte.count(), 2u);
+}
+
+TEST(WaitFor, OccurrenceCounterAgreesWithSnapshotCount) {
+    using testcontainers::detail::count_occurrences;
+    using testcontainers::detail::OccurrenceCounter;
+
+    const std::string text = "aabaaa ready aaaa ready-ready aa";
+    for (const std::string& needle : {std::string("aa"), std::string("ready"), std::string("a")}) {
+        for (std::size_t chunk = 1; chunk <= text.size(); ++chunk) {
+            OccurrenceCounter counter(needle);
+            for (std::size_t i = 0; i < text.size(); i += chunk) {
+                counter.feed(std::string_view(text).substr(i, chunk));
+            }
+            EXPECT_EQ(counter.count(), count_occurrences(text, needle))
+                << "needle '" << needle << "', chunk size " << chunk;
+        }
+    }
+}
+
+TEST(WaitFor, OccurrenceCounterDoesNotRescanConsumedBytes) {
+    using testcontainers::detail::OccurrenceCounter;
+
+    // "baa" + "a" is "baaa": one non-overlapping "aa" (at 1); the trailing 'a'
+    // must not pair with the match's consumed second 'a'.
+    OccurrenceCounter counter("aa");
+    counter.feed("baa");
+    EXPECT_EQ(counter.count(), 1u);
+    counter.feed("a");
+    EXPECT_EQ(counter.count(), 1u);
+    counter.feed("a"); // "baaaa": now a second disjoint "aa" exists
+    EXPECT_EQ(counter.count(), 2u);
+}
+
+TEST(WaitFor, OccurrenceCounterEmptyNeedleCountsNothing) {
+    using testcontainers::detail::OccurrenceCounter;
+
+    OccurrenceCounter counter("");
+    counter.feed("anything");
+    EXPECT_EQ(counter.count(), 0u);
+}
+
+TEST(WaitFor, OccurrenceCounterMatchesAfterPrefixTrim) {
+    using testcontainers::detail::OccurrenceCounter;
+
+    // Push the consumed prefix past the 64KiB compaction threshold, then check
+    // that a boundary-split match still lands (the kept tail must survive the
+    // trim intact).
+    OccurrenceCounter counter("marker");
+    counter.feed(std::string(70000, 'x') + "mar");
+    EXPECT_EQ(counter.count(), 0u);
+    counter.feed("ker");
+    EXPECT_EQ(counter.count(), 1u);
 }

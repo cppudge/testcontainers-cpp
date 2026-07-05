@@ -15,9 +15,9 @@ when it lands (adding a short note there if it needs one).
   portability code. `TC_WERROR` + unpinned runner gcc means occasional
   `-Wno-error=<warning>` maintenance when the runner image bumps the compiler.
   (`.github/workflows/ci.yml`)
-- **No Docker API version pinned** — all targets are unversioned (`/containers/create`),
-  relying on the daemon's default API version; behavior can shift across daemon upgrades.
-  Negotiate or pin `/v1.NN`. (`src/docker/DockerClient.cpp`)
+- **API version pin residuals** — negotiation is one `GET /_ping` per client INSTANCE (fresh
+  `from_environment()` clients re-ping; copies inherit). The raw `request()` escape hatch stays
+  unversioned by design. (`src/docker/DockerClient.cpp`)
 - **Error model residuals** — no `ConflictError` (dispatch on `status_code()==409`) and no
   `ContainerStartError` for non-timeout wait failures (both considered and deferred; the
   DockerError doc reserves the right to add status subtypes, so callers must not assume exact
@@ -35,15 +35,14 @@ when it lands (adding a short note there if it needs one).
   daemon used later in the same process gets labels but no crash-safe reaping (a per-daemon
   reaper map would be the full fix). A real Windows Ryuk (named-pipe mount + Windows reaper
   image) is unexplored — see docs/04. (`src/Reaper.*`)
-- **Log path costs** — the log wait re-fetches the full `tail=all` snapshot every 200ms;
-  reimplement on `follow_logs` (scan chunks incrementally, stop via the consumer).
-  `LogDemuxer::feed` does `pending_.erase(0, pos)` per chunk — O(n²) on many small chunks;
-  switch to a consumed offset / ring buffer. Wait probes open a fresh TCP connection +
-  `io_context` per probe (fine at 200ms polling; noted in case frequency increases).
-  (`src/WaitStrategies.cpp`, `src/docker/LogDemux.cpp`)
-- **follow_logs / streaming exec are blocking, cooperative-stop only** — the consumer must
-  return false to stop, and only when a next chunk arrives. A background-thread RAII log handle
-  with socket-level cancellation is not provided. (`src/docker/DockerClient.cpp`)
+- **Log path costs** — wait probes open a fresh TCP connection + `io_context` per probe (fine
+  at 200ms polling; noted in case frequency increases). The log wait itself streams over one
+  follow connection now, and `LogDemuxer::feed` compacts lazily via a consumed offset — both
+  former entries here are done. (`src/WaitStrategies.cpp`)
+- **follow_logs / streaming exec are blocking** — the consumer stops cooperatively (return
+  false on the next chunk) or, for follow_logs, via the deadline-bounded overload; streaming
+  exec has no deadline variant, and a background-thread RAII log handle with socket-level
+  cancellation is not provided. (`src/docker/DockerClient.cpp`)
 - **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec;
   stdin is written fully (then half-closed) BEFORE any output is read, so a command echoing a
   LARGE stdin back can backpressure the write into an io-deadline timeout (bounded, not a hang;

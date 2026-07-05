@@ -2,6 +2,7 @@
 
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "CannedHttpServer.hpp"
 #include "docker/ApiMapping.hpp"
@@ -36,6 +37,10 @@ using testcontainers::Error;
 using testcontainers::NotFoundError;
 using testcontainers::StartupTimeoutError;
 using testcontainers::TransportTimeoutError;
+
+/// The API-version negotiation `GET /_ping` every fresh client issues before
+/// its first typed call (no Api-Version header -> unversioned paths).
+std::string ping_ok() { return http_response(200, "OK", "OK"); }
 
 } // namespace
 
@@ -148,8 +153,9 @@ TEST(ErrorModel, OversizedBodyIsTruncatedInMessage) {
 }
 
 TEST(ErrorModel, Http404BecomesNotFoundError) {
-    CannedHttpServer server(
-        http_response(404, "Not Found", R"({"message":"No such container: deadbeef"})"));
+    CannedHttpServer server(std::vector<std::string>{
+        ping_ok(),
+        http_response(404, "Not Found", R"({"message":"No such container: deadbeef"})")});
     testcontainers::DockerClient client{server.host()};
 
     try {
@@ -163,7 +169,8 @@ TEST(ErrorModel, Http404BecomesNotFoundError) {
 }
 
 TEST(ErrorModel, Http500KeepsStatusOnDockerError) {
-    CannedHttpServer server(http_response(500, "Internal Server Error", R"({"message":"boom"})"));
+    CannedHttpServer server(std::vector<std::string>{
+        ping_ok(), http_response(500, "Internal Server Error", R"({"message":"boom"})")});
     testcontainers::DockerClient client{server.host()};
 
     try {
@@ -178,8 +185,8 @@ TEST(ErrorModel, Http500KeepsStatusOnDockerError) {
 }
 
 TEST(ErrorModel, HtmlThrough200BecomesDockerError) {
-    CannedHttpServer server(
-        http_response(200, "OK", "<html><body>captive portal says hi</body></html>"));
+    CannedHttpServer server(std::vector<std::string>{
+        ping_ok(), http_response(200, "OK", "<html><body>captive portal says hi</body></html>")});
     testcontainers::DockerClient client{server.host()};
 
     try {
@@ -193,6 +200,8 @@ TEST(ErrorModel, HtmlThrough200BecomesDockerError) {
 
 TEST(ErrorModel, CreateContainer404PullsAndRetries) {
     CannedHttpServer server({
+        // 0) GET /_ping -> the one-time API-version negotiation
+        ping_ok(),
         // 1) POST /containers/create -> 404 (image not present locally)
         http_response(404, "Not Found", R"({"message":"No such image: busybox:latest"})"),
         // 2) POST /images/create -> 200 with a clean progress stream

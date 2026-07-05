@@ -37,12 +37,45 @@ std::size_t count_occurrences(const std::string& haystack, const std::string& ne
     return count;
 }
 
+void OccurrenceCounter::feed(std::string_view chunk) {
+    if (needle_.empty()) {
+        return;
+    }
+    buffered_.append(chunk.data(), chunk.size());
+
+    std::size_t next = scan_from_;
+    std::size_t pos = next;
+    while ((pos = buffered_.find(needle_, pos)) != std::string::npos) {
+        pos += needle_.size(); // non-overlapping, like count_occurrences
+        next = pos;
+        ++count_;
+    }
+
+    // A future match can start no earlier than (a) right after the last match
+    // (its bytes are consumed — non-overlap) and (b) the last needle-1 bytes
+    // (anything earlier would already have matched above).
+    const std::size_t tail_start =
+        buffered_.size() < needle_.size() ? 0 : buffered_.size() - (needle_.size() - 1);
+    scan_from_ = std::max(next, tail_start);
+
+    // Trim the consumed prefix lazily so a chatty container's log volume does
+    // not accumulate (same compaction idea as LogDemuxer::feed).
+    if (scan_from_ > 65536) {
+        buffered_.erase(0, scan_from_);
+        scan_from_ = 0;
+    }
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
 
-/// Poll the container's logs every ~200ms until `text` has appeared `times`
-/// times in the selected stream(s), or the deadline passes (then throw).
+/// Stream the container's logs (history + follow, one connection) until `text`
+/// has appeared `times` times in the selected stream(s), or the deadline
+/// passes (then throw). If the stream ends first (the container stopped), a
+/// re-follow is retried every ~200ms — a restarting container can still
+/// produce the message — and an expired budget always gets one final snapshot
+/// check, so even `timeout=0` succeeds when the message is already logged.
 void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMessage& cond,
                   Clock::time_point deadline, bool tty) {
     using Source = wait::LogMessage::Source;
@@ -51,33 +84,84 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
     opts.include_stdout = cond.source != Source::Stderr;
     opts.include_stderr = cond.source != Source::Stdout;
     opts.tail = "all";
-    // A TTY container's log stream is raw/unframed: select the raw decode path so
-    // the polled snapshot is searchable instead of garbled multiplex bytes.
+    // A TTY container's log stream is raw/unframed: select the raw decode path
+    // so the log text is searchable instead of garbled multiplex bytes.
     opts.tty = tty;
 
-    const int needed = cond.times < 1 ? 1 : cond.times;
+    const auto needed = static_cast<std::size_t>(cond.times < 1 ? 1 : cond.times);
+
+    const auto timeout_error = [&](std::size_t seen) {
+        return StartupTimeoutError("Timed out waiting for log message \"" + cond.text + "\" (" +
+                                       std::to_string(seen) + "/" + std::to_string(needed) +
+                                       " occurrences) in container " + id,
+                                   id);
+    };
 
     for (;;) {
-        const ContainerLogs logs = client.logs(id, opts);
+        if (Clock::now() >= deadline) {
+            // Out of budget — one last snapshot check instead of a stream (the
+            // old polling loop also always checked at least once).
+            const ContainerLogs logs = client.logs(id, opts);
+            std::size_t seen = 0;
+            if (cond.source != Source::Stderr) {
+                seen += count_occurrences(logs.stdout_data, cond.text);
+            }
+            if (cond.source != Source::Stdout) {
+                seen += count_occurrences(logs.stderr_data, cond.text);
+            }
+            if (seen >= needed) {
+                return;
+            }
+            throw timeout_error(seen);
+        }
 
-        std::size_t seen = 0;
-        if (cond.source != Source::Stderr) {
-            seen += count_occurrences(logs.stdout_data, cond.text);
+        // One follow stream (tail=all: history first, then live output)
+        // replaces the old fetch-everything-every-200ms polling. Counters are
+        // per source so an interleaved other-stream frame cannot split a
+        // match; a re-follow after a stream end recounts from scratch (the
+        // history is re-delivered), so the counters reset with it.
+        OccurrenceCounter seen_on_stdout(cond.text);
+        OccurrenceCounter seen_on_stderr(cond.text);
+        const auto seen = [&] { return seen_on_stdout.count() + seen_on_stderr.count(); };
+
+        FollowEnd end{};
+        try {
+            end = client.follow_logs(
+                id, opts,
+                [&](LogSource source, std::string_view data) {
+                    // The daemon already filters streams via the include
+                    // flags, but a TTY stream arrives unattributed (all
+                    // "stdout") — keep the client-side source check so a
+                    // stderr-only wait cannot match TTY output, exactly like
+                    // the snapshot path it replaced.
+                    if (source == LogSource::Stdout ? cond.source != Source::Stderr
+                                                    : cond.source != Source::Stdout) {
+                        (source == LogSource::Stdout ? seen_on_stdout : seen_on_stderr).feed(data);
+                    }
+                    return seen() < needed && Clock::now() < deadline;
+                },
+                deadline);
+        } catch (const TransportTimeoutError&) {
+            // The transport's own deadline fired while connecting or reading
+            // the response header. At the wait deadline that IS the readiness
+            // timeout; earlier it is a real transport problem — propagate.
+            if (Clock::now() >= deadline) {
+                throw timeout_error(seen());
+            }
+            throw;
         }
-        if (cond.source != Source::Stdout) {
-            seen += count_occurrences(logs.stderr_data, cond.text);
-        }
-        if (seen >= static_cast<std::size_t>(needed)) {
+
+        if (seen() >= needed) {
             return;
         }
-
-        if (Clock::now() >= deadline) {
-            throw StartupTimeoutError("Timed out waiting for log message \"" + cond.text + "\" (" +
-                                          std::to_string(seen) + "/" + std::to_string(needed) +
-                                          " occurrences) in container " + id,
-                                      id);
+        if (end == FollowEnd::DeadlineExpired || Clock::now() >= deadline) {
+            throw timeout_error(seen());
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        // FollowEnd::StreamEnded: the container stopped. Its logs are final
+        // unless it restarts (restart policy), so pause briefly and re-follow;
+        // an expired budget lands in the final snapshot check above.
+        std::this_thread::sleep_until(std::min(Clock::now() + std::chrono::milliseconds(200),
+                                               deadline + std::chrono::milliseconds(1)));
     }
 }
 
@@ -335,13 +419,14 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait::Port
 void wait_until_ready(DockerClient& client, const std::string& id,
                       const std::vector<WaitFor>& waits, std::chrono::milliseconds timeout,
                       bool tty) {
-    // Readiness polling re-inspects / re-fetches logs every ~200ms; reuse one
-    // daemon connection for the whole wait instead of paying a fresh connect
-    // (a TCP/TLS handshake on remote daemons) per poll. Every daemon call in
-    // the polls is a GET, so the session's stale-connection retry is safe.
-    // This scoped reuse is the one deviation from the connection-per-request
-    // default shared with the Rust reference (bollard pools nothing); see the
-    // DockerClient class doc and TODO.md for the analysis.
+    // Readiness polling re-inspects every ~200ms (the log wait streams over
+    // its own follow connection instead); reuse one daemon connection for the
+    // polling GETs instead of paying a fresh connect (a TCP/TLS handshake on
+    // remote daemons) per poll. Every daemon call in the polls is a GET, so
+    // the session's stale-connection retry is safe. This scoped reuse is the
+    // one deviation from the connection-per-request default shared with the
+    // Rust reference (bollard pools nothing); see the DockerClient class doc
+    // and TODO.md for the analysis.
     const DockerClient::Session session(client);
 
     const Clock::time_point deadline = Clock::now() + timeout;

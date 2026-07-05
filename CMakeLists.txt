@@ -166,6 +166,7 @@ if(BUILD_TESTING)
         tests/unit/HostResolveTest.cpp
         tests/unit/ResponseTest.cpp
         tests/unit/ApiMappingTest.cpp
+        tests/unit/ApiVersionTest.cpp
         tests/unit/AuthTest.cpp
         tests/unit/LogDemuxTest.cpp
         tests/unit/StreamReadTest.cpp

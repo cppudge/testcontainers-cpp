@@ -20,6 +20,9 @@
 //   WaitStrategies.HttpWaitReachesNginx - an nginx container with wait_for::http("/", tcp(80), 200) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.PortWaitReachesRedis - a redis container with wait_for::listening_port(tcp(6379)) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.TimeoutThrowsStartupTimeoutError - a log wait on a message that never appears throws StartupTimeoutError (carrying the container id) and is NOT catchable as DockerError - readiness is not a daemon failure.
+//   WaitStrategies.LogMessageAppearsLate - a marker echoed ~1s after start is caught by the streaming log wait while the container keeps running.
+//   WaitStrategies.LogWaitSucceedsOnExitedContainer - the wait matches a marker in the log HISTORY of a container that already exited (the follow stream ends right after replaying it).
+//   WaitStrategies.LogWaitCountsRepeatedMessage - times=2 gates on the SECOND occurrence: the wait returns only after the delayed repeat is streamed.
 //   WindowsWaitStrategies.ExitCodeWaitSucceeds - cmd `exit 7` with wait_for::exit_code(7) on a Windows container.
 //   WindowsWaitStrategies.StdoutMessageWait - wait_for::stdout_message gates on a marker echoed by a Windows container that keeps running.
 //   WindowsWaitStrategies.HealthcheckWaitBecomesHealthy - a Windows container with a passing shell healthcheck reaches healthy.
@@ -98,6 +101,38 @@ TEST_F(WaitStrategies, TimeoutThrowsStartupTimeoutError) {
                   std::string::npos)
             << e.what();
     }
+}
+
+TEST_F(WaitStrategies, LogMessageAppearsLate) {
+    // The marker is NOT in the initial history — it arrives ~1s into the
+    // follow stream, so this exercises the live half of the streaming wait.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cmd({"sh", "-c", "sleep 1; echo tc-late-marker; sleep 60"})
+                      .with_wait(wait_for::log("tc-late-marker"))
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WaitStrategies, LogWaitSucceedsOnExitedContainer) {
+    // The container exits immediately after echoing; by the time the wait
+    // follows the log it is usually replaying pure history and hits the
+    // stream's end — the marker must still satisfy the wait.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cmd({"sh", "-c", "echo tc-done-marker"})
+                      .with_wait(wait_for::log("tc-done-marker"))
+                      .start();
+    EXPECT_FALSE(c.is_running());
+}
+
+TEST_F(WaitStrategies, LogWaitCountsRepeatedMessage) {
+    // Two occurrences, the second delayed: the wait must count across the
+    // history/live boundary and return only once both have streamed.
+    Container c =
+        GenericImage("alpine", "3.20")
+            .with_cmd({"sh", "-c", "echo tc-twice-marker; sleep 1; echo tc-twice-marker; sleep 60"})
+            .with_wait(wait_for::log("tc-twice-marker", 2))
+            .start();
+    EXPECT_TRUE(c.is_running());
 }
 
 // The Windows mirror. The http wait has no Windows twin (it would need a real

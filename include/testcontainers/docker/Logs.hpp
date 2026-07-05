@@ -39,4 +39,12 @@ enum class LogSource { Stdout, Stderr };
 /// receiving, false to stop the stream early.
 using LogConsumer = std::function<bool(LogSource source, std::string_view data)>;
 
+/// Why a deadline-bounded log/output stream ended (the follow_logs overload
+/// taking a deadline reports this instead of blocking indefinitely).
+enum class FollowEnd {
+    ConsumerStopped, ///< the consumer returned false
+    StreamEnded,     ///< the stream completed (the container stopped) or was reset
+    DeadlineExpired, ///< the deadline passed while waiting for more output
+};
+
 } // namespace testcontainers

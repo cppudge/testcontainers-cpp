@@ -15,6 +15,8 @@
 //   DockerLogs.FetchesStdoutAndStderr - a container's stdout and stderr are fetched and demultiplexed into separate streams without cross-contamination.
 //   DockerLogs.FollowStreamsUntilExit - follow_logs streams a short-lived container's lines in order and returns when the container exits.
 //   DockerLogs.FollowStopsEarlyWhenConsumerReturnsFalse - follow_logs returns promptly once the consumer returns false on a long-running container, proving frames stream incrementally (not batched to EOF).
+//   DockerLogs.FollowWithDeadlineUnblocksSilentStream - the deadline-bounded follow_logs overload returns DeadlineExpired promptly on a running-but-silent container (the unbounded overload would block for the container's lifetime).
+//   DockerLogs.FollowWithDeadlineReportsStreamEnded - with budget to spare, the bounded overload still delivers everything and reports StreamEnded when the container exits.
 
 using namespace testcontainers;
 
@@ -157,4 +159,58 @@ TEST_F(DockerLogs, FollowStopsEarlyWhenConsumerReturnsFalse) {
 
     // line-1 must be present; later lines may or may not be, depending on timing.
     EXPECT_NE(collected.find("line-1"), std::string::npos) << "stdout was: " << collected;
+}
+
+TEST_F(DockerLogs, FollowWithDeadlineUnblocksSilentStream) {
+    client.pull_image(kImage);
+
+    CreateContainerSpec spec;
+    spec.image = kImage;
+    spec.cmd = {"sleep", "60"}; // runs long, logs NOTHING
+
+    const std::string id = client.create_container(spec);
+    ASSERT_FALSE(id.empty());
+    RemoveGuard guard{client, id};
+
+    client.start_container(id);
+
+    // A silent stream never wakes the consumer, so only the deadline can end
+    // this follow — the unbounded overload would sit here for the full 60s.
+    const auto started = std::chrono::steady_clock::now();
+    const FollowEnd end = client.follow_logs(
+        id, LogOptions{}, [&](LogSource, std::string_view) { return true; },
+        started + std::chrono::milliseconds(1500));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    EXPECT_EQ(end, FollowEnd::DeadlineExpired);
+    EXPECT_GE(elapsed, std::chrono::milliseconds(1400)); // not an instant error
+    EXPECT_LT(elapsed, std::chrono::seconds(15)) << "deadline did not bound the follow";
+}
+
+TEST_F(DockerLogs, FollowWithDeadlineReportsStreamEnded) {
+    client.pull_image(kImage);
+
+    CreateContainerSpec spec;
+    spec.image = kImage;
+    spec.cmd = {"sh", "-c", "echo bounded-line; sleep 0.3"};
+
+    const std::string id = client.create_container(spec);
+    ASSERT_FALSE(id.empty());
+    RemoveGuard guard{client, id};
+
+    client.start_container(id);
+
+    std::string collected;
+    const FollowEnd end = client.follow_logs(
+        id, LogOptions{},
+        [&](LogSource source, std::string_view data) {
+            if (source == LogSource::Stdout) {
+                collected.append(data.data(), data.size());
+            }
+            return true;
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(60));
+
+    EXPECT_EQ(end, FollowEnd::StreamEnded);
+    EXPECT_NE(collected.find("bounded-line"), std::string::npos) << "stdout was: " << collected;
 }

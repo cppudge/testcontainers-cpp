@@ -175,6 +175,26 @@ DockerClient::DockerClient(DockerHost host) : host_(std::move(host)) {}
 
 DockerClient DockerClient::from_environment() { return DockerClient(DockerHost::resolve()); }
 
+const std::string& DockerClient::api_prefix() {
+    if (!api_prefix_) {
+        // One unversioned round-trip; the daemon's version middleware stamps
+        // its newest supported version on the reply. A daemon that answers
+        // without a parsable Api-Version (or a non-2xx) is cached as "no pin":
+        // unversioned paths keep working against its default version. A
+        // TRANSPORT failure propagates uncached — the call that triggered the
+        // negotiation would have failed the same way, and a later retry gets a
+        // fresh chance to negotiate.
+        const Response res = request("GET", "/_ping");
+        const std::string negotiated = docker::negotiate_api_version(res.header("Api-Version"));
+        api_prefix_ = negotiated.empty() ? std::string{} : "/v" + negotiated;
+    }
+    return *api_prefix_;
+}
+
+std::string DockerClient::versioned(std::string_view target) {
+    return api_prefix() + std::string(target);
+}
+
 Response DockerClient::request(std::string_view method, std::string_view target,
                                std::string_view body,
                                const std::vector<std::pair<std::string, std::string>>& headers) {
@@ -324,7 +344,7 @@ std::string DockerClient::server_os() {
         }
     }
 
-    const Response res = request("GET", "/version");
+    const Response res = request("GET", versioned("/version"));
     if (!res.ok()) {
         throw_status_error("server_os: GET /version", res);
     }
@@ -349,7 +369,7 @@ bool DockerClient::is_windows_engine() {
 void DockerClient::pull_image(const std::string& image, const std::optional<RegistryAuth>& auth) {
     const auto [name, tag] = docker::split_image(image);
     const std::string target =
-        "/images/create?fromImage=" + url_encode(name) + "&tag=" + url_encode(tag);
+        versioned("/images/create?fromImage=" + url_encode(name) + "&tag=" + url_encode(tag));
 
     // Use the explicit credentials if given, else auto-resolve from the Docker
     // config for this image's registry. No credentials -> a plain public pull.
@@ -371,8 +391,8 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
 void DockerClient::build_image(const std::string& context_tar,
                                const docker::BuildOptions& options) {
     const std::string target =
-        "/build" +
-        docker::build_build_query(options, [](const std::string& v) { return url_encode(v); });
+        versioned("/build" + docker::build_build_query(
+                                 options, [](const std::string& v) { return url_encode(v); }));
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/x-tar"}};
 
@@ -396,8 +416,9 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
                                            const std::optional<RegistryAuth>& auth) {
     const std::string body = docker::build_create_body(spec).dump();
     const std::string target =
-        "/containers/create" +
-        docker::build_create_query(spec, [](const std::string& v) { return url_encode(v); });
+        versioned("/containers/create" + docker::build_create_query(spec, [](const std::string& v) {
+                      return url_encode(v);
+                  }));
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
@@ -415,7 +436,7 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
 }
 
 void DockerClient::start_container(const std::string& id) {
-    const Response res = request("POST", "/containers/" + id + "/start");
+    const Response res = request("POST", versioned("/containers/" + id + "/start"));
     // 204 = started, 304 = already started.
     if (res.status_code != 204 && res.status_code != 304) {
         throw_status_error("start_container(" + id + ")", res, id);
@@ -423,7 +444,7 @@ void DockerClient::start_container(const std::string& id) {
 }
 
 std::string DockerClient::inspect_container_raw(const std::string& id) {
-    const Response res = request("GET", "/containers/" + id + "/json");
+    const Response res = request("GET", versioned("/containers/" + id + "/json"));
     if (res.status_code != 200) {
         // 404 ("no such container") becomes NotFoundError via throw_status_error.
         throw_status_error("inspect_container(" + id + ")", res, id);
@@ -438,7 +459,7 @@ ContainerInspect DockerClient::inspect_container(const std::string& id) {
 std::vector<ContainerSummary>
 DockerClient::list_containers(const std::vector<std::pair<std::string, std::string>>& label_filters,
                               bool all) {
-    std::string target = "/containers/json?all=";
+    std::string target = versioned("/containers/json?all=");
     target += all ? "1" : "0";
     if (!label_filters.empty()) {
         // Docker's filters map each category (here "label") to an array of values;
@@ -459,7 +480,7 @@ DockerClient::list_containers(const std::vector<std::pair<std::string, std::stri
 }
 
 void DockerClient::stop_container(const std::string& id, std::optional<int> timeout_secs) {
-    std::string target = "/containers/" + id + "/stop";
+    std::string target = versioned("/containers/" + id + "/stop");
     // The daemon replies only after the container stopped — up to the full
     // grace period with zero bytes on the wire — so the io deadline must
     // outlive the grace or a long stop would read as a transport timeout.
@@ -485,8 +506,9 @@ void DockerClient::stop_container(const std::string& id, std::optional<int> time
 }
 
 void DockerClient::remove_container(const std::string& id, bool force, bool remove_volumes) {
-    const std::string target = "/containers/" + id + "?force=" + (force ? "true" : "false") +
-                               "&v=" + (remove_volumes ? "true" : "false");
+    const std::string target =
+        versioned("/containers/" + id + "?force=" + (force ? "true" : "false") +
+                  "&v=" + (remove_volumes ? "true" : "false"));
     const Response res = request("DELETE", target);
     if (res.status_code != 204) {
         throw_status_error("remove_container(" + id + ")", res, id);
@@ -509,7 +531,7 @@ std::string build_logs_target(const std::string& id, const LogOptions& opts, boo
 ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) {
     // Snapshot: follow=0 (requesting follow=1 here would block http::read until
     // the container stops). Streaming callers use follow_logs().
-    const std::string target = build_logs_target(id, opts, /*follow*/ false);
+    const std::string target = versioned(build_logs_target(id, opts, /*follow*/ false));
 
     // Not const: the body / demuxed halves are moved out below.
     Response res = request("GET", target);
@@ -533,17 +555,33 @@ ContainerLogs DockerClient::logs(const std::string& id, const LogOptions& opts) 
 
 void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
                                const LogConsumer& consumer) {
+    follow_logs_impl(id, opts, consumer, std::nullopt);
+}
+
+FollowEnd DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
+                                    const LogConsumer& consumer,
+                                    std::chrono::steady_clock::time_point deadline) {
+    return follow_logs_impl(id, opts, consumer, deadline);
+}
+
+FollowEnd
+DockerClient::follow_logs_impl(const std::string& id, const LogOptions& opts,
+                               const LogConsumer& consumer,
+                               std::optional<std::chrono::steady_clock::time_point> deadline) {
+    // The version pin may trigger the one-time negotiation round-trip; resolve
+    // it before connecting the streaming transport so that connection's clock
+    // (and a caller's deadline) is not spent on an unrelated exchange.
+    const std::string target = versioned(build_logs_target(id, opts, /*follow*/ true));
+
     auto transport = docker::connect(host_, timeouts_);
     docker::TransportStream stream{*transport};
-
-    // Streaming: follow=1; everything else mirrors logs().
-    const std::string target = build_logs_target(id, opts, /*follow*/ true);
 
     const auto req = make_request<http::empty_body>(http::verb::get, target, host_);
 
     boost::system::error_code ec;
     http::write(stream, req, ec);
     if (ec) {
+        transport->close();
         docker::throw_transport_error(
             "Failed to send request to Docker (GET " + target + "): " + ec.message(), ec);
     }
@@ -559,24 +597,30 @@ void DockerClient::follow_logs(const std::string& id, const LogOptions& opts,
     read_ok_header(*transport, stream, buffer, parser,
                    "follow_logs(" + id + ") (GET " + target + ")", id);
     // Following logs legitimately idles until the container writes the next
-    // line — from here on, waiting indefinitely is the intended behavior.
-    transport->set_io_timeout(std::nullopt);
-    docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+    // line: with no deadline, waiting indefinitely is the intended behavior;
+    // with one, stream_body_to_consumer re-arms the io deadline per read from
+    // the remaining budget.
+    if (!deadline) {
+        transport->set_io_timeout(std::nullopt);
+    }
+    const FollowEnd end = docker::stream_body_to_consumer(*transport, stream, buffer, parser,
+                                                          opts.tty, consumer, deadline);
 
     // Closing the connection tells Docker to stop streaming (also on early stop).
     transport->close();
+    return end;
 }
 
 namespace {
 
 /// Create an exec instance (`POST /containers/{id}/exec`) and return its id.
-/// `create_body` is the JSON from build_exec_create_body.
-std::string exec_create(DockerClient& client, const std::string& id,
+/// `target` is the (already version-pinned) exec-create path; `create_body` is
+/// the JSON from build_exec_create_body.
+std::string exec_create(DockerClient& client, const std::string& id, const std::string& target,
                         const std::string& create_body) {
     const std::vector<std::pair<std::string, std::string>> json_headers = {
         {"Content-Type", "application/json"}};
-    const Response res =
-        client.request("POST", "/containers/" + id + "/exec", create_body, json_headers);
+    const Response res = client.request("POST", target, create_body, json_headers);
     if (res.status_code != 201) {
         throw_status_error("exec create on container " + id, res, id);
     }
@@ -598,12 +642,13 @@ void require_stdin_capable(docker::ITransport& transport, const ExecOptions& opt
 }
 
 /// Open the exec start stream on an already-connected `stream`: write
-/// `POST /exec/{exec_id}/start`. On a write error, closes `transport` and
-/// throws. The caller must then read the response HEADER, feed stdin via
-/// `feed_stdin` (if any), and read the (multiplexed or, with tty, raw) body.
+/// `POST /exec/{exec_id}/start` (`start_target`, already version-pinned). On a
+/// write error, closes `transport` and throws. The caller must then read the
+/// response HEADER, feed stdin via `feed_stdin` (if any), and read the
+/// (multiplexed or, with tty, raw) body.
 void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
-                const DockerHost& host, const std::string& exec_id, const ExecOptions& opts) {
-    const std::string start_target = "/exec/" + exec_id + "/start";
+                const DockerHost& host, const std::string& exec_id, const std::string& start_target,
+                const ExecOptions& opts) {
     const std::string start_body =
         std::string(R"({"Detach":false,"Tty":)") + (opts.tty ? "true" : "false") + "}";
 
@@ -683,13 +728,13 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
     // 2) Create the exec instance (carrying env / workdir / user / privileged /
     //    tty / attach-stdin from opts).
-    const std::string exec_id =
-        exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
+    const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
+                                            docker::build_exec_create_body(cmd, opts).dump());
 
     // 3) Start the exec over the raw transport stream so stdin can (when
     //    requested) be hijacked after the response header (see feed_stdin).
     docker::TransportStream stream{*transport};
-    exec_start(*transport, stream, host_, exec_id, opts);
+    exec_start(*transport, stream, host_, exec_id, versioned("/exec/" + exec_id + "/start"), opts);
 
     // 4) Read the whole start response. With Tty=false this is the multiplexed
     //    frame stream (demux it); with Tty=true it is raw, unframed bytes.
@@ -743,7 +788,7 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     }
 
     // 5) Inspect the exec for the exit code.
-    const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
+    const Response inspect_res = request("GET", versioned("/exec/" + exec_id + "/json"));
     if (inspect_res.status_code != 200) {
         throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
     }
@@ -758,13 +803,13 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     require_stdin_capable(*transport, opts);
 
     // 2) Create the exec instance.
-    const std::string exec_id =
-        exec_create(*this, id, docker::build_exec_create_body(cmd, opts).dump());
+    const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
+                                            docker::build_exec_create_body(cmd, opts).dump());
 
     // 3) Start the exec over the raw stream so output can be consumed
     //    incrementally (and stdin hijacked after the header — see feed_stdin).
     docker::TransportStream stream{*transport};
-    exec_start(*transport, stream, host_, exec_id, opts);
+    exec_start(*transport, stream, host_, exec_id, versioned("/exec/" + exec_id + "/start"), opts);
 
     // 4) Read the response incrementally, delivering chunks to consumer as they
     //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
@@ -789,13 +834,13 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
             std::string_view(static_cast<const char*>(leftover.data()), leftover.size()), opts.tty,
             consumer);
     } else {
-        docker::stream_body_to_consumer(stream, buffer, parser, opts.tty, consumer);
+        docker::stream_body_to_consumer(*transport, stream, buffer, parser, opts.tty, consumer);
     }
     transport->close();
 
     // 5) Inspect the exec for the exit code; the output went to consumer, so
     //    stdout_data / stderr_data are left empty.
-    const Response inspect_res = request("GET", "/exec/" + exec_id + "/json");
+    const Response inspect_res = request("GET", versioned("/exec/" + exec_id + "/json"));
     if (inspect_res.status_code != 200) {
         throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
     }
@@ -808,7 +853,8 @@ void DockerClient::copy_to_container(const std::string& id, const CopyToContaine
     const std::string tar = docker::build_tar(source);
     // Always extract at the root with relative entry names (build_tar strips the
     // leading '/'), so the target's parent directory must already exist.
-    const std::string target = "/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false";
+    const std::string target =
+        versioned("/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false");
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/x-tar"}};
 
@@ -820,7 +866,8 @@ void DockerClient::copy_to_container(const std::string& id, const CopyToContaine
 
 std::string DockerClient::copy_from_container(const std::string& id,
                                               const std::string& container_path) {
-    const std::string target = "/containers/" + id + "/archive?path=" + url_encode(container_path);
+    const std::string target =
+        versioned("/containers/" + id + "/archive?path=" + url_encode(container_path));
 
     const Response res = request("GET", target);
     if (res.status_code == 200) {
@@ -849,7 +896,7 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
-    const Response res = request("POST", "/networks/create", body, headers);
+    const Response res = request("POST", versioned("/networks/create"), body, headers);
     if (res.status_code != 201) {
         throw_status_error("create_network('" + spec.name + "')", res, spec.name);
     }
@@ -862,7 +909,8 @@ void DockerClient::connect_network(const std::string& network_id, const std::str
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
-    const Response res = request("POST", "/networks/" + network_id + "/connect", body, headers);
+    const Response res =
+        request("POST", versioned("/networks/" + network_id + "/connect"), body, headers);
     // 200 (older daemons) or 204 (current) both mean connected.
     if (res.status_code != 200 && res.status_code != 204) {
         throw_status_error("connect_network(" + network_id + ", " + container_id + ")", res,
@@ -879,7 +927,7 @@ void DockerClient::disconnect_network(const std::string& network_id,
         {"Content-Type", "application/json"}};
 
     const Response res =
-        request("POST", "/networks/" + network_id + "/disconnect", body.dump(), headers);
+        request("POST", versioned("/networks/" + network_id + "/disconnect"), body.dump(), headers);
     // 200 (older daemons) or 204 (current) both mean disconnected.
     if (res.status_code != 200 && res.status_code != 204) {
         throw_status_error("disconnect_network(" + network_id + ", " + container_id + ")", res,
@@ -888,7 +936,7 @@ void DockerClient::disconnect_network(const std::string& network_id,
 }
 
 void DockerClient::remove_network(const std::string& id) {
-    const Response res = request("DELETE", "/networks/" + id);
+    const Response res = request("DELETE", versioned("/networks/" + id));
     if (res.status_code != 204) {
         throw_status_error("remove_network(" + id + ")", res, id);
     }
@@ -899,7 +947,7 @@ std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
-    const Response res = request("POST", "/volumes/create", body, headers);
+    const Response res = request("POST", versioned("/volumes/create"), body, headers);
     if (res.status_code != 201) {
         throw_status_error("create_volume('" + spec.name + "')", res, spec.name);
     }
@@ -907,7 +955,7 @@ std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
 }
 
 VolumeInspect DockerClient::inspect_volume(const std::string& name) {
-    const Response res = request("GET", "/volumes/" + url_encode(name));
+    const Response res = request("GET", versioned("/volumes/" + url_encode(name)));
     if (res.status_code != 200) {
         // 404 ("no such volume") becomes NotFoundError via throw_status_error.
         throw_status_error("inspect_volume('" + name + "')", res, name);
@@ -917,7 +965,7 @@ VolumeInspect DockerClient::inspect_volume(const std::string& name) {
 
 void DockerClient::remove_volume(const std::string& name, bool force) {
     const std::string target =
-        "/volumes/" + url_encode(name) + "?force=" + (force ? "true" : "false");
+        versioned("/volumes/" + url_encode(name) + "?force=" + (force ? "true" : "false"));
     const Response res = request("DELETE", target);
     if (res.status_code != 204) {
         // 404 (absent, -> NotFoundError) or 409 (still in use) both arrive here.

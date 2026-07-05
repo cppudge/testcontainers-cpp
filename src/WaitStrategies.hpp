@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstddef>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "testcontainers/WaitFor.hpp"
@@ -18,6 +20,28 @@ namespace detail {
 /// exposed for unit testing.
 std::size_t count_occurrences(const std::string& haystack, const std::string& needle);
 
+/// Streaming sibling of count_occurrences: feed the log text chunk by chunk
+/// (at arbitrary split points) and count non-overlapping occurrences of
+/// `needle` across the whole sequence — a match spanning a chunk boundary
+/// still counts. Memory stays bounded by the unmatched tail: the consumed
+/// prefix is trimmed once it grows large, so a chatty container does not
+/// accumulate its entire log. Empty needle: counts nothing (parity with
+/// count_occurrences). Exposed for unit testing.
+class OccurrenceCounter {
+public:
+    explicit OccurrenceCounter(std::string needle) : needle_(std::move(needle)) {}
+
+    void feed(std::string_view chunk);
+
+    std::size_t count() const noexcept { return count_; }
+
+private:
+    std::string needle_;
+    std::string buffered_;      ///< unscanned tail (plus a trimmed-lazily prefix)
+    std::size_t scan_from_ = 0; ///< first byte a future match may start at
+    std::size_t count_ = 0;
+};
+
 /// Run each readiness condition in `waits` in order, under a single shared
 /// deadline (`timeout` from the moment this is called). Throws
 /// StartupTimeoutError if the deadline passes before a condition is met (and
@@ -26,7 +50,8 @@ std::size_t count_occurrences(const std::string& haystack, const std::string& ne
 /// container was created with Tty=true, so log-based waits read its raw/unframed
 /// stream instead of demuxing (which would garble it).
 ///
-/// Polling-based for now (see TODO for the follow-stream optimization).
+/// Inspect-based conditions poll every ~200ms over one kept-alive connection;
+/// the log condition streams the log (deadline-bounded follow) instead.
 void wait_until_ready(DockerClient& client, const std::string& id,
                       const std::vector<WaitFor>& waits, std::chrono::milliseconds timeout,
                       bool tty = false);

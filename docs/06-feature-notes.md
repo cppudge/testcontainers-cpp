@@ -36,6 +36,17 @@ idle close) do — hence GET-only reuse + retry-once. A full shared pool is defe
 "option B"). Residual: a Session makes that one instance non-thread-safe while active; copies
 stay independent.
 
+**API version pin** (2026-07-05) — every typed `DockerClient` method pins its path to
+`/v1.NN`, negotiated once per client instance the way the docker CLI does it: one unversioned
+`GET /_ping`, then `min(kClientApiVersion = 1.44, daemon's Api-Version header)`, compared
+numerically ("1.9" < "1.44"). 1.44 covers everything the library uses (newest need:
+`?platform=` on create, 1.41) and is the negotiation floor of daemons that dropped the old
+versions; an old daemon wins with its own version. Copies inherit the negotiated version (the
+drop-time DELETE of a `Container` handle re-uses it — no second ping); a daemon that reveals no
+parsable version falls back to unversioned paths (its default version, the old behavior). The
+raw `request()` escape hatch stays deliberately unversioned. Residual: negotiation is lazy
+per-instance state — same "one instance, one thread" rule as sessions.
+
 **Docker host resolution** (`DockerHost::resolve`, `src/docker/HostResolve.hpp`) — the
 testcontainers order, first hit wins: `DOCKER_HOST` → `docker.host` in
 `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT` / `currentContext`) →
@@ -84,11 +95,19 @@ changed file at the same path still reuses. Reused containers are never auto-rem
 prune externally (label sweep on the reuse-hash label).
 
 **Wait strategies** — log message / fixed duration / exit(+code) / healthcheck / HTTP probe /
-listening port, run in order under one shared startup timeout; the whole polling loop runs
+listening port, run in order under one shared startup timeout; the inspect-based polls run
 inside a `DockerClient::Session`. `wait_for::listening_port` probes the published HOST port
 only (no in-container listen check), so a port published before the process binds could read
 ready early. HTTP/TCP probes are deadline-bounded per probe (min(time left, 5s), which absorbs
 Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost").
+
+**Log wait streams** (2026-07-05) — the log-message wait rides ONE deadline-bounded follow
+stream (`follow_logs(..., deadline)` → `FollowEnd`, re-arming the transport io deadline per
+read) instead of re-fetching the full `tail=all` snapshot every 200ms; occurrences are counted
+incrementally per stream (`detail::OccurrenceCounter`, chunk-boundary-safe, memory bounded by
+the unmatched tail). If the stream ends (container stopped) it re-follows after ~200ms — a
+restart-policy container can still produce the message — and an already-expired budget gets one
+final snapshot check, so `timeout=0` with the message already logged still succeeds.
 
 ## Container features
 
