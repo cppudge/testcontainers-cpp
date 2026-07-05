@@ -1,0 +1,14 @@
+# LeakSanitizer suppressions (wired up by the CI sanitizers job via
+# LSAN_OPTIONS=suppressions=...).
+#
+# OpenSSL 3 lazily allocates per-thread DRBG + error state on any thread that
+# touches crypto. For a thread that exits before the process does, nothing
+# frees that state: OPENSSL_cleanup only handles the calling thread plus
+# globals, and OPENSSL_thread_stop from the exiting thread does not release
+# it in this static-OpenSSL build (verified empirically — the tunnel teardown
+# runs, the report stays byte-identical). The host-access sidecar's tunnel
+# pump thread is exactly such a thread; the retained state is ~7.5 KB once
+# per tunnel, not a growth path. The frame below pins the suppression to
+# libssh2's RNG entry point so genuine OpenSSL object leaks (SSL_CTX, BIO,
+# EVP_PKEY, ...) still fail the job.
+leak:_libssh2_openssl_random

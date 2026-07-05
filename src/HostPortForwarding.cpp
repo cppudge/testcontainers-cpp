@@ -13,6 +13,7 @@
 #include <boost/asio.hpp>
 #include <libssh2.h>
 #include <nlohmann/json.hpp>
+#include <openssl/crypto.h> // OPENSSL_thread_stop (pump-thread state cleanup)
 
 #ifndef _WIN32
 #include <sys/select.h> // select() for the tunnel pump (winsock covers Windows)
@@ -135,7 +136,15 @@ public:
             throw;
         }
 
-        pump_ = std::thread([this] { loop(); });
+        // OPENSSL_thread_stop: libssh2's crypto backend (OpenSSL 3) lazily
+        // allocates per-thread DRBG + error state on this thread at the first
+        // keepalive; without the explicit stop that state outlives the thread
+        // (the auto TLS-destructor cleanup does not fire here) and reads as a
+        // leak under LeakSanitizer.
+        pump_ = std::thread([this] {
+            loop();
+            OPENSSL_thread_stop();
+        });
     }
 
     SshTunnel(const SshTunnel&) = delete;
@@ -501,6 +510,13 @@ struct HostPortForwarder::State {
 };
 
 HostPortForwarder& HostPortForwarder::instance() {
+    // Initialize OpenSSL BEFORE the static below is constructed. Exit-time
+    // handlers run newest-first, so this makes OPENSSL_cleanup run AFTER the
+    // forwarder's destructor. Left to lazy init (the first SSH handshake,
+    // inside the already-constructed forwarder), the order inverts: cleanup
+    // tears OpenSSL down first, and the tunnel teardown that follows
+    // re-allocates crypto state nothing will ever free.
+    OPENSSL_init_crypto(0, nullptr);
     static HostPortForwarder forwarder;
     return forwarder;
 }

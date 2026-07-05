@@ -252,15 +252,22 @@ jobs:
       # detect_container_overflow needs whole-program instrumentation to be
       # sound; with uninstrumented deps reading our std::string buffers
       # (libarchive, OpenSSL) it false-positives, so it is off by design.
+      # fast_unwind_on_malloc=0 (slow DWARF unwinder) because the fast one
+      # cannot walk the frame-pointer-less Conan OpenSSL: leak stacks would
+      # collapse to two frames, unmatchable by .lsan-suppressions.txt and
+      # useless for triage. The suite is daemon-I/O-bound, so the extra
+      # allocation cost stays in the noise.
       - name: Unit tests (sanitized)
         env:
-          ASAN_OPTIONS: detect_container_overflow=0
+          ASAN_OPTIONS: detect_container_overflow=0:fast_unwind_on_malloc=0
+          LSAN_OPTIONS: suppressions=.lsan-suppressions.txt
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./build/ninja/bin/tc_unit_tests --gtest_brief=1
 
       - name: Integration tests (sanitized)
         timeout-minutes: 30
         env:
-          ASAN_OPTIONS: detect_container_overflow=0
+          ASAN_OPTIONS: detect_container_overflow=0:fast_unwind_on_malloc=0
+          LSAN_OPTIONS: suppressions=.lsan-suppressions.txt
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./build/ninja/bin/tc_integration_tests
