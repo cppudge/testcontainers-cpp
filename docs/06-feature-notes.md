@@ -246,5 +246,9 @@ paths — Conan (CMakeDeps-generated configs; the installed lib/cmake is deleted
 package to not shadow them) and plain `cmake --install` (installed package config; its
 find_dependency calls prefer CONFIG mode because the exported target links Conan-named
 dep targets). `shared` is validated away on Windows — the sources carry no export macros.
-ConanCenter-specific work (conandata.yml recipe shape, unforced dependency options,
-compiler floor in validate()) is scoped in TODO.md.
+The ConanCenter-shaped recipe (2026-07-05) is staged verbatim in
+`packaging/conan-center/` — release-tarball sources pinned by sha256, no forced
+dependency options (verified against a fully compiled default Boost on gcc, msvc and
+clang-15), compiler floor gcc 12 / clang 15 / apple-clang 15 / msvc 193, and
+`cpp_info.requires` scoping consumers to `boost::headers` instead of the umbrella.
+Submission process and the recipe-vs-recipe split are documented in its README.

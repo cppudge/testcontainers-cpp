@@ -107,6 +107,18 @@ class TestcontainersCppConan(ConanFile):
         self.cpp_info.set_property("cmake_file_name", "testcontainers")
         self.cpp_info.set_property("cmake_target_name", "testcontainers::testcontainers")
         self.cpp_info.libs = ["testcontainers"]
+        # Scope the transitive link lines to what the static lib really needs:
+        # only Boost's HEADERS component (Beast/Asio/System are header-only) —
+        # without this, consumers would inherit the boost root target and link
+        # every compiled libboost_*.
+        self.cpp_info.requires = [
+            "boost::headers",
+            "openssl::ssl",
+            "openssl::crypto",
+            "nlohmann_json::nlohmann_json",
+            "libarchive::libarchive",
+            "libssh2::libssh2",
+        ]
         if self.settings.os == "Windows":
             # Named-pipe / socket transport.
             self.cpp_info.system_libs = ["ws2_32", "mswsock", "crypt32"]

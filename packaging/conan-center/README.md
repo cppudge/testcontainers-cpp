@@ -18,8 +18,9 @@ Verify locally (the tarball must be published — tag first):
         --version=0.1.0-alpha.1 --build=missing -s compiler.cppstd=20
 
 Releasing a new version: bump `TC_VERSION_FULL`, tag `v<version>`, publish the GitHub
-Release, then add the new version + tarball sha256 to `config.yml` / `conandata.yml`
-(CCI accepts only the latest version in the initial submission).
+Release, then add the version key to BOTH `config.yml` and `conandata.yml`, and the
+tarball's sha256 to `conandata.yml` (CCI accepts only the latest version in the initial
+submission).
 
 Submission: fork conan-center-index, copy `recipes/testcontainers-cpp/` in, open a PR;
 their CI builds ~30 configurations (Linux gcc/clang, Windows msvc, macOS apple-clang,
