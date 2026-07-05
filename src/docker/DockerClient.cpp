@@ -180,9 +180,10 @@ const std::string& DockerClient::api_prefix() {
         return *api_prefix_;
     }
     // One unversioned round-trip; the daemon's version middleware stamps its
-    // newest supported version on the reply. A daemon that answers without a
-    // parsable Api-Version (or a non-2xx) is cached as "no pin": unversioned
-    // paths keep working against its default version. A TRANSPORT failure
+    // newest supported version on EVERY reply (errors included), so the
+    // header is read regardless of the ping's status. Only a reply without a
+    // parsable Api-Version is cached as "no pin": unversioned paths keep
+    // working against the daemon's default version. A TRANSPORT failure
     // propagates uncached — the call that triggered the negotiation would
     // have failed the same way, and a later retry gets a fresh chance to
     // negotiate.
@@ -901,6 +902,15 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
         throw_status_error("create_network('" + spec.name + "')", res, spec.name);
     }
     return docker::expect_string_field(res.body, "Id", "create_network('" + spec.name + "')");
+}
+
+std::string DockerClient::inspect_network_raw(const std::string& id) {
+    const Response res = request("GET", versioned("/networks/" + id));
+    if (res.status_code != 200) {
+        // 404 ("no such network") becomes NotFoundError via throw_status_error.
+        throw_status_error("inspect_network(" + id + ")", res, id);
+    }
+    return res.body;
 }
 
 void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,

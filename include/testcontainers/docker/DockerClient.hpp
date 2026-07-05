@@ -101,14 +101,21 @@ public:
         }
         return *this;
     }
+    // The moved-from source stays usable (it keeps its session state), so its
+    // api_prefix_ is reset to "not negotiated yet": moving out of the optional
+    // alone would leave it engaged with an empty string — silently unpinned
+    // instead of renegotiating on its next typed call.
     DockerClient(DockerClient&& other) noexcept
         : host_(std::move(other.host_)), timeouts_(other.timeouts_),
-          api_prefix_(std::move(other.api_prefix_)) {}
+          api_prefix_(std::move(other.api_prefix_)) {
+        other.api_prefix_.reset();
+    }
     DockerClient& operator=(DockerClient&& other) noexcept {
         if (this != &other) {
             host_ = std::move(other.host_);
             timeouts_ = other.timeouts_;
             api_prefix_ = std::move(other.api_prefix_);
+            other.api_prefix_.reset();
             session_enabled_ = false;
             session_transport_.reset();
         }
@@ -278,6 +285,12 @@ public:
 
     /// `POST /networks/create` from a full spec; returns the new network id.
     std::string create_network(const NetworkCreateSpec& spec);
+
+    /// `GET /networks/{id}` — the RAW inspect JSON for a network (`id` may be
+    /// a name or an id, as the Docker API accepts both), so callers can read
+    /// fields no typed struct models yet. Throws DockerError on any non-200
+    /// (NotFoundError on 404).
+    std::string inspect_network_raw(const std::string& id);
 
     /// `POST /networks/{id}/connect` — attach an existing container, optionally with
     /// DNS aliases on this network.

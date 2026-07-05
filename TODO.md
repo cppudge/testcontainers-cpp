@@ -74,7 +74,8 @@ when it lands (adding a short note there if it needs one).
 - **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
   still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
   surface Memory/CpuQuota/etc., so those can't be asserted via inspect.
-- **Networks** — no network inspect; IPAM supports a single Subnet/Gateway pair (no multiple
+- **Networks** — network inspect is raw JSON only (`inspect_network_raw`, no typed struct /
+  parse guard); IPAM supports a single Subnet/Gateway pair (no multiple
   pools / IPRange / aux addresses); no process-wide dedup (each `create()` makes a new network).
 - **Volumes** — no `list_volumes` / prune / anonymous-volume management; `populate` spins up a
   real helper container per call (no batching).

@@ -484,15 +484,10 @@ std::string ip_on_network(DockerClient& client, const std::string& container_id,
 }
 
 /// Resolve a network reference (name or id, as accepted by the Docker API)
-/// to its NAME — the key `NetworkSettings.Networks` uses.
+/// to its NAME — the key `NetworkSettings.Networks` uses. inspect_network_raw
+/// throws the typed error (NotFoundError on 404) for a bad reference.
 std::string resolve_network_name(DockerClient& client, const std::string& ref) {
-    Response res = client.request("GET", "/networks/" + ref);
-    if (!res.ok()) {
-        throw DockerError("inspecting network '" + ref + "' failed: HTTP " +
-                              std::to_string(res.status_code) + " " + res.body,
-                          res.status_code, ref);
-    }
-    return nlohmann::json::parse(res.body).at("Name").get<std::string>();
+    return nlohmann::json::parse(client.inspect_network_raw(ref)).at("Name").get<std::string>();
 }
 
 } // namespace
