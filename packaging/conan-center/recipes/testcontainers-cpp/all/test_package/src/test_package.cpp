@@ -1,22 +1,12 @@
 #include <iostream>
 
-#include <testcontainers/GenericImage.hpp>
 #include <testcontainers/version.hpp>
 
-// Consumer smoke test, run by `conan create` with no Docker daemon around:
-// exercises a public header beyond version.hpp (the request builder never
-// talks to the daemon) and prints the dependency report, whose libarchive /
-// OpenSSL calls prove the transitive link lines of the static library.
+// Consumer smoke test, run by `conan create` with no Docker daemon around.
+// dependency_report() calls into libarchive/OpenSSL at runtime, proving the
+// static library's transitive link lines — CCI wants exactly this and no
+// more: test the packaged artifacts, not the library's API.
 int main() {
-    using namespace testcontainers;
-
-    GenericImage image("alpine", "3.20");
-    image.with_env("TC_SMOKE", "1").with_wait(wait_for::log("ready"));
-
-    std::cout << dependency_report();
-    if (version().empty()) {
-        std::cerr << "version() is empty\n";
-        return 1;
-    }
-    return 0;
+    std::cout << testcontainers::dependency_report();
+    return testcontainers::version().empty() ? 1 : 0;
 }

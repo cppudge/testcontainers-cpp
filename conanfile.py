@@ -22,6 +22,8 @@ class TestcontainersCppRecipe(ConanFile):
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
     options = {"shared": [True, False], "fPIC": [True, False]}
+    # Conan-managed shared/fPIC boilerplate (del fPIC on Windows / when shared).
+    implements = ["auto_shared_fpic"]
     default_options = {
         "shared": False,
         "fPIC": True,
@@ -69,14 +71,6 @@ class TestcontainersCppRecipe(ConanFile):
         if not match:
             raise ConanException("could not parse TC_VERSION_FULL from CMakeLists.txt")
         self.version = match.group(1)
-
-    def config_options(self):
-        if self.settings.os == "Windows":
-            self.options.rm_safe("fPIC")
-
-    def configure(self):
-        if self.options.shared:
-            self.options.rm_safe("fPIC")
 
     def validate(self):
         # The public headers use C++20 (concepts-free, but <=17 won't parse

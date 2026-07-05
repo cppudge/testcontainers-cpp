@@ -223,7 +223,9 @@ jobs:
       # edit to one that misses the other would silently skew the submitted
       # copy, so byte-compare them here (cheapest job, no configure).
       - name: Check the CCI test_package copy is in sync
-        run: diff -r test_package packaging/conan-center/recipes/testcontainers-cpp/all/test_package
+        run: >
+          diff -r --exclude=build --exclude=CMakeUserPresets.json
+          test_package packaging/conan-center/recipes/testcontainers-cpp/all/test_package
 
   # clang-tidy over the Ninja compile database with the checked-in .clang-tidy
   # set (the same one clangd uses in-editor). The wheel pins the analyzer

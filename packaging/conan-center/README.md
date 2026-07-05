@@ -22,6 +22,14 @@ Release, then add the version key to BOTH `config.yml` and `conandata.yml`, and 
 tarball's sha256 to `conandata.yml` (CCI accepts only the latest version in the initial
 submission).
 
-Submission: fork conan-center-index, copy `recipes/testcontainers-cpp/` in, open a PR;
-their CI builds ~30 configurations (Linux gcc/clang, Windows msvc, macOS apple-clang,
-static/shared, multiple cppstds) and community review follows.
+Submission: fork conan-center-index, copy `recipes/testcontainers-cpp/` in (copy the
+GIT-TRACKED files only — a naive `cp -r` would drag `test_package/build/` litter into
+the PR), reference a package-request issue (`fixes #N`), open the PR titled
+`testcontainers-cpp/<version>: new recipe`; their CI builds ~30 configurations and two
+maintainer approvals are required.
+
+**Known submission blocker (2026-07 readiness review):** CCI's version model expects a
+released tag or the dated `0.0.0.cci.YYYYMMDD` snapshot form; a semver PRERELEASE like
+`0.1.0-alpha.1` will very likely be pushed back on (it is also invisible to consumers'
+version ranges by default). Before the actual PR, cut a stable `v0.1.0` release and
+re-pin `config.yml`/`conandata.yml` to it.
