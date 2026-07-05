@@ -21,7 +21,7 @@
 //   WaitStrategies.PortWaitReachesRedis - a redis container with wait_for::listening_port(tcp(6379)) starts, publishes a reachable host port, and is running.
 //   WaitStrategies.TimeoutThrowsStartupTimeoutError - a log wait on a message that never appears throws StartupTimeoutError (carrying the container id) and is NOT catchable as DockerError - readiness is not a daemon failure.
 //   WaitStrategies.LogMessageAppearsLate - a marker echoed ~1s after start is caught by the streaming log wait while the container keeps running.
-//   WaitStrategies.LogWaitSucceedsOnExitedContainer - the wait matches a marker in the log HISTORY of a container that already exited (the follow stream ends right after replaying it).
+//   WaitStrategies.LogWaitSucceedsOnExitedContainer - after an exit wait guarantees the container is gone, the log wait still matches the marker in the exited container's log HISTORY (the follow stream ends right after replaying it).
 //   WaitStrategies.LogWaitCountsRepeatedMessage - times=2 gates on the SECOND occurrence: the wait returns only after the delayed repeat is streamed.
 //   WindowsWaitStrategies.ExitCodeWaitSucceeds - cmd `exit 7` with wait_for::exit_code(7) on a Windows container.
 //   WindowsWaitStrategies.StdoutMessageWait - wait_for::stdout_message gates on a marker echoed by a Windows container that keeps running.
@@ -114,11 +114,15 @@ TEST_F(WaitStrategies, LogMessageAppearsLate) {
 }
 
 TEST_F(WaitStrategies, LogWaitSucceedsOnExitedContainer) {
-    // The container exits immediately after echoing; by the time the wait
-    // follows the log it is usually replaying pure history and hits the
-    // stream's end — the marker must still satisfy the wait.
+    // Waits run in order: the exit wait GUARANTEES the container is gone
+    // before the log wait even starts, so the log wait can only succeed by
+    // replaying the exited container's log history (the follow stream ends
+    // right after delivering it). A single log wait would be racy the other
+    // way around — streaming catches the marker at echo time, often while the
+    // container is still alive.
     Container c = GenericImage("alpine", "3.20")
                       .with_cmd({"sh", "-c", "echo tc-done-marker"})
+                      .with_wait(wait_for::exit())
                       .with_wait(wait_for::log("tc-done-marker"))
                       .start();
     EXPECT_FALSE(c.is_running());
