@@ -42,12 +42,20 @@ namespace {
 
 /// The container's IPv4 address on `network`, scraped from the raw inspect
 /// JSON (ContainerInspect does not model per-network endpoint settings).
-/// Assumes the endpoint's "IPAddress" key follows the network-name key in the
-/// body (true for every daemon we drive) and that the random network name
-/// collides with nothing else in it.
+/// The search is anchored at the NetworkSettings "Networks" object: the
+/// network NAME also appears earlier as HostConfig.NetworkMode, and on
+/// daemons that still emit the legacy (empty) NetworkSettings.IPAddress
+/// field an unanchored search would scrape that instead. Assumes the
+/// endpoint's "IPAddress" key follows the network-name key (true for every
+/// daemon we drive) and that the random network name collides with nothing
+/// else inside "Networks".
 std::string ip_on_network(DockerClient& client, const std::string& id, const std::string& network) {
     const std::string body = client.request("GET", "/containers/" + id + "/json").body;
-    const std::size_t net_at = body.find("\"" + network + "\"");
+    const std::size_t networks_at = body.find("\"Networks\"");
+    if (networks_at == std::string::npos) {
+        return "";
+    }
+    const std::size_t net_at = body.find("\"" + network + "\"", networks_at);
     if (net_at == std::string::npos) {
         return "";
     }
