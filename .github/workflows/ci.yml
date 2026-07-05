@@ -155,6 +155,54 @@ jobs:
             build/ninja/bin/tc_integration_tests.pdb
           if-no-files-found: ignore
 
+  # The consumer's view of the library: `conan create` builds the package from
+  # the recipe and then builds + runs test_package against it (find_package,
+  # link, run — no Docker needed), catching install-tree and package_info
+  # mistakes the in-repo builds never see. macOS appears ONLY here, and is the
+  # one job that runs the unit suite on apple-clang (skip_test=False); Linux
+  # and Windows skip the test build — their unit suites already run above.
+  conan-package:
+    name: conan create (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            skip_test: 'True'
+          - os: windows-2022
+            skip_test: 'True'
+          - os: macos-14
+            skip_test: 'False'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install conan
+        run: pipx install conan
+
+      # The global Conan home this time (no preset / cmake-conan provider in
+      # this flow): cache the package storage only — profiles are re-detected
+      # every run.
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-create-${{ matrix.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-create-${{ matrix.os }}-
+
+      - name: Detect profile
+        run: conan profile detect --force
+
+      # cppstd=20 is required by the recipe's validate() — detected profiles
+      # default to gnu17 and the toolchain would honor that, so an explicit
+      # setting is the correct (loud) contract, not a workaround.
+      - name: conan create
+        run: >
+          conan create . --build=missing
+          -s compiler.cppstd=20
+          -c tools.build:skip_test=${{ matrix.skip_test }}
+
   # Formatting gate: the tree must be byte-identical to what the PINNED
   # clang-format produces (.clang-format documents the local install command).
   # Seconds of runtime — no cache, no configure.

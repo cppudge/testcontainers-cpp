@@ -24,7 +24,13 @@ endif()
 
 # ===== Project =====
 cmake_minimum_required(VERSION 3.20)
-project(testcontainers VERSION 0.1.0 LANGUAGES CXX)
+# The ONE place the version lives. version.cpp compiles it in (see the
+# set_source_files_properties below), conanfile.py's set_version() parses it
+# out, and project() takes the numeric prefix (CMake versions cannot carry a
+# "-alpha.N" prerelease suffix).
+set(TC_VERSION_FULL "0.1.0-alpha.1")
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" TC_VERSION_NUMERIC "${TC_VERSION_FULL}")
+project(testcontainers VERSION ${TC_VERSION_NUMERIC} LANGUAGES CXX)
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
     set(CMAKE_CXX_STANDARD 20)
@@ -37,6 +43,13 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(TC_BUILD_EXAMPLES "Build examples" ON)
 
 if(BUILD_SHARED_LIBS)
+    if(WIN32)
+        # The sources carry no dllexport macros, so a Windows DLL would export
+        # no symbols and consumers could not link against it. Fail loudly
+        # instead of producing an unusable binary.
+        message(FATAL_ERROR "BUILD_SHARED_LIBS is not supported on Windows "
+                            "(the library has no symbol export macros yet)")
+    endif()
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 if(MSVC)
@@ -106,6 +119,10 @@ add_library(testcontainers
     src/compose/ComposeClients.cpp
 )
 add_library(testcontainers::testcontainers ALIAS testcontainers)
+# Only version.cpp sees the version macro, so a version bump relinks one
+# object instead of rebuilding the world.
+set_source_files_properties(src/version.cpp PROPERTIES
+    COMPILE_DEFINITIONS TC_VERSION_STRING="${TC_VERSION_FULL}")
 tc_apply_warnings(testcontainers)
 if(MSVC)
     # The library reads env vars via portable std::getenv (the _s variant is
@@ -264,6 +281,7 @@ endif()
 
 # ===== Install =====
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 install(TARGETS testcontainers
     EXPORT testcontainersTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -274,4 +292,26 @@ install(TARGETS testcontainers
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.hpp"
+)
+
+# CMake package config for NON-Conan consumers: after `cmake --install`,
+# `find_package(testcontainers)` imports testcontainers::testcontainers.
+# (Conan consumers never see these files — the recipe's package() deletes
+# them because CMakeDeps generates its own.)
+install(EXPORT testcontainersTargets
+    NAMESPACE testcontainers::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/testcontainers
+)
+configure_package_config_file(cmake/testcontainersConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/testcontainersConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/testcontainers
+)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/testcontainersConfigVersion.cmake
+    COMPATIBILITY SameMinorVersion
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/testcontainersConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/testcontainersConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/testcontainers
 )

@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+# testcontainers is a static library whose third-party dependencies are
+# PRIVATE, so consumers still need their link lines ($<LINK_ONLY:...> in the
+# exported target). The dependency TARGET NAMES below follow Conan's CMakeDeps
+# naming (boost::boost, Libssh2::libssh2, ...) — the supported non-Conan
+# consumption path is therefore "deps provided by `conan install`, library
+# consumed via this config". Purely system-package dependency resolution would
+# need find modules that reproduce those target names.
+include(CMakeFindDependencyMacro)
+find_dependency(Boost)
+find_dependency(OpenSSL)
+find_dependency(nlohmann_json)
+find_dependency(LibArchive)
+find_dependency(Libssh2)
+if(NOT WIN32)
+    find_dependency(Threads)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/testcontainersTargets.cmake")
+
+check_required_components(testcontainers)

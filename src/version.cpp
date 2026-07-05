@@ -12,7 +12,9 @@
 
 namespace testcontainers {
 
-std::string version() { return "0.1.0-alpha.0"; }
+// TC_VERSION_STRING is stamped on this one translation unit by CMakeLists.txt
+// from TC_VERSION_FULL — the single place the version is written.
+std::string version() { return TC_VERSION_STRING; }
 
 std::string dependency_report() {
     std::ostringstream os;

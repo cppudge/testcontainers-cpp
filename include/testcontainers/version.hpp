@@ -4,7 +4,8 @@
 
 namespace testcontainers {
 
-/// Library version string, e.g. "0.1.0-alpha.0".
+/// Library version string — the full semver, including any prerelease
+/// suffix (e.g. "1.2.3" or "1.2.3-alpha.4").
 std::string version();
 
 /// Human-readable report of the versions of the bundled third-party
