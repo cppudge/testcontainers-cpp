@@ -32,13 +32,6 @@
 
 using namespace testcontainers;
 
-// Everything below lives in an anonymous namespace so this alias — not the
-// global ::wait(2) that macOS system headers drag in — is what unqualified
-// `wait::` finds. At global scope the using-directive above would make the
-// name ambiguous on macOS.
-namespace {
-namespace wait = testcontainers::wait;
-
 TEST(GenericImage, DefaultsTagAndTimeout) {
     const GenericImage img("redis");
     EXPECT_EQ(img.image(), "redis");
@@ -80,8 +73,8 @@ TEST(GenericImage, GettersReflectBuilders) {
     EXPECT_EQ(img.labels()[0].second, "tc");
 
     ASSERT_EQ(img.waits().size(), 1u);
-    ASSERT_TRUE(std::holds_alternative<wait::LogMessage>(img.waits()[0]));
-    EXPECT_EQ(std::get<wait::LogMessage>(img.waits()[0]).text, "Ready");
+    ASSERT_TRUE(std::holds_alternative<wait_for::LogMessage>(img.waits()[0]));
+    EXPECT_EQ(std::get<wait_for::LogMessage>(img.waits()[0]).text, "Ready");
 
     EXPECT_EQ(img.startup_timeout(), std::chrono::milliseconds(5000));
 }
@@ -311,7 +304,7 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     ASSERT_EQ(req.copy_to_sources.size(), 1u);
     EXPECT_EQ(req.copy_to_sources[0].target(), "/tmp/hello.txt");
     ASSERT_EQ(req.waits.size(), 1u);
-    EXPECT_TRUE(std::holds_alternative<wait::LogMessage>(req.waits[0]));
+    EXPECT_TRUE(std::holds_alternative<wait_for::LogMessage>(req.waits[0]));
     EXPECT_EQ(req.startup_timeout, std::chrono::milliseconds(5000));
     EXPECT_TRUE(req.registry_auth.has_value());
     EXPECT_EQ(req.pull_policy, ImagePullPolicy::Always);
@@ -340,5 +333,3 @@ TEST(GenericImage, ExposedHostPortsAccumulateAndSnapshot) {
     // the snapshot must NOT have touched the create spec.
     EXPECT_TRUE(req.spec.extra_hosts.empty());
 }
-
-} // namespace

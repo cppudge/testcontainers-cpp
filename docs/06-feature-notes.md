@@ -96,7 +96,9 @@ prune externally (label sweep on the reuse-hash label).
 
 **Wait strategies** — log message / fixed duration / exit(+code) / healthcheck / HTTP probe /
 listening port, run in order under one shared startup timeout; the inspect-based polls run
-inside a `DockerClient::Session`. `wait_for::listening_port` probes the published HOST port
+inside a `DockerClient::Session`. The alternative TYPES live in `wait_for::` next to the
+factories (2026-07-05, pre-0.1.0 rename): the former `testcontainers::wait` namespace was
+ambiguous against POSIX `::wait(2)` under `using namespace testcontainers;` on macOS. `wait_for::listening_port` probes the published HOST port
 only (no in-container listen check), so a port published before the process binds could read
 ready early. HTTP/TCP probes are deadline-bounded per probe (min(time left, 5s), which absorbs
 Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost").

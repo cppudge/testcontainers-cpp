@@ -33,72 +33,65 @@
 
 using namespace testcontainers;
 
-// Everything below lives in an anonymous namespace so this alias — not the
-// global ::wait(2) that macOS system headers drag in — is what unqualified
-// `wait::` finds. At global scope the using-directive above would make the
-// name ambiguous on macOS.
-namespace {
-namespace wait = testcontainers::wait;
-
 TEST(WaitFor, StdoutMessageFactory) {
     const WaitFor w = wait_for::stdout_message("ready", 3);
-    ASSERT_TRUE(std::holds_alternative<wait::LogMessage>(w));
-    const auto& m = std::get<wait::LogMessage>(w);
+    ASSERT_TRUE(std::holds_alternative<wait_for::LogMessage>(w));
+    const auto& m = std::get<wait_for::LogMessage>(w);
     EXPECT_EQ(m.text, "ready");
     EXPECT_EQ(m.times, 3);
-    EXPECT_EQ(m.source, wait::LogMessage::Source::Stdout);
+    EXPECT_EQ(m.source, wait_for::LogMessage::Source::Stdout);
 }
 
 TEST(WaitFor, StderrMessageFactory) {
     const WaitFor w = wait_for::stderr_message("boom");
-    ASSERT_TRUE(std::holds_alternative<wait::LogMessage>(w));
-    const auto& m = std::get<wait::LogMessage>(w);
+    ASSERT_TRUE(std::holds_alternative<wait_for::LogMessage>(w));
+    const auto& m = std::get<wait_for::LogMessage>(w);
     EXPECT_EQ(m.text, "boom");
     EXPECT_EQ(m.times, 1); // default
-    EXPECT_EQ(m.source, wait::LogMessage::Source::Stderr);
+    EXPECT_EQ(m.source, wait_for::LogMessage::Source::Stderr);
 }
 
 TEST(WaitFor, LogFactoryIsEither) {
     const WaitFor w = wait_for::log("up");
-    ASSERT_TRUE(std::holds_alternative<wait::LogMessage>(w));
-    EXPECT_EQ(std::get<wait::LogMessage>(w).source, wait::LogMessage::Source::Either);
+    ASSERT_TRUE(std::holds_alternative<wait_for::LogMessage>(w));
+    EXPECT_EQ(std::get<wait_for::LogMessage>(w).source, wait_for::LogMessage::Source::Either);
 }
 
 TEST(WaitFor, SecondsFactory) {
     const WaitFor w = wait_for::seconds(2);
-    ASSERT_TRUE(std::holds_alternative<wait::Duration>(w));
-    EXPECT_EQ(std::get<wait::Duration>(w).value, std::chrono::milliseconds(2000));
+    ASSERT_TRUE(std::holds_alternative<wait_for::Duration>(w));
+    EXPECT_EQ(std::get<wait_for::Duration>(w).value, std::chrono::milliseconds(2000));
 }
 
 TEST(WaitFor, MillisFactory) {
     const WaitFor w = wait_for::millis(250);
-    ASSERT_TRUE(std::holds_alternative<wait::Duration>(w));
-    EXPECT_EQ(std::get<wait::Duration>(w).value, std::chrono::milliseconds(250));
+    ASSERT_TRUE(std::holds_alternative<wait_for::Duration>(w));
+    EXPECT_EQ(std::get<wait_for::Duration>(w).value, std::chrono::milliseconds(250));
 }
 
 TEST(WaitFor, ExitFactory) {
     const WaitFor w = wait_for::exit();
-    ASSERT_TRUE(std::holds_alternative<wait::Exit>(w));
-    EXPECT_FALSE(std::get<wait::Exit>(w).code.has_value());
+    ASSERT_TRUE(std::holds_alternative<wait_for::Exit>(w));
+    EXPECT_FALSE(std::get<wait_for::Exit>(w).code.has_value());
 }
 
 TEST(WaitFor, ExitCodeFactory) {
     const WaitFor w = wait_for::exit_code(7);
-    ASSERT_TRUE(std::holds_alternative<wait::Exit>(w));
-    const auto& e = std::get<wait::Exit>(w);
+    ASSERT_TRUE(std::holds_alternative<wait_for::Exit>(w));
+    const auto& e = std::get<wait_for::Exit>(w);
     ASSERT_TRUE(e.code.has_value());
     EXPECT_EQ(*e.code, 7);
 }
 
 TEST(WaitFor, HealthyFactory) {
     const WaitFor w = wait_for::healthy();
-    EXPECT_TRUE(std::holds_alternative<wait::Healthcheck>(w));
+    EXPECT_TRUE(std::holds_alternative<wait_for::Healthcheck>(w));
 }
 
 TEST(WaitFor, HttpFactory) {
     const WaitFor w = wait_for::http("/health", tcp(8080), 204);
-    ASSERT_TRUE(std::holds_alternative<wait::Http>(w));
-    const auto& h = std::get<wait::Http>(w);
+    ASSERT_TRUE(std::holds_alternative<wait_for::Http>(w));
+    const auto& h = std::get<wait_for::Http>(w);
     EXPECT_EQ(h.path, "/health");
     EXPECT_EQ(h.port, tcp(8080));
     EXPECT_EQ(h.expected_status, 204);
@@ -107,14 +100,14 @@ TEST(WaitFor, HttpFactory) {
 
 TEST(WaitFor, HttpFactoryDefaultStatus) {
     const WaitFor w = wait_for::http("/", tcp(80));
-    ASSERT_TRUE(std::holds_alternative<wait::Http>(w));
-    EXPECT_EQ(std::get<wait::Http>(w).expected_status, 200);
+    ASSERT_TRUE(std::holds_alternative<wait_for::Http>(w));
+    EXPECT_EQ(std::get<wait_for::Http>(w).expected_status, 200);
 }
 
 TEST(WaitFor, ListeningPortFactory) {
     const WaitFor w = wait_for::listening_port(tcp(5432));
-    ASSERT_TRUE(std::holds_alternative<wait::Port>(w));
-    const auto& p = std::get<wait::Port>(w);
+    ASSERT_TRUE(std::holds_alternative<wait_for::Port>(w));
+    const auto& p = std::get<wait_for::Port>(w);
     EXPECT_EQ(p.port, tcp(5432));
     EXPECT_EQ(p.poll_interval, std::chrono::milliseconds(200)); // default
 }
@@ -122,12 +115,12 @@ TEST(WaitFor, ListeningPortFactory) {
 TEST(WaitFor, Copyable) {
     const WaitFor w = wait_for::stdout_message("ready");
     WaitFor copy = w; // copy-construct
-    EXPECT_EQ(std::get<wait::LogMessage>(copy).text, "ready");
+    EXPECT_EQ(std::get<wait_for::LogMessage>(copy).text, "ready");
 
     std::vector<WaitFor> waits;
     waits.push_back(wait_for::log("a"));
     waits.push_back(wait_for::seconds(1));
-    waits.emplace_back(wait::None{});
+    waits.emplace_back(wait_for::None{});
     EXPECT_EQ(waits.size(), 3u);
 }
 
@@ -136,9 +129,9 @@ TEST(WaitFor, VisitDispatches) {
         return std::visit(
             [](const auto& cond) -> std::string {
                 using T = std::decay_t<decltype(cond)>;
-                if constexpr (std::is_same_v<T, wait::None>) {
+                if constexpr (std::is_same_v<T, wait_for::None>) {
                     return "none";
-                } else if constexpr (std::is_same_v<T, wait::LogMessage>) {
+                } else if constexpr (std::is_same_v<T, wait_for::LogMessage>) {
                     return "log";
                 } else {
                     return "duration";
@@ -147,7 +140,7 @@ TEST(WaitFor, VisitDispatches) {
             w);
     };
 
-    EXPECT_EQ(describe(wait::None{}), "none");
+    EXPECT_EQ(describe(wait_for::None{}), "none");
     EXPECT_EQ(describe(wait_for::log("x")), "log");
     EXPECT_EQ(describe(wait_for::seconds(1)), "duration");
 }
@@ -241,5 +234,3 @@ TEST(WaitFor, OccurrenceCounterMatchesAfterPrefixTrim) {
     counter.feed("ker");
     EXPECT_EQ(counter.count(), 1u);
 }
-
-} // namespace

@@ -76,9 +76,9 @@ using Clock = std::chrono::steady_clock;
 /// re-follow is retried every ~200ms — a restarting container can still
 /// produce the message — and an expired budget always gets one final snapshot
 /// check, so even `timeout=0` succeeds when the message is already logged.
-void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMessage& cond,
+void wait_for_log(DockerClient& client, const std::string& id, const wait_for::LogMessage& cond,
                   Clock::time_point deadline, bool tty) {
-    using Source = wait::LogMessage::Source;
+    using Source = wait_for::LogMessage::Source;
 
     LogOptions opts;
     opts.include_stdout = cond.source != Source::Stderr;
@@ -168,7 +168,7 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait::LogMe
 /// Poll `inspect.running` every ~200ms until the container has stopped. If the
 /// condition pins an exit code, verify it matches once stopped. Throw on the
 /// deadline.
-void wait_for_exit(DockerClient& client, const std::string& id, const wait::Exit& cond,
+void wait_for_exit(DockerClient& client, const std::string& id, const wait_for::Exit& cond,
                    Clock::time_point deadline) {
     for (;;) {
         const ContainerInspect info = client.inspect_container(id);
@@ -360,7 +360,7 @@ bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::millise
 /// Resolve the mapped host port once, then probe `cond.path` every
 /// `poll_interval` until the response status matches `expected_status`.
 /// Connection errors are non-fatal. Throw on the deadline.
-void wait_for_http(DockerClient& client, const std::string& id, const wait::Http& cond,
+void wait_for_http(DockerClient& client, const std::string& id, const wait_for::Http& cond,
                    Clock::time_point deadline) {
     const std::string host = client.host().http_host();
     const std::uint16_t port = mapped_host_port(client, id, cond.port);
@@ -392,7 +392,7 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait::Http
 /// Resolve the mapped host port once, then attempt a TCP connect every
 /// `poll_interval` until it succeeds. Connection errors are non-fatal. Throw on
 /// the deadline.
-void wait_for_port(DockerClient& client, const std::string& id, const wait::Port& cond,
+void wait_for_port(DockerClient& client, const std::string& id, const wait_for::Port& cond,
                    Clock::time_point deadline) {
     const std::string host = client.host().http_host();
     const std::uint16_t port = mapped_host_port(client, id, cond.port);
@@ -435,25 +435,25 @@ void wait_until_ready(DockerClient& client, const std::string& id,
         std::visit(
             [&](const auto& cond) {
                 using T = std::decay_t<decltype(cond)>;
-                if constexpr (std::is_same_v<T, wait::None>) {
+                if constexpr (std::is_same_v<T, wait_for::None>) {
                     // nothing to do
-                } else if constexpr (std::is_same_v<T, wait::LogMessage>) {
+                } else if constexpr (std::is_same_v<T, wait_for::LogMessage>) {
                     wait_for_log(client, id, cond, deadline, tty);
-                } else if constexpr (std::is_same_v<T, wait::Duration>) {
+                } else if constexpr (std::is_same_v<T, wait_for::Duration>) {
                     // Clamp the sleep to the shared deadline.
                     const Clock::time_point wake = Clock::now() + cond.value;
                     std::this_thread::sleep_until(wake < deadline ? wake : deadline);
                     if (Clock::now() >= deadline && wake > deadline) {
                         throw StartupTimeoutError(
-                            "Timed out during wait::Duration for container " + id, id);
+                            "Timed out during wait_for::Duration for container " + id, id);
                     }
-                } else if constexpr (std::is_same_v<T, wait::Exit>) {
+                } else if constexpr (std::is_same_v<T, wait_for::Exit>) {
                     wait_for_exit(client, id, cond, deadline);
-                } else if constexpr (std::is_same_v<T, wait::Healthcheck>) {
+                } else if constexpr (std::is_same_v<T, wait_for::Healthcheck>) {
                     wait_for_healthcheck(client, id, deadline);
-                } else if constexpr (std::is_same_v<T, wait::Http>) {
+                } else if constexpr (std::is_same_v<T, wait_for::Http>) {
                     wait_for_http(client, id, cond, deadline);
-                } else if constexpr (std::is_same_v<T, wait::Port>) {
+                } else if constexpr (std::is_same_v<T, wait_for::Port>) {
                     wait_for_port(client, id, cond, deadline);
                 }
             },

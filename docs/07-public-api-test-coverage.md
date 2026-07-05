@@ -249,7 +249,7 @@ strategy. Windows coverage now spans exit, log, healthcheck, and listening-port
 
 | Strategy | Works on Linux | Works on Windows | Integration-tested (Linux) | Integration-tested (Windows) |
 |---|---|---|---|---|
-| `wait::None` (no wait) | ✅ | ✅ | ✅ implicit (Exec/Copy/Network containers start with no wait) | ✅ implicit (WindowsExec keep-alive containers) |
+| `wait_for::None` (no wait) | ✅ | ✅ | ✅ implicit (Exec/Copy/Network containers start with no wait) | ✅ implicit (WindowsExec keep-alive containers) |
 | `stdout_message` / `stderr_message` / `log` | ✅ | ✅ | ✅ RedisMvp (stdout), Tty.LogWaitWorksOnTtyContainer, WaitStrategies.TimeoutThrows (log) | ✅ WindowsWaitStrategies.StdoutMessageWait (stdout_message) |
 | `seconds` / `millis` (Duration) | ✅ | ✅ | ❌ | ❌ |
 | `exit` / `exit_code` | ✅ | ✅ | ✅ WaitStrategies.ExitCodeWaitSucceeds, BuildImage.* | ✅ WindowsWaitStrategies.ExitCodeWaitSucceeds, WindowsContainer.EchoExitsWithExpectedLogs, WindowsBuildImage.* |
