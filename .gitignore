@@ -3,6 +3,7 @@
 /install/
 /out/
 /test_package/build/
+/packaging/conan-center/recipes/testcontainers-cpp/all/test_package/build/
 compile_commands.json
 
 # Conan (project-local home + generated files)
