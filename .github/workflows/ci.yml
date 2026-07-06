@@ -75,6 +75,9 @@ jobs:
   # is a consumer avoiding a transitive OpenSSL. The disabled-feature paths
   # swap their integration suites for refusal checks (TlsTransport.*,
   # HostAccess.*); everything else exercises the default transports as usual.
+  # Known gap: the minimal configuration is CI-built on Linux only (the
+  # Windows job builds the default one) — the guarded code is
+  # platform-agnostic, and MSVC-minimal was verified out-of-band.
   linux-minimal:
     name: Linux (gcc, no TLS / no host-port-forwarding)
     runs-on: ubuntu-24.04
@@ -259,6 +262,21 @@ jobs:
           conan create . --build=missing
           -s compiler.cppstd=20
           -c tools.build:skip_test=${{ matrix.skip_test }}
+
+      # The one option combination no other job builds: tls=False with
+      # host_port_forwarding=True keeps OpenSSL in the graph for libssh2 but
+      # ships libcrypto WITHOUT libssl in cpp_info.requires — a package_info()
+      # branch the default and minimal builds never execute. test_package's
+      # find_package + link + run is what validates those component names.
+      # Ubuntu only: recipe logic is platform-independent and the packages are
+      # already cached from the step above.
+      - name: conan create (tls=False, host_port_forwarding=True)
+        if: matrix.os == 'ubuntu-24.04'
+        run: >
+          conan create . --build=missing
+          -o '&:tls=False'
+          -s compiler.cppstd=20
+          -c tools.build:skip_test=True
 
   # Formatting gate: the tree must be byte-identical to what the PINNED
   # clang-format produces (.clang-format documents the local install command).

@@ -139,6 +139,9 @@ class TestcontainersCppConan(ConanFile):
                 self.cpp_info.requires.append("openssl::crypto")
         if self.settings.os == "Windows":
             # Named-pipe / socket transport.
-            self.cpp_info.system_libs = ["ws2_32", "mswsock", "crypt32"]
+            self.cpp_info.system_libs = ["ws2_32", "mswsock"]
+            if self.options.tls or self.options.host_port_forwarding:
+                # OpenSSL's Windows certificate store.
+                self.cpp_info.system_libs.append("crypt32")
         else:
             self.cpp_info.system_libs = ["pthread"]

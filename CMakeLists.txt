@@ -205,7 +205,11 @@ endif()
 
 if(WIN32)
     # Asio named-pipe / TCP transport.
-    target_link_libraries(testcontainers PRIVATE ws2_32 mswsock crypt32)
+    target_link_libraries(testcontainers PRIVATE ws2_32 mswsock)
+    if(TC_TLS OR TC_HOST_PORT_FORWARDING)
+        # OpenSSL's Windows certificate store.
+        target_link_libraries(testcontainers PRIVATE crypt32)
+    endif()
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(testcontainers PRIVATE Threads::Threads)

@@ -191,7 +191,10 @@ class TestcontainersCppRecipe(ConanFile):
         if self.settings.os == "Windows":
             # Named-pipe / socket transport pulls in Win32 networking libs —
             # keep in sync with the target_link_libraries in CMakeLists.txt.
-            self.cpp_info.system_libs = ["ws2_32", "mswsock", "crypt32"]
+            self.cpp_info.system_libs = ["ws2_32", "mswsock"]
+            if self.options.tls or self.options.host_port_forwarding:
+                # OpenSSL's Windows certificate store.
+                self.cpp_info.system_libs.append("crypt32")
         else:
             # Threads::Threads is PRIVATE in CMake, but a static consumer
             # still links it transitively.
