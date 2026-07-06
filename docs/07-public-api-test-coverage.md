@@ -75,6 +75,7 @@ suite.
 | `with_cap_drop` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CapAddDropReflectedInBounding | n/a |
 | `with_extra_host` | ✅ | ✅ | ✅ ContainerConfig.ExtraHostApplied | ❌ |
 | `with_exposed_host_port` | ✅ | ❌ (throws; sshd sidecar is Linux) | ✅ HostAccess.* | n/a |
+| `with_exposed_host_port` disabled build (`TC_HOST_PORT_FORWARDING=OFF`) | ✅ | ✅ (same refusal) | ✅ HostAccess.DisabledBuildThrowsClearError (CI: linux-minimal job) | n/a |
 | `with_create_body_patch` | ✅ | ✅ | ❌ | ❌ |
 | `with_image_pull_policy` | ✅ | ✅ | ✅ ContainerConfig.AlwaysPullPolicyStarts | ❌ |
 | `with_reuse` | ✅ | ✅ | ✅ Reuse.ReuseAdoptsRunningContainer, Reuse.ReuseDisabledCreatesFresh | ❌ |
@@ -360,6 +361,7 @@ Notes:
 | `DockerHost::parse(url)` | ✅ | ✅ | ✅ TlsTransport.* (no daemon needed) | ✅ (platform-agnostic; unit + TlsTransport) |
 | `scheme()` / `path()` / `hostname()` / `port()` / `http_host()` | ✅ | ✅ | ✅ Exec.FeedsStdin (scheme routing) | ✅ WindowsExec.FeedsStdin (scheme routing) |
 | TLS transport (`connect` https) | ✅ | ✅ | ✅ TlsTransport.HttpsSchemeIsWired, TlsTransport.RealHandshakeRoundTrip (in-process TLS server) | ✅ (same tests; daemon-independent) |
+| TLS disabled build (`TC_TLS=OFF`) | ✅ | ✅ | ✅ TlsTransport.DisabledBuildThrowsClearError + unit TransportTimeout.TlsDisabledConnectThrowsNamedError (CI: linux-minimal job) | ✅ (same tests; daemon-independent) |
 | `TransportTimeouts` | ✅ | ✅ | ❌ (unit-tested) | ❌ |
 
 TLS is exercised against an in-process self-signed server, not a real remote
