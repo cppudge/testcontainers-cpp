@@ -9,7 +9,10 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
+
+#if defined(TC_TLS)
 #include <boost/asio/ssl.hpp>
+#endif
 
 #if defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
 #include <boost/asio/local/stream_protocol.hpp>
@@ -216,10 +219,13 @@ private:
     asio::ip::tcp::socket socket_;
 };
 
+#if defined(TC_TLS)
 /// TLS transport over TCP, configured from Docker's standard TLS env vars
 /// (DOCKER_CERT_PATH / DOCKER_TLS_VERIFY). Layers an OpenSSL stream on top of a
 /// TcpTransport-style connect, mutually authenticating with the daemon when a
-/// client cert/key are present.
+/// client cert/key are present. Compiled only when the build enables TLS —
+/// this class is the library's ONLY direct OpenSSL dependency (the TlsConfig
+/// helpers below are pure and stay available either way).
 class TlsTransport final : public TransportBase {
 public:
     TlsTransport(const std::string& host, std::uint16_t port, const TransportTimeouts& timeouts)
@@ -351,6 +357,7 @@ private:
     asio::ssl::context ctx_; // declared before stream_ (it references ctx_)
     asio::ssl::stream<asio::ip::tcp::socket> stream_;
 };
+#endif // TC_TLS
 
 #if defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
 /// Unix-domain-socket transport (Linux / macOS).
@@ -644,7 +651,13 @@ std::unique_ptr<ITransport> connect(const DockerHost& host, const TransportTimeo
     case DockerScheme::Tcp:
         return std::make_unique<TcpTransport>(host.hostname(), host.port(), timeouts);
     case DockerScheme::Https:
+#if defined(TC_TLS)
         return std::make_unique<TlsTransport>(host.hostname(), host.port(), timeouts);
+#else
+        throw DockerError("Docker host '" + host.to_string() +
+                          "' needs TLS, but this build of testcontainers-cpp has it disabled "
+                          "(CMake option TC_TLS=OFF / conan option tls=False)");
+#endif
     }
     throw DockerError("Unknown Docker host scheme");
 }

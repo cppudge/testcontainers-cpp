@@ -1,12 +1,30 @@
 #include <gtest/gtest.h>
 
+#include <string>
+
+#include "testcontainers/Error.hpp"
+#include "testcontainers/docker/DockerHost.hpp"
+
+#include "docker/Transport.hpp"
+
+// Tests in this file (integration; no Docker daemon required):
+//   [TC_TLS builds — the default]
+//   TlsTransport.HttpsSchemeIsWired - connect() for an https:// host attempts a real TLS connection (no longer "not implemented"); a refused/failed connect throws DockerError.
+//   TlsTransport.RealHandshakeRoundTrip - a TlsTransport handshakes with an in-process self-signed TLS echo server and round-trips bytes (DOCKER_TLS_VERIFY unset -> verify_none).
+//   [TC_TLS=OFF builds]
+//   TlsTransport.DisabledBuildThrowsClearError - connect() for an https:// host throws a DockerError naming the TC_TLS build option.
+
+using testcontainers::DockerError;
+using testcontainers::DockerHost;
+
+#if defined(TC_TLS)
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
-#include <string>
 #include <system_error>
 #include <thread>
 
@@ -34,17 +52,6 @@
 #include <unistd.h>
 #endif
 
-#include "testcontainers/Error.hpp"
-#include "testcontainers/docker/DockerHost.hpp"
-
-#include "docker/Transport.hpp"
-
-// Tests in this file (integration; no Docker daemon required):
-//   TlsTransport.HttpsSchemeIsWired - connect() for an https:// host attempts a real TLS connection (no longer "not implemented"); a refused/failed connect throws DockerError.
-//   TlsTransport.RealHandshakeRoundTrip - a TlsTransport handshakes with an in-process self-signed TLS echo server and round-trips bytes (DOCKER_TLS_VERIFY unset -> verify_none).
-
-using testcontainers::DockerError;
-using testcontainers::DockerHost;
 namespace asio = boost::asio;
 
 namespace {
@@ -262,3 +269,19 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
         FAIL() << "TLS round-trip failed: " << error;
     }
 }
+
+#else // TC_TLS
+
+// The Https branch of connect() must fail LOUDLY in a TLS-less build: a clear
+// DockerError naming the build option, not an obscure link or protocol error.
+TEST(TlsTransport, DisabledBuildThrowsClearError) {
+    try {
+        testcontainers::docker::connect(DockerHost::parse("https://127.0.0.1:2376"));
+        FAIL() << "expected connect() to throw (this build has TC_TLS=OFF)";
+    } catch (const DockerError& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("TC_TLS"), std::string::npos) << msg;
+    }
+}
+
+#endif // TC_TLS

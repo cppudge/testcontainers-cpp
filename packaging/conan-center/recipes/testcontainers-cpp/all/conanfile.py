@@ -24,8 +24,21 @@ class TestcontainersCppConan(ConanFile):
     topics = ("testcontainers", "testing", "containers", "docker", "integration-testing")
     package_type = "library"
     settings = "os", "arch", "compiler", "build_type"
-    options = {"shared": [True, False], "fPIC": [True, False]}
-    default_options = {"shared": False, "fPIC": True}
+    # `tls` gates the https:// transport (OpenSSL); `host_port_forwarding`
+    # gates with_exposed_host_port's sshd sidecar tunnel (libssh2, whose
+    # crypto backend is OpenSSL). Disabling both removes OpenSSL entirely.
+    options = {
+        "shared": [True, False],
+        "fPIC": [True, False],
+        "tls": [True, False],
+        "host_port_forwarding": [True, False],
+    }
+    default_options = {
+        "shared": False,
+        "fPIC": True,
+        "tls": True,
+        "host_port_forwarding": True,
+    }
     implements = ["auto_shared_fpic"]
 
     def layout(self):
@@ -34,12 +47,15 @@ class TestcontainersCppConan(ConanFile):
     def requirements(self):
         # Beast/Asio/System only — all header-only, so any boost binary works.
         self.requires("boost/1.91.0")
-        self.requires("openssl/[>=3 <4]")
         self.requires("nlohmann_json/3.12.0")
         # tar building/extraction for copy-to/from-container and image builds.
         self.requires("libarchive/3.8.7")
-        # SSH client for the host-port-exposure sidecar tunnel.
-        self.requires("libssh2/1.11.1")
+        if self.options.tls or self.options.host_port_forwarding:
+            # TLS transport and/or libssh2's crypto backend.
+            self.requires("openssl/[>=3 <4]")
+        if self.options.host_port_forwarding:
+            # SSH client for the host-port-exposure sidecar tunnel.
+            self.requires("libssh2/1.11.1")
 
     def validate(self):
         # C++20 headers; the floor mirrors what CI actually exercises
@@ -76,6 +92,10 @@ class TestcontainersCppConan(ConanFile):
         tc.cache_variables["SKIP_CONAN_PROVIDER_CMAKE"] = True
         tc.cache_variables["TC_BUILD_EXAMPLES"] = False
         tc.cache_variables["BUILD_TESTING"] = False
+        # Mirror the feature options into the CMake build (their CMake
+        # defaults are ON; the conan options are the source of truth here).
+        tc.cache_variables["TC_TLS"] = bool(self.options.tls)
+        tc.cache_variables["TC_HOST_PORT_FORWARDING"] = bool(self.options.host_port_forwarding)
         # Keep install paths, package()'s rmdir, and the default
         # cpp_info.libdirs agreed on "lib" (GNUInstallDirs would pick lib64
         # on some distros).
@@ -106,12 +126,17 @@ class TestcontainersCppConan(ConanFile):
         # every compiled libboost_*.
         self.cpp_info.requires = [
             "boost::headers",
-            "openssl::ssl",
-            "openssl::crypto",
             "nlohmann_json::nlohmann_json",
             "libarchive::libarchive",
-            "libssh2::libssh2",
         ]
+        if self.options.tls:
+            self.cpp_info.requires.extend(["openssl::ssl", "openssl::crypto"])
+        if self.options.host_port_forwarding:
+            # libcrypto also directly (OPENSSL_init_crypto/OPENSSL_thread_stop
+            # in HostPortForwarding.cpp), not just through libssh2.
+            self.cpp_info.requires.append("libssh2::libssh2")
+            if "openssl::crypto" not in self.cpp_info.requires:
+                self.cpp_info.requires.append("openssl::crypto")
         if self.settings.os == "Windows":
             # Named-pipe / socket transport.
             self.cpp_info.system_libs = ["ws2_32", "mswsock", "crypt32"]

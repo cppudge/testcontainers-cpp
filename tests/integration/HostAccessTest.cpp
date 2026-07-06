@@ -1,27 +1,45 @@
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <cstdint>
 #include <string>
-#include <thread>
-#include <utility>
-
-#include <boost/asio.hpp>
 
 #include "testcontainers/Container.hpp"
-#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
-#include "testcontainers/Network.hpp"
 
 #include "EngineGuard.hpp"
 
 // Tests in this file (integration; require a Docker daemon; Linux engine only —
 // the sshd sidecar is a Linux image):
+//   [TC_HOST_PORT_FORWARDING builds — the default]
 //   HostAccess.ContainerReachesHostServiceOnDefaultBridge - a container created with with_exposed_host_port fetches a response from an HTTP server running in the test process via host.testcontainers.internal (default bridge network).
 //   HostAccess.ContainerReachesHostServiceOnCustomNetwork - the same through a user-defined network (the sidecar is joined to it on demand), and the network is really REMOVED afterwards (teardown detaches the sidecar; a leak would be swallowed by Network::drop).
 //   HostAccess.TwoHostPortsThroughOneSidecar - one container exposes two host ports; both are served through the single process-wide sidecar/tunnel.
+//   [TC_HOST_PORT_FORWARDING=OFF builds]
+//   HostAccess.DisabledBuildThrowsClearError - start() of an image with with_exposed_host_port throws a DockerError naming the TC_HOST_PORT_FORWARDING build option (before creating anything).
 
 using namespace testcontainers;
+
+// Skipped without a Linux-containers daemon (the sshd sidecar image is Linux;
+// the disabled-build check keeps the same guard so its skip behavior matches).
+class HostAccess : public ::testing::Test {
+protected:
+    void SetUp() override {
+        if (tcit::linux_engine_unavailable()) {
+            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
+        }
+    }
+};
+
+#if defined(TC_HOST_PORT_FORWARDING)
+
+#include <atomic>
+#include <cstdint>
+#include <thread>
+#include <utility>
+
+#include <boost/asio.hpp>
+
+#include "testcontainers/ExecResult.hpp"
+#include "testcontainers/Network.hpp"
 
 namespace {
 
@@ -103,16 +121,6 @@ ExecResult fetch_from_host(const Container& c, std::uint16_t port) {
 
 } // namespace
 
-// Skipped without a Linux-containers daemon (the sshd sidecar image is Linux).
-class HostAccess : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
-
 TEST_F(HostAccess, ContainerReachesHostServiceOnDefaultBridge) {
     HostHttpServer server("hello-from-the-host");
 
@@ -185,3 +193,25 @@ TEST_F(HostAccess, TwoHostPortsThroughOneSidecar) {
     EXPECT_NE(res2.stdout_data.find("second-service"), std::string::npos)
         << "stdout: " << res2.stdout_data;
 }
+
+#else // TC_HOST_PORT_FORWARDING
+
+#include "testcontainers/Error.hpp"
+
+// The stub HostPortForwarder must reject the run LOUDLY and EARLY: a clear
+// DockerError naming the build option, thrown before any container is created
+// (wire() runs ahead of create in the start orchestration).
+TEST_F(HostAccess, DisabledBuildThrowsClearError) {
+    try {
+        const Container c = GenericImage("alpine", "3.20")
+                                .with_exposed_host_port(12345)
+                                .with_cmd({"sleep", "120"})
+                                .start();
+        FAIL() << "expected start() to throw (this build has TC_HOST_PORT_FORWARDING=OFF)";
+    } catch (const DockerError& e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("TC_HOST_PORT_FORWARDING"), std::string::npos) << msg;
+    }
+}
+
+#endif // TC_HOST_PORT_FORWARDING

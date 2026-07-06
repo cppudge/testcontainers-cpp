@@ -4,11 +4,16 @@
 
 // Pull in every third-party dependency so a successful compile+link of this
 // translation unit proves the full Conan/CMake toolchain is wired up correctly.
+// OpenSSL is in the build only when TLS and/or host-port forwarding is enabled
+// (see the TC_TLS / TC_HOST_PORT_FORWARDING options in CMakeLists.txt).
 #include <archive.h>
 #include <boost/beast/version.hpp>
 #include <boost/version.hpp>
 #include <nlohmann/json.hpp>
+
+#if defined(TC_TLS) || defined(TC_HOST_PORT_FORWARDING)
 #include <openssl/opensslv.h>
+#endif
 
 namespace testcontainers {
 
@@ -24,7 +29,9 @@ std::string dependency_report() {
     os << "  Beast      " << BOOST_BEAST_VERSION << '\n';
     os << "  nlohmann   " << NLOHMANN_JSON_VERSION_MAJOR << '.' << NLOHMANN_JSON_VERSION_MINOR
        << '.' << NLOHMANN_JSON_VERSION_PATCH << '\n';
+#if defined(TC_TLS) || defined(TC_HOST_PORT_FORWARDING)
     os << "  OpenSSL    " << OPENSSL_VERSION_TEXT << '\n';
+#endif
     os << "  libarchive " << archive_version_string() << '\n';
     return os.str();
 }

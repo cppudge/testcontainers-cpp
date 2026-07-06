@@ -1,7 +1,8 @@
 # CI on every branch push: build + unit + integration on Linux (gcc) and
-# Windows (MSVC, Windows containers), plus the static/dynamic analysis gates —
-# clang-format, clang-tidy, and an ASan+UBSan test run. CodeQL lives in its
-# own workflow (codeql.yml).
+# Windows (MSVC, Windows containers), a minimal-features Linux build
+# (TC_TLS=OFF + TC_HOST_PORT_FORWARDING=OFF — no OpenSSL/libssh2 anywhere),
+# plus the static/dynamic analysis gates — clang-format, clang-tidy, and an
+# ASan+UBSan test run. CodeQL lives in its own workflow (codeql.yml).
 #
 # Public repo => GitHub-hosted standard runners are free with no minute cap;
 # the only budgeted resource is the 10 GB Actions cache, which the project-
@@ -64,6 +65,62 @@ jobs:
       # The step timeout turns a wedged daemon into a fast red instead of
       # eating the whole job timeout; full (non-brief) gtest output names
       # every [ RUN ] test case so a hang points at its culprit.
+      - name: Integration tests
+        timeout-minutes: 20
+        run: ./build/ninja/bin/tc_integration_tests
+
+  # The feature knob under test: TC_TLS=OFF + TC_HOST_PORT_FORWARDING=OFF must
+  # (a) build and pass both suites, and (b) keep OpenSSL and libssh2 out of the
+  # dependency graph and off every link line — the whole point of the options
+  # is a consumer avoiding a transitive OpenSSL. The disabled-feature paths
+  # swap their integration suites for refusal checks (TlsTransport.*,
+  # HostAccess.*); everything else exercises the default transports as usual.
+  linux-minimal:
+    name: Linux (gcc, no TLS / no host-port-forwarding)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja + conan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          pipx install conan
+
+      # Own primary key: this job's graph lacks openssl/libssh2, and a key
+      # shared with the full job would let whichever saves first strip those
+      # packages from the other's cache. restore-keys still seed from it.
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: .conan2
+          key: conan-minimal-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-minimal-${{ runner.os }}-
+            conan-${{ runner.os }}-
+
+      - name: Configure
+        run: >
+          cmake --preset ninja -DTC_WERROR=ON
+          -DTC_TLS=OFF -DTC_HOST_PORT_FORWARDING=OFF
+
+      # build.ninja carries every compile and link line of the build — if
+      # neither OpenSSL nor libssh2 appears there, the binary cannot link them.
+      - name: Assert OpenSSL and libssh2 are absent from the build
+        run: |
+          if grep -qiE 'openssl|libssl|libcrypto|libssh2' build/ninja/build.ninja; then
+            echo "::error::minimal build still references OpenSSL/libssh2"
+            grep -inE 'openssl|libssl|libcrypto|libssh2' build/ninja/build.ninja | head
+            exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build/ninja
+
+      - name: Unit tests
+        run: ./build/ninja/bin/tc_unit_tests --gtest_brief=1
+
       - name: Integration tests
         timeout-minutes: 20
         run: ./build/ninja/bin/tc_integration_tests

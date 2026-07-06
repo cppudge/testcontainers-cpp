@@ -1,3 +1,14 @@
+# ===== Optional features =====
+# Declared before the Conan provider block below because they shape the
+# DEPENDENCY GRAPH, not just the build: disabling TC_HOST_PORT_FORWARDING drops
+# libssh2, and disabling BOTH drops OpenSSL entirely (libssh2's crypto backend
+# is OpenSSL, so TC_TLS=OFF alone still leaves libcrypto in). The library
+# builds and runs without them; the disabled paths throw a DockerError naming
+# the option instead (https:// hosts / with_exposed_host_port).
+option(TC_TLS "TLS transport for https:// Docker hosts (needs OpenSSL)" ON)
+option(TC_HOST_PORT_FORWARDING
+    "Host-port exposure via the sshd sidecar tunnel (needs libssh2 + OpenSSL)" ON)
+
 # ===== Conan integration (cmake-conan provider) =====
 # When configured directly (not through `conan build`), the vendored cmake-conan
 # provider runs `conan install` automatically. conanfile.py sets
@@ -18,6 +29,20 @@ else()
     endif()
     set(CONAN_HOST_PROFILE "auto-cmake" CACHE STRING "Conan host profile")
     set(CONAN_BUILD_PROFILE "auto-cmake" CACHE STRING "Conan build profile")
+    # Mirror the feature options into conanfile.py options so the provider's
+    # `conan install` trims the graph to match (otherwise it would still fetch
+    # openssl/libssh2 the build never links). Claiming the cache variable
+    # before the provider does keeps its "--build=missing" default; the
+    # list(APPEND) shadows it with a directory-scope value the provider reads
+    # at project() time. `&:` scopes an option to the root conanfile.
+    set(CONAN_INSTALL_ARGS "--build=missing" CACHE STRING
+        "Command line arguments for conan install")
+    if(NOT TC_TLS)
+        list(APPEND CONAN_INSTALL_ARGS -o "&:tls=False")
+    endif()
+    if(NOT TC_HOST_PORT_FORWARDING)
+        list(APPEND CONAN_INSTALL_ARGS -o "&:host_port_forwarding=False")
+    endif()
     set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES
         "${CMAKE_SOURCE_DIR}/cmake/cmake-conan/conan_provider.cmake")
 endif()
@@ -86,12 +111,29 @@ endfunction()
 
 # ===== Dependencies (provided by Conan / CMakeDeps) =====
 find_package(Boost REQUIRED)            # header-only Beast + Asio
-find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(LibArchive REQUIRED)
-# Case matters: Conan generates Libssh2Config.cmake (capital L) — the
-# lowercase name only resolves on case-insensitive filesystems (Windows).
-find_package(Libssh2 REQUIRED)          # host-port-exposure sidecar tunnel
+if(TC_TLS OR TC_HOST_PORT_FORWARDING)
+    # TLS transport and/or libssh2's crypto backend + the direct
+    # OPENSSL_init_crypto/OPENSSL_thread_stop calls in HostPortForwarding.cpp.
+    find_package(OpenSSL REQUIRED)
+endif()
+if(TC_HOST_PORT_FORWARDING)
+    # Case matters: Conan generates Libssh2Config.cmake (capital L) — the
+    # lowercase name only resolves on case-insensitive filesystems (Windows).
+    find_package(Libssh2 REQUIRED)      # host-port-exposure sidecar tunnel
+endif()
+
+# The enabled features, as compile definitions for OUR translation units (the
+# macros never appear in public headers — the optional deps stay private
+# implementation details, and consumers need no defines at all).
+set(TC_FEATURE_DEFINES "")
+if(TC_TLS)
+    list(APPEND TC_FEATURE_DEFINES TC_TLS)
+endif()
+if(TC_HOST_PORT_FORWARDING)
+    list(APPEND TC_FEATURE_DEFINES TC_HOST_PORT_FORWARDING)
+endif()
 
 # ===== Library =====
 add_library(testcontainers
@@ -149,11 +191,17 @@ target_compile_features(testcontainers PUBLIC cxx_std_20)
 target_link_libraries(testcontainers PRIVATE
     Boost::headers
     nlohmann_json::nlohmann_json
-    OpenSSL::SSL
-    OpenSSL::Crypto
     LibArchive::LibArchive
-    Libssh2::libssh2
 )
+target_compile_definitions(testcontainers PRIVATE ${TC_FEATURE_DEFINES})
+if(TC_TLS)
+    target_link_libraries(testcontainers PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+if(TC_HOST_PORT_FORWARDING)
+    # OpenSSL::Crypto explicitly, not just via libssh2: HostPortForwarding.cpp
+    # itself calls OPENSSL_init_crypto/OPENSSL_thread_stop.
+    target_link_libraries(testcontainers PRIVATE Libssh2::libssh2 OpenSSL::Crypto)
+endif()
 
 if(WIN32)
     # Asio named-pipe / TCP transport.
@@ -224,6 +272,8 @@ if(BUILD_TESTING)
     )
     # ApiMappingTest / AuthTest / TarTest include internal headers under src/.
     target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # version_test's dependency-report expectations follow the feature set.
+    target_compile_definitions(tc_unit_tests PRIVATE ${TC_FEATURE_DEFINES})
     tc_apply_warnings(tc_unit_tests)
     add_test(NAME unit COMMAND tc_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS "unit")
@@ -258,13 +308,17 @@ if(BUILD_TESTING)
         Boost::headers
         # ReaperTest parses raw inspect JSON to read back a container's labels.
         nlohmann_json::nlohmann_json
-        # TlsTransportTest runs an in-process Boost.Asio TLS echo server and
-        # generates a self-signed cert/key via the OpenSSL C API.
-        OpenSSL::SSL
-        OpenSSL::Crypto
         GTest::gtest
         GTest::gtest_main
     )
+    # TlsTransportTest / HostAccessTest swap their suites for the
+    # disabled-path checks when a feature is off (see the #if in each file).
+    target_compile_definitions(tc_integration_tests PRIVATE ${TC_FEATURE_DEFINES})
+    if(TC_TLS)
+        # TlsTransportTest runs an in-process Boost.Asio TLS echo server and
+        # generates a self-signed cert/key via the OpenSSL C API.
+        target_link_libraries(tc_integration_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
     # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id).
     target_include_directories(tc_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     tc_apply_warnings(tc_integration_tests)

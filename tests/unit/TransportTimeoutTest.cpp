@@ -38,7 +38,8 @@
 //   TransportTimeout.SetIoTimeoutAppliesToSubsequentReads - a transport opened without a deadline starts timing out after set_io_timeout(ms).
 //   TransportTimeout.WriteTimesOutWhenPeerStopsReading - once the peer's receive window fills, a write fails with timed_out instead of blocking forever.
 //   TransportTimeout.ConnectRefusedFailsWithDockerError - connecting to a closed port throws DockerError (the refused path is an error, not a hang).
-//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - a TLS handshake against a peer that never answers the ClientHello throws TransportTimeoutError within the connect budget (composed-op cancellation).
+//   TransportTimeout.TlsHandshakeTimesOutOnSilentPeer - [TC_TLS builds] a TLS handshake against a peer that never answers the ClientHello throws TransportTimeoutError within the connect budget (composed-op cancellation).
+//   TransportTimeout.TlsDisabledConnectThrowsNamedError - [TC_TLS=OFF builds] connect() for an https:// host throws DockerError naming the TC_TLS option instead of dialing at all.
 //   TransportTimeout.RequestTimesOutMidBody - DockerClient::request against a daemon that stalls mid-body throws TransportTimeoutError (status_code()==nullopt) instead of hanging the Beast parser loop (end-to-end through TransportStream).
 //   TransportTimeout.NamedPipeReadTimesOutOnSilentServer - (Windows) a named-pipe read against a silent pipe server fails with timed_out within the deadline.
 //   TransportTimeout.NamedPipeRequestThrowsTypedTimeout - (Windows) DockerClient::request over a silent named pipe throws TransportTimeoutError - the typed path on the primary Windows transport.
@@ -224,6 +225,7 @@ TEST(TransportTimeout, ConnectRefusedFailsWithDockerError) {
         DockerError);
 }
 
+#if defined(TC_TLS)
 TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
     LoopbackServer server; // accepts, never answers the ClientHello
     TransportTimeouts timeouts;
@@ -241,6 +243,21 @@ TEST(TransportTimeout, TlsHandshakeTimesOutOnSilentPeer) {
     }
     EXPECT_LT(elapsed_since(start), 5s);
 }
+#else
+TEST(TransportTimeout, TlsDisabledConnectThrowsNamedError) {
+    // No handshake to deadline in a TLS-less build: the Https branch must
+    // refuse up front — before dialing — with the option spelled out. This
+    // also runs in `conan create -o tls=False` (unit suite only there).
+    LoopbackServer server; // never actually contacted
+    const DockerHost host = DockerHost::parse("https://127.0.0.1:" + std::to_string(server.port()));
+    try {
+        testcontainers::docker::connect(host);
+        FAIL() << "expected DockerError (this build has TC_TLS=OFF)";
+    } catch (const DockerError& e) {
+        EXPECT_NE(std::string(e.what()).find("TC_TLS"), std::string::npos) << e.what();
+    }
+}
+#endif // TC_TLS
 
 TEST(TransportTimeout, RequestTimesOutMidBody) {
     LoopbackServer server([](tcp::socket& socket) {

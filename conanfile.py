@@ -21,12 +21,23 @@ class TestcontainersCppRecipe(ConanFile):
 
     # Binary configuration
     settings = "os", "compiler", "build_type", "arch"
-    options = {"shared": [True, False], "fPIC": [True, False]}
+    # `tls` gates the https:// transport (OpenSSL); `host_port_forwarding`
+    # gates with_exposed_host_port's sshd sidecar tunnel (libssh2, whose crypto
+    # backend is OpenSSL). Disabling BOTH removes OpenSSL from the graph — the
+    # knob for consumers who must avoid a transitive OpenSSL.
+    options = {
+        "shared": [True, False],
+        "fPIC": [True, False],
+        "tls": [True, False],
+        "host_port_forwarding": [True, False],
+    }
     # Conan-managed shared/fPIC boilerplate (del fPIC on Windows / when shared).
     implements = ["auto_shared_fpic"]
     default_options = {
         "shared": False,
         "fPIC": True,
+        "tls": True,
+        "host_port_forwarding": True,
         # Beast + Asio + System are header-only — don't compile Boost at all.
         "boost/*:header_only": True,
         # libarchive only needed for tar; trim every other format/codec.
@@ -57,12 +68,16 @@ class TestcontainersCppRecipe(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.91.0")
-        self.requires("openssl/3.6.3")
         self.requires("nlohmann_json/3.12.0")
         self.requires("libarchive/3.8.7")
-        # SSH client for the host-port-exposure sidecar tunnel (remote port
-        # forwarding through a `testcontainers/sshd` container).
-        self.requires("libssh2/1.11.1")
+        if self.options.tls or self.options.host_port_forwarding:
+            # TLS transport and/or libssh2's crypto backend (plus the direct
+            # libcrypto calls in HostPortForwarding.cpp).
+            self.requires("openssl/3.6.3")
+        if self.options.host_port_forwarding:
+            # SSH client for the host-port-exposure sidecar tunnel (remote port
+            # forwarding through a `testcontainers/sshd` container).
+            self.requires("libssh2/1.11.1")
 
     def set_version(self):
         # Single source of truth: TC_VERSION_FULL in CMakeLists.txt.
@@ -115,6 +130,10 @@ class TestcontainersCppRecipe(ConanFile):
         tc.cache_variables["SKIP_CONAN_PROVIDER_CMAKE"] = True
         # A package build ships the library only — examples are for the repo.
         tc.cache_variables["TC_BUILD_EXAMPLES"] = False
+        # Mirror the feature options into the CMake build (their CMake
+        # defaults are ON; the conan options are the source of truth here).
+        tc.cache_variables["TC_TLS"] = bool(self.options.tls)
+        tc.cache_variables["TC_HOST_PORT_FORWARDING"] = bool(self.options.host_port_forwarding)
         # Pin the GNUInstallDirs layout: on non-Debian 64-bit Linux it would
         # pick lib64, and then the package()'s rmdir("lib/cmake") and the
         # default cpp_info.libdirs=["lib"] would both point past the real
@@ -158,12 +177,17 @@ class TestcontainersCppRecipe(ConanFile):
         # must match the ConanCenter recipe, where boost arrives fully built.
         self.cpp_info.requires = [
             "boost::headers",
-            "openssl::ssl",
-            "openssl::crypto",
             "nlohmann_json::nlohmann_json",
             "libarchive::libarchive",
-            "libssh2::libssh2",
         ]
+        if self.options.tls:
+            self.cpp_info.requires.extend(["openssl::ssl", "openssl::crypto"])
+        if self.options.host_port_forwarding:
+            # libcrypto also directly (OPENSSL_init_crypto/OPENSSL_thread_stop
+            # in HostPortForwarding.cpp), not just through libssh2.
+            self.cpp_info.requires.append("libssh2::libssh2")
+            if "openssl::crypto" not in self.cpp_info.requires:
+                self.cpp_info.requires.append("openssl::crypto")
         if self.settings.os == "Windows":
             # Named-pipe / socket transport pulls in Win32 networking libs —
             # keep in sync with the target_link_libraries in CMakeLists.txt.

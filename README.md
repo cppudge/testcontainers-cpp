@@ -156,12 +156,23 @@ Dependencies are managed by **Conan 2** (public ConanCenter) and wired into CMak
 | Package | Version | Role |
 |---|---|---|
 | `boost` (header-only: Beast + Asio) | 1.91.0 | HTTP/1.1 + transport (unix socket / **Windows named pipe** / TCP+TLS), streaming & connection hijack |
-| `openssl` | 3.6.3 | TLS for `https://`/`tcp+tls` Docker hosts |
+| `openssl` | 3.6.3 | TLS for `https://`/`tcp+tls` Docker hosts — **optional**, see below |
 | `nlohmann_json` | 3.12.0 | request/response bodies, `inspect`/`Ports`/`Health` parsing |
 | `libarchive` | 3.8.7 | tar for copy-to/from container and build context |
+| `libssh2` | 1.11.1 | SSH tunnel for `with_exposed_host_port` — **optional**, see below |
 
 Rationale for choosing Boost.Beast+Asio over libcurl/cpr/cpp-httplib (named-pipe support was the
 deciding factor): [`docs/02`](docs/02-dependencies.md).
+
+Two features are build options (both default ON), for consumers who must avoid the transitive
+dependencies: CMake `TC_TLS` / conan `tls` gates the `https://` transport (OpenSSL), and CMake
+`TC_HOST_PORT_FORWARDING` / conan `host_port_forwarding` gates `with_exposed_host_port`'s sshd
+sidecar tunnel (libssh2, whose crypto backend is OpenSSL). Disabling **both** removes OpenSSL from
+the dependency graph entirely (e.g. `-o 'testcontainers-cpp/*:tls=False'
+-o 'testcontainers-cpp/*:host_port_forwarding=False'`, or `-DTC_TLS=OFF
+-DTC_HOST_PORT_FORWARDING=OFF` when building this repo directly). A disabled feature fails loudly:
+connecting to an `https://` daemon or starting a container with `with_exposed_host_port` throws a
+`DockerError` naming the option.
 
 ## Design principles (native C++, not a Rust transliteration)
 

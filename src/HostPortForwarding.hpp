@@ -41,7 +41,9 @@ public:
     /// forward exists per port; joins the sidecar to `spec`'s user-defined
     /// network when it has one. Thread-safe. Throws DockerError on a
     /// Windows-containers daemon, an unsupported network mode ("host",
-    /// "none", "container:..."), or any sidecar/SSH failure.
+    /// "none", "container:..."), any sidecar/SSH failure — or immediately,
+    /// naming the option, when the build disabled the feature
+    /// (TC_HOST_PORT_FORWARDING=OFF; see the stub in HostPortForwarding.cpp).
     void wire(DockerClient& client, CreateContainerSpec& spec,
               const std::vector<std::uint16_t>& ports);
 

@@ -10,6 +10,9 @@ should know; the actionable leftovers live in [TODO.md](../TODO.md).
 one `ITransport`; `connect()` picks by scheme. TLS materials resolve from `DOCKER_CERT_PATH`
 (falling back to `~/.docker` under `DOCKER_TLS_VERIFY`) via the pure `TlsConfig` helpers
 (unit-tested). End-to-end TLS against a real remote daemon is not CI-verified yet (see TODO).
+The TLS transport is a build option (CMake `TC_TLS` / conan `tls`, default ON) — the library's
+only direct OpenSSL use; with it off, `connect()` for an `https://` host throws a `DockerError`
+naming the option, and the pure `TlsConfig` helpers stay available.
 
 **I/O deadlines** (`docker::TransportTimeouts`) — `connect` budgets the whole establishment
 (resolve + connect + TLS handshake, default 10s); `io` deadlines each read/write (default 60s,
@@ -175,7 +178,11 @@ forward per exposed port; connections arriving at the sidecar are pumped back to
 `127.0.0.1:<port>` in the test process, so it works wherever the daemon runs (Desktop VM,
 remote engine). Supported on the default bridge and user-defined networks (the sidecar joins a
 user network on demand; `Network` teardown detaches it again); requires a Linux-containers
-daemon; network modes "host" / "none" / "container:..." are rejected. Residuals: the
+daemon; network modes "host" / "none" / "container:..." are rejected. The whole feature is a
+build option (CMake `TC_HOST_PORT_FORWARDING` / conan `host_port_forwarding`, default ON) — it
+is what pulls in libssh2 (and, together with `TC_TLS`, OpenSSL: libssh2's crypto backend);
+with it off, `start()` of a request carrying host-access ports throws a `DockerError` naming
+the option. Residuals: the
 sidecar/tunnel singleton binds to the FIRST daemon used (same residual as the reaper); remote
 forwards are never cancelled once added; the sidecar's root password travels in the create
 body's env (readable via inspect — by someone who already has daemon access; Java parity).

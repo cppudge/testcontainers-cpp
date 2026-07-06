@@ -11,6 +11,8 @@ std::string version();
 /// Human-readable report of the versions of the bundled third-party
 /// dependencies (Boost/Beast, nlohmann_json, OpenSSL, libarchive).
 /// Primarily a build/link smoke check that the whole toolchain is wired up.
+/// The OpenSSL line appears only in builds that link it (i.e. with TLS
+/// and/or host-port forwarding enabled — the default).
 std::string dependency_report();
 
 } // namespace testcontainers

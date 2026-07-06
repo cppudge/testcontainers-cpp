@@ -256,7 +256,9 @@ public:
     /// back to the host through an SSH remote forward. Requires a
     /// Linux-containers daemon; supported on the default bridge network and
     /// user-defined networks (`with_network`) — not on network modes "host",
-    /// "none", or "container:...".
+    /// "none", or "container:...". If the library was built with
+    /// `TC_HOST_PORT_FORWARDING=OFF` (a build without libssh2/OpenSSL),
+    /// start() throws a DockerError naming that option.
     GenericImage& with_exposed_host_port(std::uint16_t port) {
         host_access_ports_.push_back(port);
         return *this;

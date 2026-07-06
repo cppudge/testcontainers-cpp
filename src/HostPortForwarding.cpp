@@ -1,5 +1,7 @@
 #include "HostPortForwarding.hpp"
 
+#if defined(TC_HOST_PORT_FORWARDING)
+
 #include <chrono>
 #include <cstddef>
 #include <mutex>
@@ -641,3 +643,41 @@ std::unique_ptr<HostPortForwarder::State> HostPortForwarder::make_state(DockerCl
 }
 
 } // namespace testcontainers::detail
+
+#else // TC_HOST_PORT_FORWARDING
+
+// ===== Feature disabled (TC_HOST_PORT_FORWARDING=OFF) =====
+// This build carries no libssh2/OpenSSL. The forwarder keeps its interface so
+// Runner/Network stay feature-agnostic: wiring a host port fails loudly, and
+// network teardown has no sidecar to release.
+
+#include <string>
+#include <vector>
+
+#include "testcontainers/Error.hpp"
+
+namespace testcontainers::detail {
+
+struct HostPortForwarder::State {};
+
+HostPortForwarder& HostPortForwarder::instance() {
+    static HostPortForwarder forwarder;
+    return forwarder;
+}
+
+HostPortForwarder::~HostPortForwarder() = default;
+
+void HostPortForwarder::release_network(DockerClient& /*client*/,
+                                        const std::string& /*network*/) noexcept {}
+
+void HostPortForwarder::wire(DockerClient& /*client*/, CreateContainerSpec& /*spec*/,
+                             const std::vector<std::uint16_t>& /*ports*/) {
+    throw DockerError(
+        "with_exposed_host_port needs the sshd sidecar tunnel, but this build of "
+        "testcontainers-cpp has it disabled (CMake option TC_HOST_PORT_FORWARDING=OFF / "
+        "conan option host_port_forwarding=False)");
+}
+
+} // namespace testcontainers::detail
+
+#endif // TC_HOST_PORT_FORWARDING

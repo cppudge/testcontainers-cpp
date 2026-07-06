@@ -27,9 +27,17 @@ libcurl/cpr/cpp-httplib на Windows (нет named pipe) и в части hijack
 | Пакет | Версия | Назначение |
 |---|---|---|
 | `boost` | 1.91.0 | Beast (HTTP) + Asio (транспорт: unix/npipe/tcp), header-only |
-| `openssl` | 3.6.3 | TLS для `https://`/`tcp+tls` Docker; стабильная ветка 3.x (4.0.1 пока слишком новый) |
+| `openssl` | 3.6.3 | TLS для `https://`/`tcp+tls` Docker; стабильная ветка 3.x (4.0.1 пока слишком новый). **Опционален** |
 | `nlohmann_json` | 3.12.0 | сериализация тел `create`/exec и разбор `inspect`/`Ports`/`Health` |
 | `libarchive` | 3.8.7 | tar для copy-to/from контейнера (`PUT/GET .../archive`) и build-контекста |
+| `libssh2` | 1.11.1 | SSH-туннель для `with_exposed_host_port` (sshd-сайдкар); крипто-бэкенд — OpenSSL. **Опционален** |
+
+Опциональность: CMake-опция `TC_TLS` / conan-опция `tls` выключает TLS-транспорт, а
+`TC_HOST_PORT_FORWARDING` / `host_port_forwarding` — sshd-туннель (и с ним libssh2).
+Обе по умолчанию ON; выключение **обеих** полностью убирает OpenSSL из графа зависимостей
+(одного `tls=False` мало — libcrypto остаётся бэкендом libssh2). Отключённая фича
+падает громко: `https://`-хост или `with_exposed_host_port` бросают `DockerError`
+с именем опции.
 
 ## Почему не остальные (кратко)
 
