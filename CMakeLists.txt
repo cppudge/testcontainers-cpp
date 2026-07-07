@@ -77,7 +77,11 @@ if(BUILD_SHARED_LIBS)
     endif()
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
-if(MSVC)
+if(MSVC AND NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    # Default to the dynamic release CRT for a standalone build, but do NOT override
+    # a value a consumer already set (e.g. Conan's CMakeToolchain, which selects
+    # MultiThreadedDebugDLL for a Debug consumer) — otherwise this static lib is MD
+    # while a Debug consumer is MDd and the link fails with LNK2038.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 if(WIN32)
