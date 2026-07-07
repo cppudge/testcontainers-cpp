@@ -814,9 +814,8 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         // and no output or exit code to collect — two plain round-trips (create
         // + start) and the command is left running in the background.
         if (opts.stdin_data) {
-            throw DockerError(
-                "exec: detach cannot be combined with stdin_data (a detached exec "
-                "attaches no streams, so there is no stdin to feed)");
+            throw DockerError("exec: detach cannot be combined with stdin_data (a detached exec "
+                              "attaches no streams, so there is no stdin to feed)");
         }
         const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
                                                 docker::build_exec_create_body(cmd, opts).dump());
