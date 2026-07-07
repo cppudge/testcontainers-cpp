@@ -43,8 +43,8 @@
 //   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty.
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
-//   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon; SKIPS (via an exec-inspect Running:true capability probe) on daemons that silently ignore detached execs (observed: Server 2022 dockerd 29.1.5, where `docker exec -d` is a no-op too).
-//   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon (client-side wire behavior only; also passes on daemons that ignore detached execs).
+//   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon (marker under %USERPROFILE%: the C:\ root denies ContainerUser writes on ltsc2022 under process isolation, and %TEMP% ACLs deny reading the file back).
+//   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon.
 //   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
 //   (No Windows mirror for StdinThrowsOnNonHalfClosableTransport: the up-front
 //   guard is client-side and engine-independent.)
@@ -367,54 +367,17 @@ TEST_F(WindowsExec, StreamingStopsWhenConsumerReturnsFalse) {
 TEST_F(WindowsExec, DetachedRunsInBackground) {
     Container c = start_keep_alive();
 
+    // Fire-and-forget against a Windows daemon: defaults come back
+    // immediately... The marker lives under %USERPROFILE% — the one spot
+    // verified writable AND readable for the default ContainerUser on every
+    // environment: the C:\ root denies it writes on ltsc2022 under process
+    // isolation ("Access is denied", and a detached exec has no channel to
+    // surface that — the marker would just never appear), while %TEMP%
+    // resolves to C:\Windows\TEMP, whose ACLs deny reading the file back.
     ExecOptions opts;
     opts.detach = true;
-
-    // Capability probe: some Windows daemons accept a detached exec-start
-    // (HTTP 200) and then silently never spawn the process — observed on
-    // Windows Server 2022's dockerd 29.1.5 (GitHub CI runners), where
-    // `docker exec -d` is equally a no-op. An exec instance is registered at
-    // CREATE time, so the container's ExecIDs list cannot discriminate (it
-    // shows the instance even on the broken daemon); the exec's own inspect
-    // can: `ping -n 30` keeps running for ~29s on a capable daemon, so
-    // Running:true within the poll window <=> the daemon really spawned it.
-    const ExecResult probe = c.exec({"ping", "-n", "30", "127.0.0.1"}, opts);
-    EXPECT_EQ(probe.exit_code, 0);
-
-    // Fire-and-forget deliberately returns no exec id, so the probe digs it
-    // out of the container inspect (this is the container's only exec so far)
-    // and asks GET /exec/{id}/json via the raw request() escape hatch.
-    std::string exec_id;
-    {
-        static constexpr std::string_view kKey = "\"ExecIDs\":[\"";
-        const std::string raw = c.inspect_raw();
-        const std::size_t key_pos = raw.find(kKey);
-        if (key_pos == std::string::npos) {
-            GTEST_SKIP() << "no exec instance registered for the detached exec - this daemon "
-                            "dropped it (detached execs are a silent no-op here; observed on "
-                            "Server 2022 dockerd 29.1.5)";
-        }
-        const std::size_t id_start = key_pos + kKey.size();
-        exec_id = raw.substr(id_start, raw.find('"', id_start) - id_start);
-    }
-    DockerClient client = DockerClient::from_environment();
-    bool spawned = false;
-    for (int i = 0; i < 25 && !spawned; ++i) {
-        const Response inspect = client.request("GET", "/exec/" + exec_id + "/json");
-        spawned = inspect.status_code == 200 &&
-                  inspect.body.find("\"Running\":true") != std::string::npos;
-        if (!spawned) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-    }
-    if (!spawned) {
-        GTEST_SKIP() << "this daemon silently ignores detached execs (start answers 200 but "
-                        "the process never runs; docker exec -d is a no-op here too - observed "
-                        "on Server 2022 dockerd 29.1.5)";
-    }
-
-    // Fire-and-forget on a capable daemon: defaults come back immediately...
-    const ExecResult res = c.exec({"cmd", "/c", "echo ran > C:\\tc-detached-marker"}, opts);
+    const ExecResult res =
+        c.exec({"cmd", "/c", "echo ran > %USERPROFILE%\\tc-detached-marker"}, opts);
     EXPECT_TRUE(res.stdout_data.empty());
     EXPECT_TRUE(res.stderr_data.empty());
     EXPECT_EQ(res.exit_code, 0);
@@ -422,9 +385,9 @@ TEST_F(WindowsExec, DetachedRunsInBackground) {
     // ...and the command really runs: poll for its marker file.
     std::string seen;
     for (int i = 0; i < 50; ++i) {
-        const ExecResult check = c.exec({"cmd", "/c", "type C:\\tc-detached-marker"});
-        if (check.exit_code == 0) {
-            seen = check.stdout_data;
+        const ExecResult probe = c.exec({"cmd", "/c", "type %USERPROFILE%\\tc-detached-marker"});
+        if (probe.exit_code == 0) {
+            seen = probe.stdout_data;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -436,10 +399,7 @@ TEST_F(WindowsExec, DetachedDoesNotWaitForCompletion) {
     Container c = start_keep_alive();
 
     // `ping -n 60` sleeps ~59s; the (generous, CI-safe) 30s bound cannot pass
-    // unless detach really skipped waiting for the command to finish. This
-    // pins the CLIENT-side wire behavior only (plain 200 round-trip, default
-    // result), so it also passes on daemons that ignore detached execs — the
-    // does-it-actually-run half lives in DetachedRunsInBackground above.
+    // unless detach really skipped waiting for the command to finish.
     ExecOptions opts;
     opts.detach = true;
     const auto before = std::chrono::steady_clock::now();

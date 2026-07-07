@@ -20,12 +20,10 @@ struct ExecOptions {
     /// immediately instead of waiting for it to finish. Nothing is attached or
     /// captured — the returned ExecResult keeps its defaults (empty output,
     /// exit_code 0; the command is still running, so its real status is
-    /// unknown). Cannot be combined with `stdin_data` or with the streaming
-    /// (consumer) exec overload: those combinations throw DockerError before
-    /// any daemon interaction. Caveat: some Windows daemons accept a detached
-    /// start (HTTP 200) and then never spawn the process (observed on Windows
-    /// Server 2022's dockerd 29.1.5; `docker exec -d` is equally affected) —
-    /// fire-and-forget has no way to detect that.
+    /// unknown; a command that fails inside the container surfaces no error).
+    /// Cannot be combined with `stdin_data` or with the streaming (consumer)
+    /// exec overload: those combinations throw DockerError before any daemon
+    /// interaction.
     bool detach = false;
     /// When set, attach stdin, feed these bytes, then half-close so the reader
     /// sees EOF. Requires a half-closable transport (TCP / unix socket): on the

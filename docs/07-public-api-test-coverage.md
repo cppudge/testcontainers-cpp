@@ -287,7 +287,7 @@ that consume them (rows above). Summary of where each is exercised:
 | `CopyToContainer::with_mode` | ✅ Copy.ModeAppliedToCopiedFile | ❌ |
 | `ExecOptions` (env/working_dir/user/tty/stdin_data) | ✅ Exec.* | ✅ WindowsExec.* |
 | `ExecOptions.privileged` | ✅ Exec.PrivilegedExecExpandsCapabilities | ❌ |
-| `ExecOptions.detach` | ✅ Exec.DetachedRunsInBackground, Exec.DetachedDoesNotWaitForCompletion (+ unit ExecWire.Detach*) | ✅ WindowsExec.Detached* (RunsInBackground skips on daemons that silently ignore detached execs — CI's Server 2022 dockerd 29.1.5 does; see 06) |
+| `ExecOptions.detach` | ✅ Exec.DetachedRunsInBackground, Exec.DetachedDoesNotWaitForCompletion (+ unit ExecWire.Detach*) | ✅ WindowsExec.DetachedRunsInBackground, WindowsExec.DetachedDoesNotWaitForCompletion |
 | `ExecResult` (stdout/stderr/exit_code) | ✅ Exec.* | ✅ WindowsExec.* |
 
 Bind mounts, copy modes, and privileged exec are now Linux-covered; none of the

@@ -134,12 +134,9 @@ pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 plus a streaming overload (`exec(cmd, opts, consumer)`). `detach` is fire-and-forget
 (`docker exec -d`): create + start as two plain round-trips (nothing attached, no
 upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, exit_code 0 —
-the command is still running), and detach+stdin / detach+consumer throw up front. Daemon
-caveat: Windows Server 2022's dockerd 29.1.5 (GitHub CI runners) answers 200 and silently
-never spawns the detached process — `docker exec -d` is equally a no-op there (verified via a
-CLI probe on the runner). The library stays a plain proxy to the API (no daemon detection);
-the WindowsExec test skips itself via an exec-inspect Running:true capability probe instead.
-Otherwise EVERY exec start requests a connection
+the command is still running, and a command that fails inside the container surfaces no
+error), and detach+stdin / detach+consumer throw up front. Otherwise EVERY exec start
+requests a connection
 upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) —
 docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops client bytes
 sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never
@@ -260,7 +257,11 @@ containers is environment-dependent (a host DNS-suffix search list breaks it), s
 tests assert daemon-side registration (DNSNames/Aliases in inspect) + ICMP to the peer's
 network IP instead of in-container name resolution; (c) nanoserver's volume-dir ACLs require
 `ContainerAdministrator`; (d) exec-stdin has no `cat` — pipe a script into `cmd /q`; (e) a
-Windows Dockerfile RUN needs `USER ContainerAdministrator` to write to `C:\`.
+Windows Dockerfile RUN needs `USER ContainerAdministrator` to write to `C:\`; (f) an EXEC as
+the default ContainerUser is denied `C:\`-root writes on ltsc2022 under process isolation
+(ltsc2025 allows it; a detached exec surfaces no error, the file just never appears), and its
+`%TEMP%` resolves to `C:\Windows\TEMP`, whose ACLs deny reading a just-written file back —
+exec-written test files go under `%USERPROFILE%`.
 
 **TTY containers** — `with_tty()` sets `Tty=true`; `logs()` / `follow_logs()` and the log wait
 handle the raw stream automatically (`Container` remembers its TTY-ness). No interactive

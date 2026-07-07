@@ -190,29 +190,6 @@ jobs:
       # artifact (with the exe+pdb) so the hang can be debugged locally
       # (WinDbg: `~*k` for all thread stacks). The step timeout stays above
       # the watchdog so the dump path always gets to run.
-      # TEMPORARY diagnostics round 2: is the detached exec actually fine here
-      # and only the `echo > C:\` WRITE failing (process isolation + ltsc2022
-      # root ACL)? Compare attached/detached writes to C:\ vs the user profile.
-      # Remove once understood.
-      - name: TEMP exec-write probe
-        timeout-minutes: 10
-        run: |
-          $id = docker run -d --isolation=process mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c "ping -n 300 127.0.0.1 >nul"
-          docker exec $id cmd /c "echo %USERNAME%"
-          docker exec $id cmd /c "echo ran > C:\m1"
-          Write-Output "attached-write-root-exit=$LASTEXITCODE"
-          docker exec $id cmd /c "type C:\m1"
-          Write-Output "attached-type-root-exit=$LASTEXITCODE"
-          docker exec $id cmd /c "echo ran > C:\Users\ContainerUser\m2"
-          docker exec $id cmd /c "type C:\Users\ContainerUser\m2"
-          Write-Output "attached-type-user-exit=$LASTEXITCODE"
-          docker exec -d $id cmd /c "echo ran > C:\Users\ContainerUser\m3"
-          Start-Sleep -Seconds 3
-          docker exec $id cmd /c "type C:\Users\ContainerUser\m3"
-          Write-Output "detached-type-user-exit=$LASTEXITCODE"
-          docker rm -f $id | Out-Null
-          exit 0
-
       - name: Integration tests (Windows engine)
         timeout-minutes: 25
         run: |
