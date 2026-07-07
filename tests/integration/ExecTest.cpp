@@ -43,7 +43,7 @@
 //   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty.
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
-//   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon; SKIPS (via an ExecIDs capability probe) on daemons that silently ignore detached execs (observed: Server 2022 dockerd 29.1.5, where `docker exec -d` is a no-op too).
+//   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon; SKIPS (via an exec-inspect Running:true capability probe) on daemons that silently ignore detached execs (observed: Server 2022 dockerd 29.1.5, where `docker exec -d` is a no-op too).
 //   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon (client-side wire behavior only; also passes on daemons that ignore detached execs).
 //   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
 //   (No Windows mirror for StdinThrowsOnNonHalfClosableTransport: the up-front
@@ -373,24 +373,44 @@ TEST_F(WindowsExec, DetachedRunsInBackground) {
     // Capability probe: some Windows daemons accept a detached exec-start
     // (HTTP 200) and then silently never spawn the process — observed on
     // Windows Server 2022's dockerd 29.1.5 (GitHub CI runners), where
-    // `docker exec -d` is equally a no-op (no effect, no exec instance).
-    // A RUNNING detached exec shows up in the container's ExecIDs on a
-    // working daemon (verified against a live Docker Desktop Windows
-    // engine), so a probe that never materializes identifies the broken
-    // daemon -> skip instead of failing on daemon behavior we cannot fix.
+    // `docker exec -d` is equally a no-op. An exec instance is registered at
+    // CREATE time, so the container's ExecIDs list cannot discriminate (it
+    // shows the instance even on the broken daemon); the exec's own inspect
+    // can: `ping -n 30` keeps running for ~29s on a capable daemon, so
+    // Running:true within the poll window <=> the daemon really spawned it.
     const ExecResult probe = c.exec({"ping", "-n", "30", "127.0.0.1"}, opts);
     EXPECT_EQ(probe.exit_code, 0);
-    bool exec_materialized = false;
-    for (int i = 0; i < 25; ++i) {
-        if (c.inspect_raw().find("\"ExecIDs\":[") != std::string::npos) {
-            exec_materialized = true;
-            break;
+
+    // Fire-and-forget deliberately returns no exec id, so the probe digs it
+    // out of the container inspect (this is the container's only exec so far)
+    // and asks GET /exec/{id}/json via the raw request() escape hatch.
+    std::string exec_id;
+    {
+        static constexpr std::string_view kKey = "\"ExecIDs\":[\"";
+        const std::string raw = c.inspect_raw();
+        const std::size_t key_pos = raw.find(kKey);
+        if (key_pos == std::string::npos) {
+            GTEST_SKIP() << "no exec instance registered for the detached exec - this daemon "
+                            "dropped it (detached execs are a silent no-op here; observed on "
+                            "Server 2022 dockerd 29.1.5)";
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const std::size_t id_start = key_pos + kKey.size();
+        exec_id = raw.substr(id_start, raw.find('"', id_start) - id_start);
     }
-    if (!exec_materialized) {
-        GTEST_SKIP() << "this daemon silently ignores detached execs (docker exec -d is a "
-                        "no-op here too; observed on Server 2022 dockerd 29.1.5)";
+    DockerClient client = DockerClient::from_environment();
+    bool spawned = false;
+    for (int i = 0; i < 25 && !spawned; ++i) {
+        const Response inspect = client.request("GET", "/exec/" + exec_id + "/json");
+        spawned = inspect.status_code == 200 &&
+                  inspect.body.find("\"Running\":true") != std::string::npos;
+        if (!spawned) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+    if (!spawned) {
+        GTEST_SKIP() << "this daemon silently ignores detached execs (start answers 200 but "
+                        "the process never runs; docker exec -d is a no-op here too - observed "
+                        "on Server 2022 dockerd 29.1.5)";
     }
 
     // Fire-and-forget on a capable daemon: defaults come back immediately...

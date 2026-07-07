@@ -137,8 +137,9 @@ upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, e
 the command is still running), and detach+stdin / detach+consumer throw up front. Daemon
 caveat: Windows Server 2022's dockerd 29.1.5 (GitHub CI runners) answers 200 and silently
 never spawns the detached process — `docker exec -d` is equally a no-op there (verified via a
-CLI probe: no marker file, no exec instance in ExecIDs); the WindowsExec test skips itself via
-an ExecIDs capability probe. Otherwise EVERY exec start requests a connection
+CLI probe on the runner). The library stays a plain proxy to the API (no daemon detection);
+the WindowsExec test skips itself via an exec-inspect Running:true capability probe instead.
+Otherwise EVERY exec start requests a connection
 upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) —
 docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops client bytes
 sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never
