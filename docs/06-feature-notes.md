@@ -97,9 +97,10 @@ to a normal container otherwise. Host-FILE copy sources hash the PATH, not the b
 changed file at the same path still reuses. Reused containers are never auto-removed or reaped:
 prune externally (label sweep on the reuse-hash label). `Container::keep()` flips a normal
 handle into the same persistent state at runtime (no removal, no stopping hooks on drop);
-unlike reuse containers it KEEPS the session label, so Ryuk still reaps it once the test
-process exits — disable the reaper (or use reuse) for a container that must outlive the
-process.
+unlike reuse containers it KEEPS the session label, so on Linux engines Ryuk still reaps it
+once the test process exits — disable the reaper (or use reuse) for a container that must
+outlive the process. On a Windows-containers engine no reaper runs at all: a kept container
+stays until removed manually.
 
 **Wait strategies** — log message / fixed duration / exit(+code) / healthcheck / HTTP probe /
 listening port, run in order under one shared startup timeout; the inspect-based polls run

@@ -129,7 +129,10 @@ TEST(Runner, CreateStartWaitReturnsHandle) {
 TEST(Runner, KeepSkipsRemovalOnDrop) {
     // The mirror of CreateStartWaitReturnsHandle's drop: after keep() the
     // handle is persistent, so going out of scope must NOT issue a DELETE.
-    CannedHttpServer server({ping_ok(), created("abc123"), started()});
+    // The spare removed() entry is a tripwire: if keep() regressed and drop
+    // DID send a DELETE, that connection gets accepted and recorded (failing
+    // the count below) instead of hanging unaccepted until the io timeout.
+    CannedHttpServer server({ping_ok(), created("abc123"), started(), removed()});
     {
         testcontainers::DockerClient client{server.host()};
         Container c = Runner::run(client, busybox_request());

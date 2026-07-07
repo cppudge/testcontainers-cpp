@@ -19,10 +19,10 @@
 // loopback responder; no Docker daemon):
 //   ExecWire.StdinRequestsConnectionUpgrade - exec with stdin_data sends "Connection: Upgrade" + "Upgrade: tcp" on the start request (replacing the default "Connection: close"), and the 200 fallback (a daemon that ignores the upgrade) still returns the demuxed output — stdin is fed after the header without breaking the body read.
 //   ExecWire.NoStdinAlsoRequestsUpgrade - exec WITHOUT stdin sends the same upgrade headers (CLI parity; the non-upgraded exec-start response is never terminated by some daemons - observed on a Windows-containers 29.1.5), and a 200 from a daemon that ignores the upgrade still delivers the demuxed body.
-//   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
 //   ExecWire.DetachedStartIsPlainRequest - detach=true runs three plain request/response connections (ping, attach-nothing create, "Detach":true start WITHOUT upgrade headers), never inspects, and returns a default ExecResult.
 //   ExecWire.DetachRejectsStdin - detach + stdin_data throws DockerError naming both options before any connection is opened (no abandoned exec instance).
 //   ExecWire.DetachRejectsConsumer - detach on the streaming overload throws DockerError naming the consumer before any connection is opened.
+//   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
 
 namespace {
 

@@ -43,9 +43,9 @@
 //   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty.
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
-//   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
 //   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon.
 //   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon.
+//   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
 //   (No Windows mirror for StdinThrowsOnNonHalfClosableTransport: the up-front
 //   guard is client-side and engine-independent.)
 

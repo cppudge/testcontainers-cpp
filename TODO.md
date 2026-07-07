@@ -108,13 +108,17 @@ when it lands (adding a short note there if it needs one).
   time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
 - **Test gaps** — the WaitStrategies duration-clamp-to-deadline branch is only exercised via
   the integration `WaitStrategiesTest` (extract a pure `clamped_wait_plan(now, value, deadline)`
-  if it ever regresses).
-- **Host access residuals** — libssh2 landed as a HARD dependency (the planned optional
-  `find_package` guard would make the public API compile-time-conditional; revisit if the
-  dependency ever bothers a consumer); the sidecar/tunnel singleton binds to the FIRST daemon
-  used (same shape as the Ryuk residual); remote forwards are never cancelled once added; the
-  tunnel pump wakes every 100ms even when idle (fine for test traffic).
-  (`src/HostPortForwarding.cpp`)
+  if it ever regresses). `Runner.ReuseAdoptsRunningMatch` /
+  `Runner.ReuseCreateBodyCarriesHashNotSessionLabel` script exactly as many canned connections
+  as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
+  (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
+  tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses.
+- **Host access residuals** — the libssh2/OpenSSL dependency is now optional
+  (`TC_HOST_PORT_FORWARDING=OFF` / conan `host_port_forwarding=False` builds a stub that throws
+  from `with_exposed_host_port`; the public API stays unconditional); the sidecar/tunnel
+  singleton binds to the FIRST daemon used (same shape as the Ryuk residual); remote forwards
+  are never cancelled once added; the tunnel pump wakes every 100ms even when idle (fine for
+  test traffic). (`src/HostPortForwarding.cpp`)
 - **msvc-preset configure noise** — non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release`
   messages for OpenSSL/zlib under the Visual Studio preset (Conan installs Release-only); the
   default `ninja` preset is unaffected.

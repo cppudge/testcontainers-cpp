@@ -177,7 +177,9 @@ public:
     void copy_file_from(const std::string& container_path,
                         const std::filesystem::path& host_dest) const;
 
-    /// Stop the container (it is still removed on destruction).
+    /// Stop the container (an auto-removing handle still removes it on
+    /// destruction; a persistent handle — `with_reuse` / after `keep()` —
+    /// does not).
     void stop();
 
     /// Whether the container is currently running (per a fresh inspect).
@@ -190,12 +192,14 @@ public:
     /// afterwards). Removing the container then becomes the caller's
     /// responsibility (e.g. `DockerClient::remove_container` or `docker rm -f`).
     ///
-    /// Ryuk still applies: a normally-started container carries the session
-    /// label, so the reaper removes it shortly after the test process exits.
-    /// keep() only protects it from THIS process's teardown — for a container
-    /// that must outlive the process, disable the reaper
-    /// (TESTCONTAINERS_RYUK_DISABLED) or use `with_reuse`, whose containers are
-    /// never session-labeled.
+    /// Ryuk still applies on Linux engines: a normally-started container
+    /// carries the session label, so the reaper removes it shortly after the
+    /// test process exits. keep() only protects it from THIS process's
+    /// teardown — for a container that must outlive the process, disable the
+    /// reaper (TESTCONTAINERS_RYUK_DISABLED) or use `with_reuse`, whose
+    /// containers are never session-labeled. (No reaper runs against a
+    /// Windows-containers engine — a kept container there stays until you
+    /// remove it.)
     void keep() noexcept { remove_on_drop_ = false; }
 
     /// Explicitly stop owning / force-remove the container now. Idempotent;
