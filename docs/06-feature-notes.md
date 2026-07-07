@@ -95,7 +95,11 @@ reuse-hash label (`org.testcontainers.reuse.hash`, over the create body + copy-t
 descriptors); gated on `TESTCONTAINERS_REUSE_ENABLE` / `testcontainers.reuse.enable`, degrading
 to a normal container otherwise. Host-FILE copy sources hash the PATH, not the bytes — a
 changed file at the same path still reuses. Reused containers are never auto-removed or reaped:
-prune externally (label sweep on the reuse-hash label).
+prune externally (label sweep on the reuse-hash label). `Container::keep()` flips a normal
+handle into the same persistent state at runtime (no removal, no stopping hooks on drop);
+unlike reuse containers it KEEPS the session label, so Ryuk still reaps it once the test
+process exits — disable the reaper (or use reuse) for a container that must outlive the
+process.
 
 **Wait strategies** — log message / fixed duration / exit(+code) / healthcheck / HTTP probe /
 listening port, run in order under one shared startup timeout; the inspect-based polls run
@@ -125,8 +129,12 @@ cooperative stop via the consumer — run it on your own thread). TTY containers
 (`with_tty`) use a raw/unframed decode path, selected automatically by `Container`; a
 pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 
-**Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data) plus a
-streaming overload (`exec(cmd, opts, consumer)`). EVERY exec start requests a connection
+**Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data / detach)
+plus a streaming overload (`exec(cmd, opts, consumer)`). `detach` is fire-and-forget
+(`docker exec -d`): create + start as two plain round-trips (nothing attached, no
+upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, exit_code 0 —
+the command is still running), and detach+stdin / detach+consumer throw up front. Otherwise
+EVERY exec start requests a connection
 upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) —
 docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops client bytes
 sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never

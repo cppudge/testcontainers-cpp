@@ -8,9 +8,11 @@
 #include <chrono>
 
 #include "CannedHttpServer.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
+#include "testcontainers/docker/Logs.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
 
 // Tests in this file (DockerClient::exec wire behavior against a canned
@@ -18,6 +20,9 @@
 //   ExecWire.StdinRequestsConnectionUpgrade - exec with stdin_data sends "Connection: Upgrade" + "Upgrade: tcp" on the start request (replacing the default "Connection: close"), and the 200 fallback (a daemon that ignores the upgrade) still returns the demuxed output — stdin is fed after the header without breaking the body read.
 //   ExecWire.NoStdinAlsoRequestsUpgrade - exec WITHOUT stdin sends the same upgrade headers (CLI parity; the non-upgraded exec-start response is never terminated by some daemons - observed on a Windows-containers 29.1.5), and a 200 from a daemon that ignores the upgrade still delivers the demuxed body.
 //   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
+//   ExecWire.DetachedStartIsPlainRequest - detach=true runs three plain request/response connections (ping, attach-nothing create, "Detach":true start WITHOUT upgrade headers), never inspects, and returns a default ExecResult.
+//   ExecWire.DetachRejectsStdin - detach + stdin_data throws DockerError naming both options before any connection is opened (no abandoned exec instance).
+//   ExecWire.DetachRejectsConsumer - detach on the streaming overload throws DockerError naming the consumer before any connection is opened.
 
 namespace {
 
@@ -25,8 +30,10 @@ using tcunit::CannedHttpServer;
 using tcunit::http_response;
 
 using testcontainers::DockerClient;
+using testcontainers::DockerError;
 using testcontainers::ExecOptions;
 using testcontainers::ExecResult;
+using testcontainers::LogSource;
 
 /// One multiplexed frame: 8-byte header {kind, 0, 0, 0, len_be32} + payload.
 std::string frame(unsigned char kind, std::string_view payload) {
@@ -127,6 +134,84 @@ TEST(ExecWire, NoStdinAlsoRequestsUpgrade) {
     // that never came), while the upgraded stream is closed on exec exit.
     EXPECT_TRUE(contains(start_request, "Connection: Upgrade\r\n")) << start_request;
     EXPECT_TRUE(contains(start_request, "Upgrade: tcp\r\n")) << start_request;
+}
+
+TEST(ExecWire, DetachedStartIsPlainRequest) {
+    // A detached exec never hijacks a connection: ping, create, start are
+    // three ordinary one-shot exchanges (accept order = connection order here,
+    // unlike the attached tests above — no early hijack connect), and there is
+    // NO exec-inspect afterwards (the command is still running, so there is no
+    // exit code to read).
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", "")},
+    });
+    DockerClient client = fast_client(server);
+
+    ExecOptions opts;
+    opts.detach = true;
+    const ExecResult res = client.exec("abc", {"sleep", "30"}, opts);
+
+    // Fire-and-forget: the result keeps its defaults.
+    EXPECT_TRUE(res.stdout_data.empty());
+    EXPECT_TRUE(res.stderr_data.empty());
+    EXPECT_EQ(res.exit_code, 0);
+
+    const auto by_connection = server.requests_by_connection();
+    ASSERT_EQ(by_connection.size(), 3u); // ping, create, start — no inspect
+    ASSERT_FALSE(by_connection[1].empty());
+    // The create body attaches nothing: a detached exec streams nothing back.
+    const std::string& create_request = by_connection[1][0];
+    EXPECT_TRUE(contains(create_request, "POST /containers/abc/exec")) << create_request;
+    EXPECT_FALSE(contains(create_request, "AttachStdout")) << create_request;
+    EXPECT_FALSE(contains(create_request, "AttachStderr")) << create_request;
+    ASSERT_FALSE(by_connection[2].empty());
+    const std::string& start_request = by_connection[2][0];
+    EXPECT_TRUE(contains(start_request, "POST /exec/e1/start")) << start_request;
+    EXPECT_TRUE(contains(start_request, R"("Detach":true)")) << start_request;
+    // No upgrade: a detached start is an ordinary request/response round-trip
+    // (`docker exec -d` parity), so the default close header survives.
+    EXPECT_FALSE(contains(start_request, "Connection: Upgrade")) << start_request;
+    EXPECT_TRUE(contains(start_request, "Connection: close")) << start_request;
+}
+
+TEST(ExecWire, DetachRejectsStdin) {
+    // The invalid combination is rejected BEFORE any daemon interaction: no
+    // connection is opened and no exec instance is left behind on the daemon.
+    CannedHttpServer server(std::vector<std::vector<std::string>>{{ping_ok()}});
+    DockerClient client = fast_client(server);
+
+    ExecOptions opts;
+    opts.detach = true;
+    opts.stdin_data = "ping\n";
+    try {
+        (void)client.exec("abc", {"cat"}, opts);
+        FAIL() << "detach + stdin_data must throw DockerError";
+    } catch (const DockerError& e) {
+        EXPECT_TRUE(contains(e.what(), "detach")) << e.what();
+        EXPECT_TRUE(contains(e.what(), "stdin_data")) << e.what();
+    }
+    EXPECT_TRUE(server.requests_by_connection().empty());
+}
+
+TEST(ExecWire, DetachRejectsConsumer) {
+    // Same up-front rejection for the streaming overload: a detached exec
+    // attaches no streams, so no output could ever reach the consumer.
+    CannedHttpServer server(std::vector<std::vector<std::string>>{{ping_ok()}});
+    DockerClient client = fast_client(server);
+
+    ExecOptions opts;
+    opts.detach = true;
+    try {
+        (void)client.exec("abc", {"sleep", "30"}, opts,
+                          [](LogSource, std::string_view) { return true; });
+        FAIL() << "detach + consumer must throw DockerError";
+    } catch (const DockerError& e) {
+        EXPECT_TRUE(contains(e.what(), "detach")) << e.what();
+        EXPECT_TRUE(contains(e.what(), "consumer")) << e.what();
+    }
+    EXPECT_TRUE(server.requests_by_connection().empty());
 }
 
 TEST(ExecWire, UpgradedStreamReadsRaw) {

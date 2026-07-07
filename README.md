@@ -114,7 +114,8 @@ Several may be chained; they run in order under the startup timeout.
 ### Talking to the running container
 
 `Container` is a move-only RAII handle: `host()`, `get_host_port(port)`, `logs()`, `exec(cmd)`,
-`copy_to(src)`, `stop()`, `is_running()`, `remove()`.
+`copy_to(src)`, `stop()`, `is_running()`, `remove()`. `keep()` releases removal ownership (the
+container survives the handle); `ExecOptions{.detach = true}` runs a command fire-and-forget.
 
 ```cpp
 ExecResult r = redis.exec({"redis-cli", "PING"});  // r.stdout_data / r.stderr_data / r.exit_code

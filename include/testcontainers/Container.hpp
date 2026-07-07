@@ -36,7 +36,8 @@ enum class AdoptOwnership {
 ///
 /// A persistent handle (`remove_on_drop == false`) does NOT remove the container
 /// on destruction; it is used for reusable containers (`with_reuse`), which must
-/// survive across test runs. The caller is then responsible for removing it.
+/// survive across test runs, and is what `keep()` turns a normal handle into.
+/// The caller is then responsible for removing the container.
 class Container {
 public:
     /// Adopt an already-running container that this library did NOT start (the
@@ -145,8 +146,8 @@ public:
     ExecResult exec(const std::vector<std::string>& cmd) const;
 
     /// Run a command inside the running container with `opts` (env / working dir /
-    /// user / privileged / tty / stdin), capturing its output and exit code. See
-    /// DockerClient::exec for the tty/stdin semantics.
+    /// user / privileged / tty / stdin / detach), capturing its output and exit
+    /// code. See DockerClient::exec for the tty/stdin/detach semantics.
     ExecResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts) const;
 
     /// Streaming variant: run `cmd` with `opts`, delivering output to `consumer`
@@ -182,8 +183,25 @@ public:
     /// Whether the container is currently running (per a fresh inspect).
     bool is_running() const;
 
+    /// Keep the container alive past this handle: from here on neither
+    /// destruction nor `remove()` removes it, and the stopping hooks do not
+    /// fire on drop — the handle becomes persistent, exactly as if the
+    /// container had been started `with_reuse` (`is_persistent()` reports true
+    /// afterwards). Removing the container then becomes the caller's
+    /// responsibility (e.g. `DockerClient::remove_container` or `docker rm -f`).
+    ///
+    /// Ryuk still applies: a normally-started container carries the session
+    /// label, so the reaper removes it shortly after the test process exits.
+    /// keep() only protects it from THIS process's teardown — for a container
+    /// that must outlive the process, disable the reaper
+    /// (TESTCONTAINERS_RYUK_DISABLED) or use `with_reuse`, whose containers are
+    /// never session-labeled.
+    void keep() noexcept { remove_on_drop_ = false; }
+
     /// Explicitly stop owning / force-remove the container now. Idempotent;
-    /// after this the destructor does nothing.
+    /// after this the destructor does nothing. On a persistent handle
+    /// (`with_reuse` / after `keep()`) this releases ownership without removing
+    /// the container.
     void remove();
 
 private:

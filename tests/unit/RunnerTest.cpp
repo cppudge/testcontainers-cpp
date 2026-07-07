@@ -19,6 +19,7 @@
 // Tests in this file (the start orchestration core, detail::Runner::run, driven
 // against a canned loopback HTTP responder — no Docker daemon):
 //   Runner.CreateStartWaitReturnsHandle - the happy path issues create -> start, the create body carries the managed-by session labels, and the auto-removing handle DELETEs the container on drop.
+//   Runner.KeepSkipsRemovalOnDrop - keep() flips an auto-removing handle to persistent (is_persistent() reports true): its drop issues NO DELETE.
 //   Runner.HooksFireInOrderAroundCopy - created/starting/started/stopping hooks fire in order with the container id, with the copy-to PUT between create and start.
 //   Runner.FailedStartRemovesPartialContainer - a 500 on start propagates as DockerError(500) after the partial container is force-removed.
 //   Runner.ThrowingCreatedHookRemovesContainer - an exception from a created hook aborts the run and still removes the partial container.
@@ -123,6 +124,25 @@ TEST(Runner, CreateStartWaitReturnsHandle) {
     // container. (The session-id label depends on TESTCONTAINERS_RYUK_DISABLED,
     // so only the unconditional label is pinned here.)
     EXPECT_NE(requests[1].find("org.testcontainers.managed-by"), std::string::npos) << requests[1];
+}
+
+TEST(Runner, KeepSkipsRemovalOnDrop) {
+    // The mirror of CreateStartWaitReturnsHandle's drop: after keep() the
+    // handle is persistent, so going out of scope must NOT issue a DELETE.
+    CannedHttpServer server({ping_ok(), created("abc123"), started()});
+    {
+        testcontainers::DockerClient client{server.host()};
+        Container c = Runner::run(client, busybox_request());
+        EXPECT_FALSE(c.is_persistent());
+        c.keep();
+        EXPECT_TRUE(c.is_persistent());
+    } // drop -> nothing: keep() released removal ownership
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 3u); // ping, create, start — no DELETE on drop
+    EXPECT_TRUE(request_is(requests[0], "GET /_ping")) << requests[0];
+    EXPECT_TRUE(request_is(requests[1], "POST /containers/create")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /containers/abc123/start")) << requests[2];
 }
 
 TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {

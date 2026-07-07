@@ -16,6 +16,14 @@ struct ExecOptions {
     std::optional<std::string> user;        ///< User ("name" or "uid[:gid]")
     bool privileged = false;                ///< Privileged
     bool tty = false;                       ///< allocate a TTY (raw, unframed output)
+    /// Fire-and-forget (`docker exec -d`): start the command and return
+    /// immediately instead of waiting for it to finish. Nothing is attached or
+    /// captured — the returned ExecResult keeps its defaults (empty output,
+    /// exit_code 0; the command is still running, so its real status is
+    /// unknown). Cannot be combined with `stdin_data` or with the streaming
+    /// (consumer) exec overload: those combinations throw DockerError before
+    /// any daemon interaction.
+    bool detach = false;
     /// When set, attach stdin, feed these bytes, then half-close so the reader
     /// sees EOF. Requires a half-closable transport (TCP / unix socket): on the
     /// Windows named-pipe and TLS transports exec throws instead (no EOF signal

@@ -483,12 +483,16 @@ nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
                                       const ExecOptions& opts) {
     nlohmann::json body;
     body["Cmd"] = cmd;
-    body["AttachStdout"] = true;
-    body["AttachStderr"] = true;
-    // Only attach stdin when there is input to feed; otherwise a reader inside the
-    // container could block waiting on a stream that never closes.
-    if (opts.stdin_data) {
-        body["AttachStdin"] = true;
+    if (!opts.detach) {
+        body["AttachStdout"] = true;
+        body["AttachStderr"] = true;
+        // Only attach stdin when there is input to feed; otherwise a reader inside
+        // the container could block waiting on a stream that never closes. A
+        // detached exec attaches nothing at all (the detach+stdin combination is
+        // rejected before this is built).
+        if (opts.stdin_data) {
+            body["AttachStdin"] = true;
+        }
     }
     body["Tty"] = opts.tty;
     if (!opts.env.empty()) {

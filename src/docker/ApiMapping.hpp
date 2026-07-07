@@ -70,8 +70,10 @@ ContainerInspect parse_inspect(const std::string& body);
 std::vector<ContainerSummary> parse_container_list(const std::string& body);
 
 /// Build the JSON body for `POST /containers/{id}/exec` (the exec-create call)
-/// from `cmd` and `opts`. Always attaches stdout and stderr so the output can be
-/// captured. Emits AttachStdin (only when `opts.stdin_data` is set), Tty, Env
+/// from `cmd` and `opts`. Attaches stdout and stderr so the output can be
+/// captured — except with `opts.detach`, which attaches nothing at all (a
+/// detached exec streams nothing back; `docker exec -d` parity). Emits
+/// AttachStdin (only when `opts.stdin_data` is set and not detaching), Tty, Env
 /// (omitted when empty), WorkingDir / User (omitted when nullopt), and Privileged
 /// (omitted when false).
 nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,

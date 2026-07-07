@@ -147,6 +147,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `copy_file_from(path, host)` | ✅ | ✅ [b] | ✅ Copy.CopyFileFromWritesHost | ✅ WindowsCopy.CopyFileFromWritesHost |
 | `stop()` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop | ❌ |
 | `is_running()` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.* | ✅ WindowsContainer.ExecRunsInRunningContainer |
+| `keep()` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
 | `remove()` | ✅ | ✅ | ✅ implicit via RAII drop everywhere | ✅ implicit via RAII drop |
 
 Notes:
@@ -286,6 +287,7 @@ that consume them (rows above). Summary of where each is exercised:
 | `CopyToContainer::with_mode` | ✅ Copy.ModeAppliedToCopiedFile | ❌ |
 | `ExecOptions` (env/working_dir/user/tty/stdin_data) | ✅ Exec.* | ✅ WindowsExec.* |
 | `ExecOptions.privileged` | ✅ Exec.PrivilegedExecExpandsCapabilities | ❌ |
+| `ExecOptions.detach` | ✅ Exec.DetachedRunsInBackground, Exec.DetachedDoesNotWaitForCompletion (+ unit ExecWire.Detach*) | ✅ WindowsExec.DetachedRunsInBackground, WindowsExec.DetachedDoesNotWaitForCompletion |
 | `ExecResult` (stdout/stderr/exit_code) | ✅ Exec.* | ✅ WindowsExec.* |
 
 Bind mounts, copy modes, and privileged exec are now Linux-covered; none of the

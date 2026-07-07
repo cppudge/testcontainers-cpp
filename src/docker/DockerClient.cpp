@@ -710,6 +710,27 @@ void require_stdin_capable(docker::ITransport& transport, const ExecOptions& opt
     }
 }
 
+/// The JSON body for `POST /exec/{exec_id}/start` — the daemon reads only
+/// Detach and Tty here (everything else was fixed at exec create).
+std::string build_exec_start_body(const ExecOptions& opts) {
+    return std::string(R"({"Detach":)") + (opts.detach ? "true" : "false") + R"(,"Tty":)" +
+           (opts.tty ? "true" : "false") + "}";
+}
+
+/// Start an already-created exec DETACHED: a plain request/response round-trip
+/// (no upgrade, no hijack — `docker exec -d` parity). The daemon answers 200
+/// with no stream and the command keeps running in the background.
+void exec_start_detached(DockerClient& client, const std::string& exec_id,
+                         const std::string& start_target, const ExecOptions& opts) {
+    const std::vector<std::pair<std::string, std::string>> json_headers = {
+        {"Content-Type", "application/json"}};
+    const Response res =
+        client.request("POST", start_target, build_exec_start_body(opts), json_headers);
+    if (res.status_code != 200) {
+        throw_status_error("exec start " + exec_id, res, exec_id);
+    }
+}
+
 /// Open the exec start stream on an already-connected `stream`: write
 /// `POST /exec/{exec_id}/start` (`start_target`, already version-pinned). On a
 /// write error, closes `transport` and throws. The caller must then read the
@@ -718,8 +739,7 @@ void require_stdin_capable(docker::ITransport& transport, const ExecOptions& opt
 void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
                 const DockerHost& host, const std::string& exec_id, const std::string& start_target,
                 const ExecOptions& opts) {
-    const std::string start_body =
-        std::string(R"({"Detach":false,"Tty":)") + (opts.tty ? "true" : "false") + "}";
+    const std::string start_body = build_exec_start_body(opts);
 
     auto req = make_request<http::string_body>(http::verb::post, start_target, host);
     req.set(http::field::content_type, "application/json");
@@ -789,6 +809,23 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts) {
+    if (opts.detach) {
+        // Fire-and-forget: nothing is attached, so there is no stream to hijack
+        // and no output or exit code to collect — two plain round-trips (create
+        // + start) and the command is left running in the background.
+        if (opts.stdin_data) {
+            throw DockerError(
+                "exec: detach cannot be combined with stdin_data (a detached exec "
+                "attaches no streams, so there is no stdin to feed)");
+        }
+        const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
+                                                docker::build_exec_create_body(cmd, opts).dump());
+        exec_start_detached(*this, exec_id, versioned("/exec/" + exec_id + "/start"), opts);
+        // The command is still running — return the defaults (empty output,
+        // exit_code 0) instead of inspecting a not-yet-exited exec.
+        return ExecResult{};
+    }
+
     // 1) Connect the raw transport first and check the stdin capability BEFORE
     //    creating the exec instance, so an unsupported-transport failure leaves
     //    no abandoned exec on the daemon.
@@ -867,6 +904,11 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts, const LogConsumer& consumer) {
+    if (opts.detach) {
+        throw DockerError("exec: detach cannot be combined with an output consumer (a "
+                          "detached exec attaches no streams, so no output would ever arrive)");
+    }
+
     // 1) Connect + capability check first (see the non-streaming overload).
     auto transport = docker::connect(host_, timeouts_);
     require_stdin_capable(*transport, opts);

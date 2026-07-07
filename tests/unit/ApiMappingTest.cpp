@@ -54,6 +54,7 @@
 //   ApiMapping.BuildExecCreateBodyDefaultsOmitOptions - with default ExecOptions the body sets Tty=false and omits AttachStdin/Env/WorkingDir/User/Privileged.
 //   ApiMapping.BuildExecCreateBodyWithOptions - env/working_dir/user/privileged/tty map to Env/WorkingDir/User/Privileged/Tty.
 //   ApiMapping.BuildExecCreateBodyStdinAttaches - a set stdin_data adds AttachStdin=true (and is absent otherwise).
+//   ApiMapping.BuildExecCreateBodyDetachAttachesNothing - detach=true omits every Attach* field (a detached exec streams nothing back), still emitting Cmd and Tty.
 //   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectTty - inspect JSON with Config.Tty=true parses into ContainerInspect.tty (false when absent).
@@ -620,6 +621,25 @@ TEST(ApiMapping, BuildExecCreateBodyStdinAttaches) {
 
     // Absent stdin_data emits no AttachStdin field.
     EXPECT_FALSE(build_exec_create_body({"cat"}, ExecOptions{}).contains("AttachStdin"));
+}
+
+TEST(ApiMapping, BuildExecCreateBodyDetachAttachesNothing) {
+    // A detached exec streams nothing back: no Attach* field at all, even with
+    // stdin_data set (the detach+stdin combination is rejected before the body
+    // is ever built; the pure mapping still must not attach). Detach itself is
+    // a START-body field, so it does not appear here either.
+    ExecOptions opts;
+    opts.detach = true;
+    opts.stdin_data = "ping\n";
+
+    const auto body = build_exec_create_body({"sleep", "30"}, opts);
+    EXPECT_FALSE(body.contains("AttachStdout"));
+    EXPECT_FALSE(body.contains("AttachStderr"));
+    EXPECT_FALSE(body.contains("AttachStdin"));
+    EXPECT_FALSE(body.contains("Detach"));
+    // Cmd / Tty are emitted as usual (`docker exec -d -t` is a legal combo).
+    EXPECT_EQ(body["Cmd"], nlohmann::json({"sleep", "30"}));
+    EXPECT_FALSE(body["Tty"].get<bool>());
 }
 
 TEST(ApiMapping, ParseExecExitCode) {

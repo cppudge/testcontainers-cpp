@@ -243,10 +243,17 @@ public:
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd);
 
     /// Run `cmd` inside the running container with `opts` (env / working dir /
-    /// user / privileged / tty / stdin) and capture its output and exit code.
-    /// Creates the exec (`POST /containers/{id}/exec`), starts it
+    /// user / privileged / tty / stdin / detach) and capture its output and exit
+    /// code. Creates the exec (`POST /containers/{id}/exec`), starts it
     /// (`POST /exec/{exec_id}/start`) and reads the exit code
     /// (`GET /exec/{exec_id}/json`).
+    ///
+    /// With `opts.detach == true` the command is only STARTED (fire-and-forget,
+    /// `docker exec -d`): create + start are two plain round-trips, nothing is
+    /// attached, and the returned ExecResult keeps its defaults — empty output
+    /// and exit_code 0; the command is still running, so its real status is
+    /// unknown. detach + stdin_data throws DockerError before any daemon
+    /// interaction (nothing is attached, so there is no stdin to feed).
     ///
     /// With `opts.tty == false` the returned stream is the multiplexed frame
     /// format and is demuxed into `stdout_data` / `stderr_data`. With
@@ -268,7 +275,8 @@ public:
     ///
     /// Returns an `ExecResult` whose `exit_code` is read from the exec inspect;
     /// `stdout_data` / `stderr_data` are left empty (the output was delivered to
-    /// `consumer`).
+    /// `consumer`). `opts.detach` is rejected with a DockerError before any
+    /// daemon interaction: a detached exec produces no output stream to deliver.
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
                     const ExecOptions& opts, const LogConsumer& consumer);
 

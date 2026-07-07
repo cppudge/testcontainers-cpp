@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "testcontainers/Container.hpp"
@@ -32,6 +34,8 @@
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
 //   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
 //   Exec.PrivilegedExecExpandsCapabilities - ExecOptions.privileged grants the exec process a strict superset of the unprivileged exec's effective capabilities.
+//   Exec.DetachedRunsInBackground - detach=true returns a default ExecResult (empty output, exit 0) and the command really runs: its marker file appears when polled.
+//   Exec.DetachedDoesNotWaitForCompletion - a detached `sleep 60` returns within a generous 30s bound (an attached exec would block for the full 60s).
 //   WindowsExec.PropagatesNonZeroExit - cmd `exit 5` in a Windows container reports exit code 5 (the basic stdout capture is covered by WindowsContainer.ExecRunsInRunningContainer).
 //   WindowsExec.PassesEnv - ExecOptions.env entries are visible to cmd (`echo %FOO%` -> "bar").
 //   WindowsExec.UsesWorkingDir - ExecOptions.working_dir sets the command's cwd (`cd` -> "C:\Windows").
@@ -40,6 +44,8 @@
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
 //   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
+//   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon.
+//   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon.
 //   (No Windows mirror for StdinThrowsOnNonHalfClosableTransport: the up-front
 //   guard is client-side and engine-independent.)
 
@@ -215,6 +221,46 @@ TEST_F(Exec, PrivilegedExecExpandsCapabilities) {
     EXPECT_NE(priv_caps, plain_caps) << "privileged exec gained nothing: " << priv.stdout_data;
 }
 
+TEST_F(Exec, DetachedRunsInBackground) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // Fire-and-forget: the call returns the result's defaults immediately...
+    ExecOptions opts;
+    opts.detach = true;
+    const ExecResult res = c.exec({"sh", "-c", "echo ran > /tmp/tc-detached-marker"}, opts);
+    EXPECT_TRUE(res.stdout_data.empty());
+    EXPECT_TRUE(res.stderr_data.empty());
+    EXPECT_EQ(res.exit_code, 0);
+
+    // ...and the command really runs: poll for its marker file (the write is
+    // near-instant; the loop only absorbs scheduling noise).
+    std::string seen;
+    for (int i = 0; i < 50; ++i) {
+        const ExecResult probe = c.exec({"cat", "/tmp/tc-detached-marker"});
+        if (probe.exit_code == 0) {
+            seen = probe.stdout_data;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    EXPECT_NE(seen.find("ran"), std::string::npos) << "the detached command never ran";
+}
+
+TEST_F(Exec, DetachedDoesNotWaitForCompletion) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // A detached exec of a LONG command must return long before it finishes: an
+    // attached `sleep 60` blocks for the full 60s, so the (generous, CI-safe)
+    // 30s bound below cannot pass unless detach really skipped the wait.
+    ExecOptions opts;
+    opts.detach = true;
+    const auto before = std::chrono::steady_clock::now();
+    const ExecResult res = c.exec({"sleep", "60"}, opts);
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+    EXPECT_LT(elapsed, std::chrono::seconds(30));
+    EXPECT_EQ(res.exit_code, 0);
+}
+
 // The Windows mirror: every exec surface exercised above, but against a Windows
 // daemon and cmd.exe. On CI this rides the DIRECT dockerd named pipe — the
 // transport path with the go-winio zero-length-message EOF semantics.
@@ -316,6 +362,44 @@ TEST_F(WindowsExec, StreamingStopsWhenConsumerReturnsFalse) {
     // depending on how far the command got before we closed the stream); the key
     // assertion is that returning false stopped streaming without hanging.
     (void)res;
+}
+
+TEST_F(WindowsExec, DetachedRunsInBackground) {
+    Container c = start_keep_alive();
+
+    // Fire-and-forget against a Windows daemon: defaults come back immediately...
+    ExecOptions opts;
+    opts.detach = true;
+    const ExecResult res = c.exec({"cmd", "/c", "echo ran > C:\\tc-detached-marker"}, opts);
+    EXPECT_TRUE(res.stdout_data.empty());
+    EXPECT_TRUE(res.stderr_data.empty());
+    EXPECT_EQ(res.exit_code, 0);
+
+    // ...and the command really runs: poll for its marker file.
+    std::string seen;
+    for (int i = 0; i < 50; ++i) {
+        const ExecResult probe = c.exec({"cmd", "/c", "type C:\\tc-detached-marker"});
+        if (probe.exit_code == 0) {
+            seen = probe.stdout_data;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    EXPECT_NE(seen.find("ran"), std::string::npos) << "the detached command never ran";
+}
+
+TEST_F(WindowsExec, DetachedDoesNotWaitForCompletion) {
+    Container c = start_keep_alive();
+
+    // `ping -n 60` sleeps ~59s; the (generous, CI-safe) 30s bound cannot pass
+    // unless detach really skipped waiting for the command to finish.
+    ExecOptions opts;
+    opts.detach = true;
+    const auto before = std::chrono::steady_clock::now();
+    const ExecResult res = c.exec({"ping", "-n", "60", "127.0.0.1"}, opts);
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+    EXPECT_LT(elapsed, std::chrono::seconds(30));
+    EXPECT_EQ(res.exit_code, 0);
 }
 
 TEST_F(WindowsExec, FeedsStdin) {
