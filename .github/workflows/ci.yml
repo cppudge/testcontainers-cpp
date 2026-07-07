@@ -190,28 +190,6 @@ jobs:
       # artifact (with the exe+pdb) so the hang can be debugged locally
       # (WinDbg: `~*k` for all thread stacks). The step timeout stays above
       # the watchdog so the dump path always gets to run.
-      # TEMPORARY diagnostics for WindowsExec.DetachedRunsInBackground failing
-      # only on this runner: does the docker CLI's own detached exec
-      # (`docker exec -d`, same wire semantics as ExecOptions.detach) run the
-      # command here, and what does the exec instance's inspect report?
-      # Remove once the failure is understood.
-      - name: TEMP detached-exec probe
-        timeout-minutes: 10
-        run: |
-          docker version --format '{{.Server.Os}} {{.Server.Version}} kernel={{.Server.KernelVersion}}'
-          $id = docker run -d --isolation=process mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c "ping -n 300 127.0.0.1 >nul"
-          docker exec -d $id cmd /c "echo ran > C:\m"
-          Start-Sleep -Seconds 5
-          docker exec $id cmd /c "type C:\m"
-          Write-Output "type-exit=$LASTEXITCODE"
-          $execIds = docker inspect --format '{{json .ExecIDs}}' $id
-          Write-Output "execIds=$execIds"
-          if ($execIds -and $execIds -ne 'null') {
-            foreach ($e in ($execIds | ConvertFrom-Json)) { docker inspect $e }
-          }
-          docker rm -f $id | Out-Null
-          exit 0
-
       - name: Integration tests (Windows engine)
         timeout-minutes: 25
         run: |

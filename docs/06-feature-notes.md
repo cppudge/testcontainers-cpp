@@ -134,8 +134,11 @@ pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 plus a streaming overload (`exec(cmd, opts, consumer)`). `detach` is fire-and-forget
 (`docker exec -d`): create + start as two plain round-trips (nothing attached, no
 upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, exit_code 0 —
-the command is still running), and detach+stdin / detach+consumer throw up front. Otherwise
-EVERY exec start requests a connection
+the command is still running), and detach+stdin / detach+consumer throw up front. Daemon
+caveat: Windows Server 2022's dockerd 29.1.5 (GitHub CI runners) answers 200 and silently
+never spawns the detached process — `docker exec -d` is equally a no-op there (verified via a
+CLI probe: no marker file, no exec instance in ExecIDs); the WindowsExec test skips itself via
+an ExecIDs capability probe. Otherwise EVERY exec start requests a connection
 upgrade (`Upgrade: tcp` → HTTP 101, the exec stream then arrives raw, not as an HTTP body) —
 docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops client bytes
 sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never
