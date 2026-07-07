@@ -232,12 +232,14 @@ TEST_F(Exec, DetachedRunsInBackground) {
     EXPECT_TRUE(res.stderr_data.empty());
     EXPECT_EQ(res.exit_code, 0);
 
-    // ...and the command really runs: poll for its marker file (the write is
-    // near-instant; the loop only absorbs scheduling noise).
+    // ...and the command really runs: poll for its marker file. The loop keys
+    // on the CONTENT, not the exit code alone — the shell creates the redirect
+    // target before writing it, so a fast probe can catch the file existing
+    // but still empty (observed on CI in the Windows mirror).
     std::string seen;
     for (int i = 0; i < 50; ++i) {
         const ExecResult probe = c.exec({"cat", "/tmp/tc-detached-marker"});
-        if (probe.exit_code == 0) {
+        if (probe.exit_code == 0 && probe.stdout_data.find("ran") != std::string::npos) {
             seen = probe.stdout_data;
             break;
         }
@@ -382,11 +384,14 @@ TEST_F(WindowsExec, DetachedRunsInBackground) {
     EXPECT_TRUE(res.stderr_data.empty());
     EXPECT_EQ(res.exit_code, 0);
 
-    // ...and the command really runs: poll for its marker file.
+    // ...and the command really runs: poll for its marker file. The loop keys
+    // on the CONTENT, not the exit code alone — cmd creates the redirect
+    // target before echo writes it, so a fast probe can catch the file
+    // existing but still empty (type exits 0 with empty output; bit on CI).
     std::string seen;
     for (int i = 0; i < 50; ++i) {
         const ExecResult probe = c.exec({"cmd", "/c", "type %USERPROFILE%\\tc-detached-marker"});
-        if (probe.exit_code == 0) {
+        if (probe.exit_code == 0 && probe.stdout_data.find("ran") != std::string::npos) {
             seen = probe.stdout_data;
             break;
         }
