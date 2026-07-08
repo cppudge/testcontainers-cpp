@@ -145,7 +145,7 @@ TEST_F(HostAccess, ContainerReachesHostServiceOnCustomNetwork) {
         net_id = net.id();
 
         Container c = GenericImage("alpine", "3.20")
-                          .with_network(net.name())
+                          .with_network(net)
                           .with_exposed_host_port(server.port())
                           .with_cmd({"sleep", "120"})
                           .start();

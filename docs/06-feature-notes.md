@@ -181,7 +181,9 @@ extra_hosts; everything else through `with_create_body_patch` (an RFC-7386 deep-
 AFTER the typed fields, so it overrides them; nest HostConfig fields under `"HostConfig"`).
 
 **Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / one
-IPAM subnet+gateway pair / driver options / labels); `with_network_alias` (per-network DNS
+IPAM subnet+gateway pair / driver options / labels); `GenericImage::with_network` takes the
+handle directly or a name string (the handle overload records `name()` — ownership stays with
+the handle); `with_network_alias` (per-network DNS
 aliases); `with_static_ipv4` (a fixed endpoint address — needs a user-defined network whose
 subnet contains it); `Network::connect` attaches a running container. Inspect: `net.inspect()`
 / the static `Network::inspect(name_or_id)` return a typed `NetworkInspect` (driver, scope,

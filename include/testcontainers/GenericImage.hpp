@@ -22,6 +22,8 @@
 
 namespace testcontainers {
 
+class Network;
+
 /// A reusable, copyable description of a container to run: image reference,
 /// exposed ports, environment, command, labels, and readiness conditions.
 ///
@@ -181,6 +183,11 @@ public:
         spec_.network = std::move(network);
         return *this;
     }
+
+    /// Overload taking the `Network` handle directly — `.with_network(net)`
+    /// instead of `.with_network(net.name())`. Only the name is recorded; the
+    /// handle keeps sole ownership of the network (RAII removal on destruction).
+    GenericImage& with_network(const Network& network);
 
     /// Add a DNS alias for this container on its network (`NetworkingConfig`).
     /// Peers on the same network can resolve this container by the alias in

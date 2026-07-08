@@ -78,7 +78,7 @@ TEST_F(Networks, ResolvesPeerByContainerName) {
     ASSERT_FALSE(net.name().empty());
 
     Container redis = GenericImage("redis", "7.2")
-                          .with_network(net.name())
+                          .with_network(net)
                           .with_container_name("redis-srv")
                           .with_exposed_port(tcp(6379))
                           .with_wait(wait_for::stdout_message("Ready to accept connections"))
@@ -87,7 +87,7 @@ TEST_F(Networks, ResolvesPeerByContainerName) {
     // A long-running client container on the same network; no readiness signal,
     // so no wait strategy is needed.
     Container client =
-        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+        GenericImage("alpine", "3.20").with_network(net).with_cmd({"sleep", "60"}).start();
 
     // busybox `nc -z` proves both DNS-by-name and TCP connectivity on the
     // user-defined network.
@@ -117,7 +117,7 @@ TEST_F(Networks, AliasResolvesOnCustomNetwork) {
     // A long-running container that advertises the "db" alias on the network. No
     // readiness signal is produced by `sleep`, so no wait strategy is needed.
     Container db = GenericImage("alpine", "3.20")
-                       .with_network(net.name())
+                       .with_network(net)
                        .with_network_alias("db")
                        .with_cmd({"sleep", "60"})
                        .start();
@@ -125,7 +125,7 @@ TEST_F(Networks, AliasResolvesOnCustomNetwork) {
     // A second container on the same network resolves the alias over the custom
     // network's DNS; `getent hosts db` exits 0 and prints "<ip> db".
     Container client =
-        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+        GenericImage("alpine", "3.20").with_network(net).with_cmd({"sleep", "60"}).start();
 
     const ExecResult res = client.exec({"getent", "hosts", "db"});
     EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
@@ -156,7 +156,7 @@ TEST_F(Networks, ConnectAttachesRunningContainerWithAlias) {
     // Started WITHOUT with_network: it sits on the default bridge only.
     Container late = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
     Container peer =
-        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+        GenericImage("alpine", "3.20").with_network(net).with_cmd({"sleep", "60"}).start();
 
     // Attach the RUNNING container to the network with a runtime alias.
     net.connect(late.id(), {"late-alias"});
@@ -195,7 +195,7 @@ TEST_F(Networks, StaticIpv4Assigned) {
     ASSERT_FALSE(net.name().empty());
 
     Container c = GenericImage("alpine", "3.20")
-                      .with_network(net.name())
+                      .with_network(net)
                       .with_static_ipv4("172.31.254.10")
                       .with_cmd({"sleep", "60"})
                       .start();
@@ -217,7 +217,7 @@ TEST_F(Networks, InspectReportsConfigAndContainers) {
                       .create();
 
     Container c =
-        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+        GenericImage("alpine", "3.20").with_network(net).with_cmd({"sleep", "60"}).start();
 
     // The instance method reflects the created configuration...
     const NetworkInspect info = net.inspect();
@@ -271,12 +271,12 @@ TEST_F(WindowsNetworks, PeerNameRegisteredAndReachable) {
     ASSERT_FALSE(net.name().empty());
 
     Container srv = nanoserver()
-                        .with_network(net.name())
+                        .with_network(net)
                         .with_container_name("tc-win-peer-srv")
                         .with_cmd(keep_alive_cmd())
                         .start();
 
-    Container client = nanoserver().with_network(net.name()).with_cmd(keep_alive_cmd()).start();
+    Container client = nanoserver().with_network(net).with_cmd(keep_alive_cmd()).start();
 
     // The daemon must register the container name as a DNS name on the
     // user-defined network's endpoint (this is what backs name resolution).
@@ -306,12 +306,12 @@ TEST_F(WindowsNetworks, AliasRegisteredOnCustomNetwork) {
     ASSERT_FALSE(net.name().empty());
 
     Container db = nanoserver()
-                       .with_network(net.name())
+                       .with_network(net)
                        .with_network_alias("tc-win-db")
                        .with_cmd(keep_alive_cmd())
                        .start();
 
-    Container client = nanoserver().with_network(net.name()).with_cmd(keep_alive_cmd()).start();
+    Container client = nanoserver().with_network(net).with_cmd(keep_alive_cmd()).start();
 
     // The alias must land on the endpoint's Aliases (anchor the search there
     // so a stray match elsewhere in the body can never fake a pass).
@@ -349,7 +349,7 @@ TEST_F(WindowsNetworks, InspectReportsDriverAndContainers) {
     // daemons never collide.
     Network net = Network::builder().with_driver("nat").with_subnet("172.31.248.0/24").create();
 
-    Container c = nanoserver().with_network(net.name()).with_cmd(keep_alive_cmd()).start();
+    Container c = nanoserver().with_network(net).with_cmd(keep_alive_cmd()).start();
 
     const NetworkInspect info = net.inspect();
     EXPECT_EQ(info.id, net.id());

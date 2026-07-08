@@ -6,6 +6,7 @@
 #include "docker/Auth.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerRequest.hpp"
+#include "testcontainers/Network.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -26,6 +27,11 @@ ImageInspect GenericImage::inspect(const std::string& name, const std::string& t
 }
 
 ImageInspect GenericImage::inspect() const { return inspect(image_, tag_); }
+
+// Out of line so the header only needs a forward declaration of Network.
+GenericImage& GenericImage::with_network(const Network& network) {
+    return with_network(network.name());
+}
 
 CreateContainerSpec GenericImage::build_spec() const {
     // Start from the embedded spec — it already carries every verbatim create

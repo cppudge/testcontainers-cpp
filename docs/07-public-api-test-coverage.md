@@ -64,7 +64,7 @@ suite.
 | `with_wait` | ✅ | ✅ | ✅ WaitStrategies.* (+ most suites) | ✅ WindowsWaitStrategies.* (+ WindowsContainer.EchoExitsWithExpectedLogs) |
 | `with_startup_timeout` | ✅ | ✅ | ✅ WaitStrategies.TimeoutThrowsStartupTimeoutError, Lifecycle.StartupRetriesOnFailure | ✅ WindowsLifecycle.StartupRetriesOnFailure |
 | `with_healthcheck` | ✅ | ✅ | ✅ WaitStrategies.HealthcheckWaitBecomesHealthy | ✅ WindowsWaitStrategies.HealthcheckWaitBecomesHealthy |
-| `with_network` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName | ✅ WindowsNetworks.PeerNameRegisteredAndReachable |
+| `with_network` (name string or `Network` handle) | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName (handle form; delegates to the string form) | ✅ WindowsNetworks.PeerNameRegisteredAndReachable |
 | `with_network_alias` | ✅ | ✅ | ✅ Networks.AliasResolvesOnCustomNetwork | ✅ WindowsNetworks.AliasRegisteredOnCustomNetwork |
 | `with_static_ipv4` | ✅ | ✅ | ✅ Networks.StaticIpv4Assigned | ❌ |
 | `with_container_name` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName | ✅ WindowsNetworks.PeerNameRegisteredAndReachable |

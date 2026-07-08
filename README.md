@@ -129,7 +129,8 @@ redis.copy_to(CopyToContainer::content("seed-data", "/tmp/seed.txt"));
 
 ### Several containers on one network
 
-Put containers on a user-defined network so they resolve each other by container name
+Put containers on a user-defined network so they resolve each other by container name —
+`with_network` takes the `Network` handle directly, or a network name string
 (`net.inspect()` — or the static `Network::inspect(name_or_id)` — returns a typed
 `NetworkInspect`: driver, IPAM pools, labels, and the attached containers' endpoints):
 
@@ -137,13 +138,13 @@ Put containers on a user-defined network so they resolve each other by container
 Network net = Network::create();
 
 Container redis = GenericImage("redis", "7.2")
-                      .with_network(net.name())
+                      .with_network(net)
                       .with_container_name("redis")          // peers reach it as "redis"
                       .with_wait(wait_for::stdout_message("Ready to accept connections"))
                       .start();
 
 Container app = GenericImage("my/app", "latest")
-                    .with_network(net.name())
+                    .with_network(net)
                     .with_env("REDIS_URL", "redis://redis:6379")
                     .start();
 ```
