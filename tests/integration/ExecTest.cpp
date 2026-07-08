@@ -40,7 +40,7 @@
 //   WindowsExec.PassesEnv - ExecOptions.env entries are visible to cmd (`echo %FOO%` -> "bar").
 //   WindowsExec.UsesWorkingDir - ExecOptions.working_dir sets the command's cwd (`cd` -> "C:\Windows").
 //   WindowsExec.RunsAsUser - ExecOptions.user runs the command as that Windows account (%USERNAME% -> "ContainerAdministrator").
-//   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty.
+//   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty (the daemon-side ConPTY teardown race is absorbed by a bounded retry).
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
 //   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon (marker under %USERPROFILE%: the C:\ root denies ContainerUser writes on ltsc2022 under process isolation, and %TEMP% ACLs deny reading the file back).
@@ -321,13 +321,24 @@ TEST_F(WindowsExec, TtyCapturesRawStdout) {
 
     ExecOptions opts;
     opts.tty = true;
-    // The trailing ping keeps the console alive ~1s after the echo. With an
-    // instant-exit process the daemon-side ConPTY can be torn down before its
-    // buffer is pumped into the stream, and the exec comes back with EMPTY
-    // stdout (exit 0) — seen twice on CI (2026-07-08, runs 28955481786 and
-    // 28956780190).
-    const ExecResult res =
-        c.exec({"cmd", "/c", "echo tty-hello-win & ping -n 2 127.0.0.1 >nul"}, opts);
+    // Daemon-side ConPTY race: a short-lived process's console can be torn
+    // down before its buffer is pumped into the stream, and the exec comes
+    // back with EMPTY stdout and exit 0. The leading ping gives the pump ~1s
+    // to attach before the echo, the trailing ping keeps the console alive
+    // ~1s after it. Some daemons (29.1.5 CI runners, 2026-07-08) still lose
+    // the output past both graces, so the exact race signature — exit 0 AND
+    // empty stdout — is retried a bounded number of times. A real capture
+    // regression returns the same empty result every attempt and still fails.
+    ExecResult res;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        res = c.exec({"cmd", "/c",
+                      "ping -n 2 127.0.0.1 >nul & echo tty-hello-win & "
+                      "ping -n 2 127.0.0.1 >nul"},
+                     opts);
+        if (res.exit_code != 0 || !res.stdout_data.empty()) {
+            break;
+        }
+    }
     // A TTY stream is raw/unframed: the text lands in stdout_data verbatim and
     // stderr_data is never populated (there is no separate stderr channel).
     EXPECT_NE(res.stdout_data.find("tty-hello-win"), std::string::npos)
