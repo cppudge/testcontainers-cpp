@@ -113,6 +113,11 @@ when it lands (adding a short note there if it needs one).
   as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
   (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
   tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses.
+  `WindowsExec.TtyCapturesRawStdout` flaked once on CI (2026-07-08, run 28955481786: empty
+  stdout, exit 0, green on rerun) — a ConPTY drain race daemon-side: `cmd /c echo` exits
+  before the console buffer is pumped into the stream. If it recurs, keep the probe process
+  alive briefly after echoing (e.g. `echo tty-hello-win & ping -n 2 127.0.0.1 >nul`) so the
+  daemon has something to drain before EOF.
 - **Host access residuals** — the libssh2/OpenSSL dependency is now optional
   (`TC_HOST_PORT_FORWARDING=OFF` / conan `host_port_forwarding=False` builds a stub that throws
   from `with_exposed_host_port`; the public API stays unconditional); the sidecar/tunnel
