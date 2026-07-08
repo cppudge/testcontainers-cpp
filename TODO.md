@@ -88,7 +88,11 @@ when it lands (adding a short note there if it needs one).
   surface Memory/CpuQuota/etc., so those can't be asserted via inspect.
 - **Networks** — IPAM supports a single Subnet/Gateway pair on CREATE (no multiple
   pools / IPRange / aux addresses; `NetworkInspect` does read multiple pools back); no
-  process-wide dedup (each `create()` makes a new network).
+  process-wide dedup and no cross-run reuse (each `create()` makes a new network; `keep()`
+  releases removal but cannot FIND the network next run). A `Builder::with_reuse()` mirroring
+  container reuse — find-or-create without the session label — would need find-by-name /
+  hash-label BEFORE creating (Docker happily makes duplicate network names) plus the same
+  external-prune story reuse containers have (label sweep).
 - **Volumes** — no `list_volumes` / prune / anonymous-volume management; `populate` spins up a
   real helper container per call (no batching).
 - **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, a
