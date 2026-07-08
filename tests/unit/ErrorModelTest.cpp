@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "CannedHttpServer.hpp"
+#include "TestSupport.hpp"
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/RegistryAuth.hpp"
@@ -31,16 +32,13 @@ namespace {
 
 using tcunit::CannedHttpServer;
 using tcunit::http_response;
+using tcunit::ping_ok;
 
 using testcontainers::DockerError;
 using testcontainers::Error;
 using testcontainers::NotFoundError;
 using testcontainers::StartupTimeoutError;
 using testcontainers::TransportTimeoutError;
-
-/// The API-version negotiation `GET /_ping` every fresh client issues before
-/// its first typed call (no Api-Version header -> unversioned paths).
-std::string ping_ok() { return http_response(200, "OK", "OK"); }
 
 } // namespace
 

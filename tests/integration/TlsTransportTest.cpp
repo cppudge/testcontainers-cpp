@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "TestEnv.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 
@@ -125,34 +126,7 @@ done:
     return ok;
 }
 
-// Save/set/restore an environment variable; nullopt clears it.
-class ScopedEnv {
-public:
-    ScopedEnv(const char* name, const std::optional<std::string>& value) : name_(name) {
-        if (const char* prev = std::getenv(name)) {
-            saved_ = prev;
-        }
-        apply(value);
-    }
-    ~ScopedEnv() { apply(saved_); }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
-private:
-    void apply(const std::optional<std::string>& value) {
-#if defined(_WIN32)
-        ::_putenv_s(name_.c_str(), value ? value->c_str() : "");
-#else
-        if (value) {
-            ::setenv(name_.c_str(), value->c_str(), 1);
-        } else {
-            ::unsetenv(name_.c_str());
-        }
-#endif
-    }
-    std::string name_;
-    std::optional<std::string> saved_;
-};
+using tctest::ScopedEnv;
 
 } // namespace
 

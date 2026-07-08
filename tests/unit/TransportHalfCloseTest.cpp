@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 
+#include "TestSupport.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
@@ -37,15 +38,11 @@ using testcontainers::DockerHost;
 using testcontainers::docker::TransportTimeouts;
 
 std::string pipe_name(const char* tag) {
-    return std::string(R"(\\.\pipe\tc-halfclose-)") + tag + "-" +
-           std::to_string(::GetCurrentProcessId());
+    return tcunit::pipe_name(std::string("tc-halfclose-") + tag);
 }
 
-/// The npipe:// form DockerHost::parse takes (forward slashes; the transport
-/// converts back).
 DockerHost pipe_host(const char* tag) {
-    return DockerHost::parse("npipe:////./pipe/tc-halfclose-" + std::string(tag) + "-" +
-                             std::to_string(::GetCurrentProcessId()));
+    return tcunit::pipe_host(std::string("tc-halfclose-") + tag);
 }
 
 } // namespace

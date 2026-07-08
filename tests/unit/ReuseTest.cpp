@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstdlib>
 #include <string>
 
 #include "Reuse.hpp"
+#include "TestEnv.hpp"
+#include "TestSupport.hpp"
 
 // Tests in this file:
 //   Reuse.HashIsDeterministic - reuse_hash returns the same value for the same input across calls.
@@ -22,27 +22,8 @@ using testcontainers::detail::reuse_enabled;
 using testcontainers::detail::reuse_hash;
 using testcontainers::detail::reuse_hash_label;
 
-namespace {
-
-bool is_lower_hex(const std::string& s) {
-    return std::all_of(s.begin(), s.end(), [](unsigned char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-    });
-}
-
-void set_env(const char* key, const char* value) {
-#ifdef _WIN32
-    _putenv_s(key, value ? value : ""); // empty value removes it
-#else
-    if (value) {
-        setenv(key, value, 1);
-    } else {
-        unsetenv(key);
-    }
-#endif
-}
-
-} // namespace
+using tctest::set_env;
+using tcunit::is_lower_hex;
 
 TEST(Reuse, HashIsDeterministic) {
     const std::string in = "{\"Image\":\"alpine:3.20\",\"Cmd\":[\"sleep\",\"120\"]}";

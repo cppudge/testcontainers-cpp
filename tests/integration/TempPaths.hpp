@@ -3,9 +3,10 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
-#include <random>
 #include <string>
 #include <system_error>
+
+#include "RandomHex.hpp"
 
 // Self-cleaning temp-path helpers shared by the integration tests. Names carry
 // a random suffix so two test PROCESSES sharing a temp dir (or a daemon, for
@@ -15,19 +16,7 @@ namespace tcit {
 
 /// An 8-hex-char random suffix for file/resource names that must be unique
 /// across concurrently running test processes.
-inline std::string random_suffix() {
-    static constexpr char digits[] = "0123456789abcdef";
-    std::random_device rd;
-    std::string out;
-    for (int word = 0; word < 2; ++word) {
-        unsigned value = rd();
-        for (int nibble = 0; nibble < 4; ++nibble) {
-            out += digits[value & 0xF];
-            value >>= 4;
-        }
-    }
-    return out;
-}
+inline std::string random_suffix() { return testcontainers::detail::random_hex(8); }
 
 /// A self-cleaning temp file holding `content`.
 class TempFile {

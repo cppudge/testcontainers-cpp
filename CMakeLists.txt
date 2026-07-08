@@ -278,8 +278,12 @@ if(BUILD_TESTING)
         GTest::gtest
         GTest::gtest_main
     )
-    # ApiMappingTest / AuthTest / TarTest include internal headers under src/.
-    target_include_directories(tc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # ApiMappingTest / AuthTest / TarTest include internal headers under src/;
+    # tests/support holds helpers shared with the integration tree (TestEnv.hpp).
+    target_include_directories(tc_unit_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
+    )
     # version_test's dependency-report expectations follow the feature set.
     target_compile_definitions(tc_unit_tests PRIVATE ${TC_FEATURE_DEFINES})
     tc_apply_warnings(tc_unit_tests)
@@ -327,8 +331,12 @@ if(BUILD_TESTING)
         # generates a self-signed cert/key via the OpenSSL C API.
         target_link_libraries(tc_integration_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     endif()
-    # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id).
-    target_include_directories(tc_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id);
+    # tests/support holds helpers shared with the unit tree (TestEnv.hpp).
+    target_include_directories(tc_integration_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
+    )
     tc_apply_warnings(tc_integration_tests)
     if(WIN32)
         target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)

@@ -1,9 +1,8 @@
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <cctype>
 #include <string>
 
+#include "TestSupport.hpp"
 #include "docker/HostResolve.hpp"
 
 // Tests in this file:
@@ -37,9 +36,7 @@ TEST(HostResolve, Sha256AbcVector) {
 TEST(HostResolve, Sha256IsLowercaseHex64) {
     const std::string digest = sha256_hex("my-ctx");
     EXPECT_EQ(digest.size(), 64u);
-    EXPECT_TRUE(std::all_of(digest.begin(), digest.end(), [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-    }));
+    EXPECT_TRUE(tcunit::is_lower_hex(digest));
 }
 
 TEST(HostResolve, PropertiesReadsDockerHost) {

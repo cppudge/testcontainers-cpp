@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "CannedHttpServer.hpp"
+#include "TestSupport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
@@ -30,15 +31,11 @@ namespace {
 
 using tcunit::CannedHttpServer;
 using tcunit::http_response;
+using tcunit::request_is;
 
 using testcontainers::DockerClient;
 
 std::string ok(const std::string& body) { return http_response(200, "OK", body); }
-
-/// True when the recorded request starts with "<METHOD> <path-prefix>".
-bool request_is(const std::string& head, const std::string& method_and_path) {
-    return head.rfind(method_and_path, 0) == 0;
-}
 
 bool asks_to_close(const std::string& head) {
     return head.find("Connection: close") != std::string::npos;

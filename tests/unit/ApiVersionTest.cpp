@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "CannedHttpServer.hpp"
+#include "TestSupport.hpp"
 #include "docker/ApiMapping.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -19,6 +20,7 @@
 
 using tcunit::CannedHttpServer;
 using tcunit::http_response;
+using tcunit::request_is;
 
 using testcontainers::DockerClient;
 using testcontainers::docker::kClientApiVersion;
@@ -34,11 +36,6 @@ std::string ping_with_version(const std::string& api_version) {
 }
 
 std::string inspect_ok() { return http_response(200, "OK", "{}"); }
-
-/// True when the recorded request head starts with "<METHOD> <path-prefix>".
-bool request_is(const std::string& head, const std::string& method_and_path) {
-    return head.rfind(method_and_path, 0) == 0;
-}
 
 } // namespace
 

@@ -1,14 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
-#include <cstdlib>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "CannedHttpServer.hpp"
 #include "Runner.hpp"
+#include "TestEnv.hpp"
+#include "TestSupport.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/CopyToContainer.hpp"
@@ -33,25 +33,19 @@
 
 namespace {
 
+using tctest::ScopedEnv;
 using tcunit::CannedHttpServer;
+using tcunit::created;
 using tcunit::http_response;
 using tcunit::http_response_no_body;
+using tcunit::ping_ok;
+using tcunit::request_is;
 
 using testcontainers::Container;
 using testcontainers::ContainerRequest;
 using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
 using testcontainers::detail::Runner;
-
-/// The API-version negotiation `GET /_ping` every fresh client issues before
-/// its first typed call. No Api-Version header on purpose: the client then
-/// falls back to unversioned paths, so the path assertions below stay
-/// version-independent (the pinning itself is covered by ApiVersionTest).
-std::string ping_ok() { return http_response(200, "OK", "OK"); }
-
-std::string created(const std::string& id) {
-    return http_response(201, "Created", R"({"Id":")" + id + R"("})");
-}
 
 std::string started() { return http_response_no_body(204, "No Content"); }
 
@@ -66,40 +60,6 @@ ContainerRequest busybox_request() {
     request.spec.image = "busybox:latest";
     return request;
 }
-
-/// True when the recorded request head starts with "<METHOD> <path-prefix>".
-bool request_is(const std::string& head, const std::string& method_and_path) {
-    return head.rfind(method_and_path, 0) == 0;
-}
-
-/// Sets an environment variable for the test's scope and restores the prior
-/// value on destruction (tests run single-threaded; env is process-global).
-class ScopedEnv {
-public:
-    ScopedEnv(std::string name, const char* value) : name_(std::move(name)) {
-        if (const char* old = std::getenv(name_.c_str())) {
-            old_ = old;
-        }
-        set(value);
-    }
-    ~ScopedEnv() { set(old_ ? old_->c_str() : nullptr); }
-
-private:
-    void set(const char* value) {
-#ifdef _WIN32
-        _putenv_s(name_.c_str(), value ? value : ""); // empty value removes it
-#else
-        if (value) {
-            setenv(name_.c_str(), value, 1);
-        } else {
-            unsetenv(name_.c_str());
-        }
-#endif
-    }
-
-    std::string name_;
-    std::optional<std::string> old_;
-};
 
 } // namespace
 

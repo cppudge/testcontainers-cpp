@@ -5,17 +5,12 @@
 #include <cstdio>
 #include <string>
 
-#include <boost/asio/connect.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/read.hpp>
-#include <boost/asio/write.hpp>
-
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/DockerComposeContainer.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "RedisPing.hpp"
 
 // Tests in this file (integration; require a Linux Docker daemon):
 //   Compose.LocalClientBringsUpRedis - the LOCAL client (host `docker compose` CLI; default) brings up redis from a temp YAML, the published host port answers a raw TCP PING with PONG, and stop() removes every container carrying the project label. Skipped if the host has no `docker compose`.
@@ -27,26 +22,7 @@ using namespace testcontainers;
 
 namespace {
 
-// Send a Redis PING over a raw TCP connection and return the reply (or "").
-std::string redis_ping(const std::string& host, std::uint16_t port) {
-    namespace asio = boost::asio;
-    using asio::ip::tcp;
-
-    asio::io_context io;
-    tcp::resolver resolver(io);
-    const auto endpoints = resolver.resolve(host, std::to_string(port));
-
-    tcp::socket socket(io);
-    asio::connect(socket, endpoints);
-
-    const std::string ping = "PING\r\n";
-    asio::write(socket, asio::buffer(ping));
-
-    std::array<char, 64> buf{};
-    boost::system::error_code ec;
-    const std::size_t n = socket.read_some(asio::buffer(buf), ec);
-    return std::string(buf.data(), n);
-}
+using tcit::redis_ping;
 
 // A compose file publishing redis 6379 to a random host port.
 constexpr const char* kRedisYaml = R"(services:

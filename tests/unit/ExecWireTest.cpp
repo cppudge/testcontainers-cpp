@@ -1,13 +1,12 @@
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include <chrono>
 
 #include "CannedHttpServer.hpp"
+#include "TestSupport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
@@ -27,7 +26,10 @@
 namespace {
 
 using tcunit::CannedHttpServer;
+using tcunit::contains;
+using tcunit::frame;
 using tcunit::http_response;
+using tcunit::ping_ok;
 
 using testcontainers::DockerClient;
 using testcontainers::DockerError;
@@ -35,30 +37,8 @@ using testcontainers::ExecOptions;
 using testcontainers::ExecResult;
 using testcontainers::LogSource;
 
-/// One multiplexed frame: 8-byte header {kind, 0, 0, 0, len_be32} + payload.
-std::string frame(unsigned char kind, std::string_view payload) {
-    std::string f;
-    f.push_back(static_cast<char>(kind));
-    f.append(3, '\0');
-    const auto len = static_cast<std::uint32_t>(payload.size());
-    f.push_back(static_cast<char>((len >> 24) & 0xFF));
-    f.push_back(static_cast<char>((len >> 16) & 0xFF));
-    f.push_back(static_cast<char>((len >> 8) & 0xFF));
-    f.push_back(static_cast<char>(len & 0xFF));
-    f.append(payload);
-    return f;
-}
-
-std::string exec_created() { return http_response(201, "Created", R"({"Id":"e1"})"); }
+std::string exec_created() { return tcunit::created("e1"); }
 std::string exec_inspected() { return http_response(200, "OK", R"({"ExitCode":0})"); }
-
-/// The API-version negotiation `GET /_ping` every fresh client issues before
-/// its first typed call (no Api-Version header -> unversioned paths).
-std::string ping_ok() { return http_response(200, "OK", "OK"); }
-
-bool contains(const std::string& haystack, std::string_view needle) {
-    return haystack.find(needle) != std::string::npos;
-}
 
 /// A client with a short io deadline so a regression fails in seconds, not
 /// the 60s default.

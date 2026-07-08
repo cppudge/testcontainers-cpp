@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "TestSupport.hpp"
 #include "compose/ComposeCommand.hpp"
 
 // Tests in this file (pure, daemon-free arg-builder assertions):
@@ -24,10 +25,7 @@ using namespace testcontainers::compose;
 
 namespace {
 
-// True if `seq` contains `value` anywhere.
-bool contains(const std::vector<std::string>& seq, const std::string& value) {
-    return std::find(seq.begin(), seq.end(), value) != seq.end();
-}
+using tcunit::contains;
 
 // Index of the first occurrence of `value`, or -1 if absent.
 int index_of(const std::vector<std::string>& seq, const std::string& value) {

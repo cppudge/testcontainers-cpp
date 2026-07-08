@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "TestSupport.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -298,8 +299,7 @@ TEST(TransportTimeout, RequestTimesOutMidBody) {
 TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     // A local named-pipe server that accepts the connection and never writes —
     // the primary Windows transport must time the read out, not hang.
-    const std::string pipe_name =
-        R"(\\.\pipe\tc-timeout-test-)" + std::to_string(::GetCurrentProcessId());
+    const std::string pipe_name = tcunit::pipe_name("tc-timeout-test");
     const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
                                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                                            /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
@@ -314,10 +314,7 @@ TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
 
     TransportTimeouts timeouts;
     timeouts.io = 250ms;
-    // DockerHost::parse keeps the npipe path with forward slashes; the
-    // transport converts back to backslashes.
-    const DockerHost host = DockerHost::parse("npipe:////./pipe/tc-timeout-test-" +
-                                              std::to_string(::GetCurrentProcessId()));
+    const DockerHost host = tcunit::pipe_host("tc-timeout-test");
     const auto transport = testcontainers::docker::connect(host, timeouts);
 
     char byte = 0;
@@ -340,8 +337,7 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
     // request is written (fits the pipe buffer), the response never comes, and
     // the typed TransportTimeoutError must survive to the caller on the
     // primary Windows transport.
-    const std::string pipe_name =
-        R"(\\.\pipe\tc-timeout-req-test-)" + std::to_string(::GetCurrentProcessId());
+    const std::string pipe_name = tcunit::pipe_name("tc-timeout-req-test");
     const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
                                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                                            /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
@@ -354,8 +350,7 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
         stop.get_future().wait();          // never reads, never answers
     });
 
-    testcontainers::DockerClient client{DockerHost::parse("npipe:////./pipe/tc-timeout-req-test-" +
-                                                          std::to_string(::GetCurrentProcessId()))};
+    testcontainers::DockerClient client{tcunit::pipe_host("tc-timeout-req-test")};
     TransportTimeouts timeouts;
     timeouts.io = 250ms;
     client.set_transport_timeouts(timeouts);

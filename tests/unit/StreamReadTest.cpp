@@ -16,6 +16,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/optional.hpp>
 
+#include "TestSupport.hpp"
 #include "docker/StreamRead.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -87,19 +88,7 @@ private:
     std::size_t offset_ = 0;
 };
 
-/// One multiplexed log frame: 8-byte header {kind, 0, 0, 0, len_be32} + payload.
-std::string frame(unsigned char kind, std::string_view payload) {
-    std::string f;
-    f.push_back(static_cast<char>(kind));
-    f.append(3, '\0');
-    const auto len = static_cast<std::uint32_t>(payload.size());
-    f.push_back(static_cast<char>((len >> 24) & 0xFF));
-    f.push_back(static_cast<char>((len >> 16) & 0xFF));
-    f.push_back(static_cast<char>((len >> 8) & 0xFF));
-    f.push_back(static_cast<char>(len & 0xFF));
-    f.append(payload);
-    return f;
-}
+using tcunit::frame;
 
 constexpr const char* kHeader = "HTTP/1.1 200 OK\r\nServer: test\r\n\r\n";
 

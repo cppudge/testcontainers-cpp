@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
 
+#include "TestEnv.hpp"
 #include "docker/TlsConfig.hpp"
 
 // Tests in this file:
@@ -22,36 +22,7 @@ using testcontainers::docker::TlsFiles;
 
 namespace {
 
-// Save/set/restore an environment variable for a test. A nullopt value clears it.
-class ScopedEnv {
-public:
-    ScopedEnv(const char* name, const std::optional<std::string>& value) : name_(name) {
-        if (const char* prev = std::getenv(name)) {
-            saved_ = prev;
-        }
-        apply(value);
-    }
-    ~ScopedEnv() { apply(saved_); }
-
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
-private:
-    void apply(const std::optional<std::string>& value) {
-#if defined(_WIN32)
-        ::_putenv_s(name_.c_str(), value ? value->c_str() : "");
-#else
-        if (value) {
-            ::setenv(name_.c_str(), value->c_str(), /*overwrite*/ 1);
-        } else {
-            ::unsetenv(name_.c_str());
-        }
-#endif
-    }
-
-    std::string name_;
-    std::optional<std::string> saved_;
-};
+using tctest::ScopedEnv;
 
 // The basename of a path, separator-independent (the impl uses the platform's).
 std::string basename_of(const std::string& path) {

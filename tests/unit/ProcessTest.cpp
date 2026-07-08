@@ -15,6 +15,7 @@
 #endif
 
 #include "Process.hpp"
+#include "TestEnv.hpp"
 
 // Tests in this file:
 //   Process.QuoteArgWrapsInDoubleQuotes - a plain token and one with spaces are wrapped in double quotes verbatim.
@@ -104,18 +105,8 @@ TEST(Process, RunProcessReportsExitCode) {
 
 namespace {
 
-/// Set / unset a variable in THIS process (the parent side of the env tests).
-void set_host_env(const char* key, const char* value) {
-#if defined(_WIN32)
-    _putenv_s(key, value ? value : ""); // empty value removes it
-#else
-    if (value) {
-        setenv(key, value, 1);
-    } else {
-        unsetenv(key);
-    }
-#endif
-}
+/// The parent side of the env tests sets/unsets variables in THIS process.
+using tctest::set_env;
 
 /// Run a child that prints the given environment variable.
 testcontainers::detail::ProcessResult
@@ -153,8 +144,8 @@ TEST(Process, RunProcessInheritsParentEnvAndOverlays) {
     // than appending a duplicate entry the child may or may not pick).
     ASSERT_EQ(std::getenv("TC_PROC_BASE_ENV"), nullptr);
     ASSERT_EQ(std::getenv("TC_PROC_OVR_ENV"), nullptr);
-    set_host_env("TC_PROC_BASE_ENV", "from-parent");
-    set_host_env("TC_PROC_OVR_ENV", "parent-value");
+    set_env("TC_PROC_BASE_ENV", "from-parent");
+    set_env("TC_PROC_OVR_ENV", "parent-value");
 
 #if defined(_WIN32)
     const auto result =
@@ -173,8 +164,8 @@ TEST(Process, RunProcessInheritsParentEnvAndOverlays) {
     ASSERT_NE(parent_value, nullptr);
     EXPECT_STREQ(parent_value, "parent-value");
 
-    set_host_env("TC_PROC_BASE_ENV", nullptr);
-    set_host_env("TC_PROC_OVR_ENV", nullptr);
+    set_env("TC_PROC_BASE_ENV", nullptr);
+    set_env("TC_PROC_OVR_ENV", nullptr);
 }
 
 TEST(Process, RunProcessConcurrentEnvStaysIsolated) {

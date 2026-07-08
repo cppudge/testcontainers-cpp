@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <cstdlib>
-
+#include "TestEnv.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 
@@ -23,19 +22,7 @@
 
 using namespace testcontainers;
 
-namespace {
-void set_env(const char* key, const char* value) {
-#ifdef _WIN32
-    _putenv_s(key, value ? value : ""); // empty value removes it
-#else
-    if (value) {
-        setenv(key, value, 1);
-    } else {
-        unsetenv(key);
-    }
-#endif
-}
-} // namespace
+using tctest::set_env;
 
 TEST(DockerHost, ParsesUnixSocket) {
     const auto h = DockerHost::parse("unix:///var/run/docker.sock");

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "TestSupport.hpp"
 #include "docker/LogDemux.hpp"
 
 // Tests in this file:
@@ -29,8 +30,9 @@ using testcontainers::docker::LogStreamKind;
 
 namespace {
 
-// Encode one multiplexed log frame: type byte + 3 zero pads + 4-byte big-endian
-// length + payload. Mirrors Docker's wire format for non-TTY containers.
+// Encode one multiplexed log frame for the given stream. The kind-to-wire-byte
+// mapping stays an explicit switch (the decoder under test must not share the
+// encoder's assumptions); the byte packing itself is the shared tcunit::frame.
 std::string encode_frame(LogStreamKind stream, std::string_view payload) {
     unsigned char type = 1; // stdout
     switch (stream) {
@@ -44,18 +46,7 @@ std::string encode_frame(LogStreamKind stream, std::string_view payload) {
         type = 2;
         break;
     }
-    const auto n = static_cast<std::uint32_t>(payload.size());
-    std::string frame;
-    frame.push_back(static_cast<char>(type));
-    frame.push_back('\0');
-    frame.push_back('\0');
-    frame.push_back('\0');
-    frame.push_back(static_cast<char>((n >> 24) & 0xFF));
-    frame.push_back(static_cast<char>((n >> 16) & 0xFF));
-    frame.push_back(static_cast<char>((n >> 8) & 0xFF));
-    frame.push_back(static_cast<char>(n & 0xFF));
-    frame.append(payload);
-    return frame;
+    return tcunit::frame(type, payload);
 }
 
 } // namespace

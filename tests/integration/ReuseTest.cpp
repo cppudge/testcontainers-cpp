@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <cstdlib>
-#include <random>
 #include <string>
 
 #include "testcontainers/Container.hpp"
@@ -10,6 +9,8 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "RandomHex.hpp"
+#include "TestEnv.hpp"
 
 // Tests in this file (integration; require a Docker daemon):
 //   Reuse.ReuseAdoptsRunningContainer - with reuse enabled, two identical with_reuse(true) starts adopt the same running container (same id).
@@ -19,30 +20,11 @@ using namespace testcontainers;
 
 namespace {
 
-void set_env(const char* key, const char* value) {
-#ifdef _WIN32
-    _putenv_s(key, value ? value : ""); // empty value removes it
-#else
-    if (value) {
-        setenv(key, value, 1);
-    } else {
-        unsetenv(key);
-    }
-#endif
-}
+using tctest::set_env;
 
 // A unique marker so each run's reuse config can't collide with a stale
 // container left over from an earlier run.
-std::string unique_marker() {
-    std::random_device rd;
-    std::uniform_int_distribution<int> dist(0, 15);
-    static constexpr char hex[] = "0123456789abcdef";
-    std::string out = "reuse-it-";
-    for (int i = 0; i < 16; ++i) {
-        out.push_back(hex[dist(rd)]);
-    }
-    return out;
-}
+std::string unique_marker() { return "reuse-it-" + detail::random_hex(16); }
 
 } // namespace
 
