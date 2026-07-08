@@ -81,8 +81,16 @@ public:
 
     ~LoopbackServer() {
         stop_.set_value();
+        // If no client ever connected, the thread is still blocked in
+        // accept(). Closing the acceptor from this thread does NOT unblock it
+        // (asio's sync accept waits in the reactor, which a cross-thread
+        // close() never wakes on Linux) — the join below then deadlocked the
+        // whole suite about 1% of the time. Completing the accept with a
+        // throwaway connection is deterministic in every interleaving: the
+        // stop promise is already set, so the thread falls straight through.
         boost::system::error_code ignore;
-        acceptor_.close(ignore); // unblock accept() if no client ever connected
+        tcp::socket wake(ioc_);
+        wake.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), port_), ignore);
         thread_.join();
     }
 

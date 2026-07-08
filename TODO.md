@@ -112,11 +112,7 @@ when it lands (adding a short note there if it needs one).
   `Runner.ReuseCreateBodyCarriesHashNotSessionLabel` script exactly as many canned connections
   as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
   (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
-  tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses. The `linux-minimal` CI
-  job's "Unit tests" step hung once until the job timeout (2026-07-08, run 28937239824;
-  passed on rerun and locally in ~2 s) — that step runs `--gtest_brief=1`, which hides which
-  test hung; if it recurs, drop the flag there (the integration steps already run full output
-  for exactly this reason) and chase the culprit.
+  tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses.
 - **Host access residuals** — the libssh2/OpenSSL dependency is now optional
   (`TC_HOST_PORT_FORWARDING=OFF` / conan `host_port_forwarding=False` builds a stub that throws
   from `with_exposed_host_port`; the public API stays unconditional); the sidecar/tunnel

@@ -121,8 +121,15 @@ jobs:
       - name: Build
         run: cmake --build build/ninja
 
+      # Full (non-brief) output + a step timeout on THIS job's unit step: it
+      # hung twice on 2026-07-08 (runs 28937239824, 28951489692) — traced to a
+      # LoopbackServer teardown race in a test only THIS configuration compiles
+      # (TransportTimeoutTest.cpp, fixed there). Kept as cheap insurance: any
+      # future wedge fails after 5 minutes with its culprit named by the log's
+      # dangling "[ RUN ]" line, instead of a silent 45-minute job timeout.
       - name: Unit tests
-        run: ./build/ninja/bin/tc_unit_tests --gtest_brief=1
+        timeout-minutes: 5
+        run: ./build/ninja/bin/tc_unit_tests
 
       - name: Integration tests
         timeout-minutes: 20
