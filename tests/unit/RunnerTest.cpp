@@ -20,6 +20,7 @@
 // against a canned loopback HTTP responder — no Docker daemon):
 //   Runner.CreateStartWaitReturnsHandle - the happy path issues create -> start, the create body carries the managed-by session labels, and the auto-removing handle DELETEs the container on drop.
 //   Runner.KeepSkipsRemovalOnDrop - keep() flips an auto-removing handle to persistent (is_persistent() reports true): its drop issues NO DELETE.
+//   Runner.KeepFalseRearmsRemovalOnDrop - keep(false) undoes keep(): the handle is auto-removing again and its drop DELETEs like the happy path.
 //   Runner.HooksFireInOrderAroundCopy - created/starting/started/stopping hooks fire in order with the container id, with the copy-to PUT between create and start.
 //   Runner.FailedStartRemovesPartialContainer - a 500 on start propagates as DockerError(500) after the partial container is force-removed.
 //   Runner.ThrowingCreatedHookRemovesContainer - an exception from a created hook aborts the run and still removes the partial container.
@@ -146,6 +147,24 @@ TEST(Runner, KeepSkipsRemovalOnDrop) {
     EXPECT_TRUE(request_is(requests[0], "GET /_ping")) << requests[0];
     EXPECT_TRUE(request_is(requests[1], "POST /containers/create")) << requests[1];
     EXPECT_TRUE(request_is(requests[2], "POST /containers/abc123/start")) << requests[2];
+}
+
+TEST(Runner, KeepFalseRearmsRemovalOnDrop) {
+    // keep(false) undoes keep(): removal ownership is re-armed, so the drop
+    // issues the DELETE exactly like the happy path.
+    CannedHttpServer server({ping_ok(), created("abc123"), started(), removed()});
+    {
+        testcontainers::DockerClient client{server.host()};
+        Container c = Runner::run(client, busybox_request());
+        c.keep();
+        EXPECT_TRUE(c.is_persistent());
+        c.keep(false);
+        EXPECT_FALSE(c.is_persistent());
+    } // drop -> DELETE again
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_TRUE(request_is(requests[3], "DELETE /containers/abc123")) << requests[3];
 }
 
 TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {

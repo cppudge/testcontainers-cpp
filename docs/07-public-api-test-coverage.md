@@ -149,7 +149,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `copy_file_from(path, host)` | ✅ | ✅ [b] | ✅ Copy.CopyFileFromWritesHost | ✅ WindowsCopy.CopyFileFromWritesHost |
 | `stop()` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop | ❌ |
 | `is_running()` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.* | ✅ WindowsContainer.ExecRunsInRunningContainer |
-| `keep()` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
+| `keep(bool)` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop, Runner.KeepFalseRearmsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
 | `inspect(id)` (static) | ✅ | ✅ | ✅ Lifecycle.StaticInspectById (found + NotFoundError) | ❌ (same code path as `inspect_container`) |
 | `remove()` | ✅ | ✅ | ✅ implicit via RAII drop everywhere | ✅ implicit via RAII drop |
 
@@ -171,6 +171,7 @@ Notes:
 | `Network::create()` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName, Networks.AliasResolvesOnCustomNetwork | ✅ WindowsNetworks.PeerNameRegisteredAndReachable, WindowsNetworks.AliasRegisteredOnCustomNetwork |
 | `name()` / `id()` | ✅ | ✅ | ✅ Networks.CreateAndRemove | ✅ WindowsNetworks.CreateAndRemove |
 | `remove()` (+ idempotent) | ✅ | ✅ | ✅ Networks.CreateAndRemove | ✅ WindowsNetworks.CreateAndRemove |
+| `keep(bool)` / `is_persistent()` | ✅ | ✅ | ✅ Networks.KeepReleasesRemovalOwnership | ❌ (client-side flag; engine-independent) |
 | `inspect()` | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers, Networks.BuilderInternalGatewayAndLabels | ✅ WindowsNetworks.InspectReportsDriverAndContainers |
 | `inspect_raw()` | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers | ❌ (same code path) |
 | `inspect(name_or_id)` (static) | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers (by name) | ✅ WindowsNetworks.InspectReportsDriverAndContainers (by name) |

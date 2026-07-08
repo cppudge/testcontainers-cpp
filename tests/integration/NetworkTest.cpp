@@ -4,6 +4,7 @@
 #include <string>
 
 #include "testcontainers/Container.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Network.hpp"
@@ -22,6 +23,7 @@
 //   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via the typed Network::inspect()).
 //   Networks.StaticIpv4Assigned - with_static_ipv4 on a subnet-bearing network pins the endpoint to exactly the requested address (asserted via container inspect).
 //   Networks.InspectReportsConfigAndContainers - net.inspect() reflects the created driver/IPAM pool/labels and lists an attached container's endpoint; the static Network::inspect(name) resolves the same network; inspect_raw() returns the raw body.
+//   Networks.KeepReleasesRemovalOwnership - keep() makes the handle persistent (neither remove() nor drop removes the network; cleaned up manually), while keep(false) re-arms removal so the drop removes it after all.
 //   WindowsNetworks.CreateAndRemove - the same create/remove round-trip on a Windows daemon (the default driver there is "nat").
 //   WindowsNetworks.PeerNameRegisteredAndReachable - two nanoserver containers on a user-defined nat network: the daemon registers the peer's container name in DNSNames, and a `ping` of the peer's network IP proves the data path.
 //   WindowsNetworks.AliasRegisteredOnCustomNetwork - with_network_alias lands in the endpoint's Aliases/DNSNames, and the alias-bearing peer is reachable by its network IP.
@@ -205,6 +207,35 @@ TEST_F(Networks, StaticIpv4Assigned) {
     EXPECT_EQ(ip_on_network(dc, c.id(), net.name()), "172.31.254.10");
 
     // The container and the network are torn down by RAII at scope exit.
+}
+
+TEST_F(Networks, KeepReleasesRemovalOwnership) {
+    // keep() releases removal ownership: neither an explicit remove() nor the
+    // handle's drop touches the network; keep(false) re-arms removal.
+    std::string kept_id;
+    std::string unkept_name;
+    {
+        Network kept = Network::create();
+        kept_id = kept.id();
+        EXPECT_FALSE(kept.is_persistent());
+        kept.keep();
+        EXPECT_TRUE(kept.is_persistent());
+        kept.remove(); // on a kept handle: releases ownership, removes nothing
+
+        Network unkept = Network::create();
+        unkept_name = unkept.name();
+        unkept.keep();
+        unkept.keep(false); // re-armed: the drop below removes it after all
+        EXPECT_FALSE(unkept.is_persistent());
+    } // drop: must remove ONLY the re-armed network
+
+    // The kept network survived both remove() and the drop; cleaning it up is
+    // now this caller's responsibility.
+    EXPECT_EQ(Network::inspect(kept_id).id, kept_id);
+    DockerClient::from_environment().remove_network(kept_id);
+
+    // The re-armed one is gone.
+    EXPECT_THROW(Network::inspect(unkept_name), NotFoundError);
 }
 
 TEST_F(Networks, InspectReportsConfigAndContainers) {

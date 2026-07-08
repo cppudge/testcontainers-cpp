@@ -13,8 +13,9 @@ namespace testcontainers {
 ///
 /// Move-only: it owns a real external resource and removes the network on
 /// destruction (best-effort, exceptions swallowed). Copying is deleted so the
-/// removal happens exactly once. Containers placed on the same network (via
-/// `GenericImage::with_network`) can resolve each other by container name.
+/// removal happens exactly once; `keep()` releases removal ownership (the
+/// network then outlives the handle). Containers placed on the same network
+/// (via `GenericImage::with_network`) can resolve each other by container name.
 class Network {
 public:
     /// A copyable builder for a richer user-defined network: driver, internal /
@@ -99,7 +100,8 @@ public:
 
     Network(Network&& other) noexcept
         : client_(std::move(other.client_)), id_(std::move(other.id_)),
-          name_(std::move(other.name_)), dropped_(other.dropped_) {
+          name_(std::move(other.name_)), dropped_(other.dropped_),
+          remove_on_drop_(other.remove_on_drop_) {
         other.dropped_ = true; // the moved-from handle owns nothing
     }
 
@@ -110,6 +112,7 @@ public:
             id_ = std::move(other.id_);
             name_ = std::move(other.name_);
             dropped_ = other.dropped_;
+            remove_on_drop_ = other.remove_on_drop_;
             other.dropped_ = true;
         }
         return *this;
@@ -131,6 +134,10 @@ public:
     /// The network's id.
     const std::string& id() const noexcept { return id_; }
 
+    /// True when this handle will NOT remove the network on destruction
+    /// (after `keep()`).
+    bool is_persistent() const noexcept { return !remove_on_drop_; }
+
     /// A structured snapshot of this network (`GET /networks/{id}`): driver,
     /// flags, IPAM pools, options, labels, and the currently attached
     /// containers. Throws DockerError if the network is gone.
@@ -147,8 +154,25 @@ public:
     /// network exists (NotFoundError) or the daemon cannot be reached.
     static NetworkInspect inspect(const std::string& id_or_name);
 
+    /// Keep the network alive past this handle: from here on neither
+    /// destruction nor `remove()` removes it (`is_persistent()` reports true
+    /// afterwards) — removing the network becomes the caller's responsibility
+    /// (e.g. `DockerClient::remove_network` or `docker network rm`).
+    /// `keep(false)` re-arms removal — handy for forwarding a "keep my
+    /// resources" debug flag in one call instead of an `if`.
+    ///
+    /// Ryuk still applies on Linux engines: a created network carries the
+    /// session label, so the reaper removes it shortly after the test process
+    /// exits — keep() only protects it from THIS process's teardown. For a
+    /// network that must outlive the process, disable the reaper
+    /// (TESTCONTAINERS_RYUK_DISABLED). (No reaper runs against a
+    /// Windows-containers engine — a kept network there stays until you
+    /// remove it.)
+    void keep(bool keep = true) noexcept { remove_on_drop_ = !keep; }
+
     /// Explicitly remove the network now. Idempotent; after this the destructor
-    /// does nothing.
+    /// does nothing. On a kept handle (after `keep()`) this releases ownership
+    /// without removing the network.
     void remove();
 
     /// Connect an already-running container to this network, optionally giving it
@@ -170,6 +194,7 @@ private:
     std::string id_;
     std::string name_;
     bool dropped_ = false;
+    bool remove_on_drop_ = true; ///< false after keep()
 };
 
 } // namespace testcontainers

@@ -96,7 +96,8 @@ descriptors); gated on `TESTCONTAINERS_REUSE_ENABLE` / `testcontainers.reuse.ena
 to a normal container otherwise. Host-FILE copy sources hash the PATH, not the bytes — a
 changed file at the same path still reuses. Reused containers are never auto-removed or reaped:
 prune externally (label sweep on the reuse-hash label). `Container::keep()` flips a normal
-handle into the same persistent state at runtime (no removal, no stopping hooks on drop);
+handle into the same persistent state at runtime (no removal, no stopping hooks on drop;
+`keep(false)` re-arms removal so a debug flag forwards in one call);
 unlike reuse containers it KEEPS the session label, so on Linux engines Ryuk still reaps it
 once the test process exits — disable the reaper (or use reuse) for a container that must
 outlive the process. On a Windows-containers engine no reaper runs at all: a kept container
@@ -189,8 +190,10 @@ subnet contains it); `Network::connect` attaches a running container. Inspect: `
 / the static `Network::inspect(name_or_id)` return a typed `NetworkInspect` (driver, scope,
 internal/attachable/IPv6 flags, IPAM pools, options, labels, and the attached containers'
 endpoints — addresses in CIDR form), `net.inspect_raw()` the full JSON (both over
-`DockerClient::inspect_network[_raw]`). No process-wide dedup — every `create()` makes a
-brand-new network.
+`DockerClient::inspect_network[_raw]`). `net.keep()` releases removal ownership —
+`Container::keep` semantics, including the Ryuk caveat (the network stays session-labeled, so
+the reaper still removes it after the process exits) and the `keep(false)` re-arm. No
+process-wide dedup — every `create()` makes a brand-new network.
 
 **Host access (`with_exposed_host_port`)** — services listening on the test host become
 reachable from containers at `host.testcontainers.internal:<port>` through the standard

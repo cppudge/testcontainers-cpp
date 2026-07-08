@@ -151,7 +151,9 @@ Container app = GenericImage("my/app", "latest")
 
 ### Cleanup
 
-Containers and networks are removed when their handle goes out of scope. As a crash-safety net, a
+Containers and networks are removed when their handle goes out of scope; `keep()` on either
+handle releases removal ownership (`keep(false)` re-arms it, so a "keep my resources" debug
+flag forwards in one call). As a crash-safety net, a
 [Ryuk](https://github.com/testcontainers/moby-ryuk) sidecar reaps everything tagged with the run's
 session label if the process dies (e.g. `SIGKILL`, where destructors never run). Opt out with
 `TESTCONTAINERS_RYUK_DISABLED=true`. Runnable examples live in [`tests/integration/`](tests/integration).

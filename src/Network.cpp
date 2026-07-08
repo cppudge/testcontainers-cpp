@@ -74,6 +74,9 @@ void Network::drop() noexcept {
         return;
     }
     dropped_ = true;
+    if (!remove_on_drop_) {
+        return; // kept: the network (and its endpoints) is the caller's now
+    }
     try {
         // If host-port exposure joined its sshd sidecar to this network, detach
         // it first — a network with active endpoints cannot be removed.

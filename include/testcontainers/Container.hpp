@@ -199,6 +199,12 @@ public:
     /// afterwards). Removing the container then becomes the caller's
     /// responsibility (e.g. `DockerClient::remove_container` or `docker rm -f`).
     ///
+    /// `keep(false)` re-arms removal — handy for forwarding a "keep my
+    /// containers" debug flag in one call instead of an `if`. It also works on
+    /// a `with_reuse` handle, but then THIS handle removes the shared
+    /// container on drop, defeating reuse for later runs — rarely what you
+    /// want.
+    ///
     /// Ryuk still applies on Linux engines: a normally-started container
     /// carries the session label, so the reaper removes it shortly after the
     /// test process exits. keep() only protects it from THIS process's
@@ -207,7 +213,7 @@ public:
     /// containers are never session-labeled. (No reaper runs against a
     /// Windows-containers engine — a kept container there stays until you
     /// remove it.)
-    void keep() noexcept { remove_on_drop_ = false; }
+    void keep(bool keep = true) noexcept { remove_on_drop_ = !keep; }
 
     /// Explicitly stop owning / force-remove the container now. Idempotent;
     /// after this the destructor does nothing. On a persistent handle
