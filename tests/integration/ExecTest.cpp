@@ -321,7 +321,13 @@ TEST_F(WindowsExec, TtyCapturesRawStdout) {
 
     ExecOptions opts;
     opts.tty = true;
-    const ExecResult res = c.exec({"cmd", "/c", "echo tty-hello-win"}, opts);
+    // The trailing ping keeps the console alive ~1s after the echo. With an
+    // instant-exit process the daemon-side ConPTY can be torn down before its
+    // buffer is pumped into the stream, and the exec comes back with EMPTY
+    // stdout (exit 0) — seen twice on CI (2026-07-08, runs 28955481786 and
+    // 28956780190).
+    const ExecResult res =
+        c.exec({"cmd", "/c", "echo tty-hello-win & ping -n 2 127.0.0.1 >nul"}, opts);
     // A TTY stream is raw/unframed: the text lands in stdout_data verbatim and
     // stderr_data is never populated (there is no separate stderr channel).
     EXPECT_NE(res.stdout_data.find("tty-hello-win"), std::string::npos)
