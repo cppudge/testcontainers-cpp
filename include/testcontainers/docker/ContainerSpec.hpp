@@ -82,6 +82,57 @@ struct VolumeInspect {
     std::map<std::string, std::string> options; ///< Options (null -> empty)
 };
 
+/// One IPAM address pool of a network (`IPAM.Config[i]` in `GET /networks/{id}`).
+struct NetworkIpamPool {
+    std::string subnet;  ///< CIDR, e.g. "172.31.250.0/24"; "" when absent
+    std::string gateway; ///< "" when absent
+};
+
+/// One attached container's endpoint on a network (a `Containers` map entry in
+/// `GET /networks/{id}`).
+struct NetworkEndpoint {
+    std::string name;         ///< container name
+    std::string endpoint_id;  ///< EndpointID
+    std::string mac_address;  ///< MacAddress
+    std::string ipv4_address; ///< CIDR form, e.g. "172.18.0.2/16"; "" when absent
+    std::string ipv6_address; ///< CIDR form; "" when absent
+};
+
+/// The subset of `GET /networks/{id}` we currently care about.
+struct NetworkInspect {
+    std::string id;
+    std::string name;
+    std::string driver;    ///< "bridge" / "nat" / ...
+    std::string scope;     ///< "local" / "swarm"
+    bool internal = false; ///< Internal (no external connectivity)
+    bool attachable = false;
+    bool enable_ipv6 = false;
+    std::vector<NetworkIpamPool> ipam_pools;    ///< IPAM.Config (empty when none)
+    std::map<std::string, std::string> options; ///< driver Options (null -> empty)
+    std::map<std::string, std::string> labels;  ///< Labels (null -> empty)
+    /// Container id -> endpoint, one entry per currently attached container
+    /// (null / absent -> empty).
+    std::map<std::string, NetworkEndpoint> containers;
+};
+
+/// The subset of `GET /images/{reference}/json` we currently care about.
+struct ImageInspect {
+    std::string id;                     ///< "sha256:..."
+    std::vector<std::string> repo_tags; ///< "redis:7.2"-style references (may be empty)
+    std::vector<std::string> repo_digests;
+    std::string created;                       ///< RFC 3339 timestamp, verbatim
+    std::string architecture;                  ///< "amd64" / "arm64" / ...
+    std::string os;                            ///< "linux" / "windows"
+    std::int64_t size = 0;                     ///< image size in bytes
+    std::map<std::string, std::string> labels; ///< Config.Labels (null -> empty)
+    std::vector<std::string> env;              ///< Config.Env ("KEY=VALUE" entries)
+    std::vector<std::string> cmd;              ///< Config.Cmd (null -> empty)
+    std::vector<std::string> entrypoint;       ///< Config.Entrypoint (null -> empty)
+    std::vector<std::string> exposed_ports;    ///< Config.ExposedPorts keys ("6379/tcp")
+    std::string working_dir;                   ///< Config.WorkingDir
+    std::string user;                          ///< Config.User
+};
+
 /// A single published port binding from a container inspect.
 struct PortBinding {
     std::string host_ip;         ///< "0.0.0.0" / "::"

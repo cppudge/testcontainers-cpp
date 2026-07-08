@@ -37,6 +37,16 @@ nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec);
 /// null Labels/Options object (both become empty maps).
 VolumeInspect parse_volume_inspect(const std::string& body);
 
+/// Parse the response of `GET /networks/{id}` into NetworkInspect. Tolerates
+/// null / absent Labels, Options, Containers, and IPAM.Config (all become
+/// empty containers).
+NetworkInspect parse_network_inspect(const std::string& body);
+
+/// Parse the response of `GET /images/{reference}/json` into ImageInspect.
+/// Tolerates null / absent RepoTags, RepoDigests, Config and its Labels / Env /
+/// Cmd / Entrypoint / ExposedPorts (all become empty containers).
+ImageInspect parse_image_inspect(const std::string& body);
+
 /// Parse the `Os` field from a `GET /version` response body (e.g. "linux" /
 /// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
 /// the engine-OS detection in DockerClient can be unit-tested.

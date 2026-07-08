@@ -21,6 +21,12 @@ bool GenericImage::exists(const std::string& name, const std::string& tag) {
     return client.image_exists(name + ":" + tag);
 }
 
+ImageInspect GenericImage::inspect(const std::string& name, const std::string& tag) {
+    return DockerClient::from_environment().inspect_image(name + ":" + tag);
+}
+
+ImageInspect GenericImage::inspect() const { return inspect(image_, tag_); }
+
 CreateContainerSpec GenericImage::build_spec() const {
     // Start from the embedded spec — it already carries every verbatim create
     // field (cmd, mounts, labels, host-config knobs, network, name, platform, …).

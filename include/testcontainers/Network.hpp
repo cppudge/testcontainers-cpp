@@ -131,6 +131,22 @@ public:
     /// The network's id.
     const std::string& id() const noexcept { return id_; }
 
+    /// A structured snapshot of this network (`GET /networks/{id}`): driver,
+    /// flags, IPAM pools, options, labels, and the currently attached
+    /// containers. Throws DockerError if the network is gone.
+    NetworkInspect inspect() const;
+
+    /// The RAW inspect JSON body (`GET /networks/{id}`), so callers can read
+    /// any field `NetworkInspect` does not model. Throws DockerError if the
+    /// network is gone.
+    std::string inspect_raw() const;
+
+    /// A structured snapshot of an arbitrary network by name or id, without a
+    /// Network handle (the daemon accepts both forms). Connects via
+    /// `DockerClient::from_environment()`. Throws DockerError if no such
+    /// network exists (NotFoundError) or the daemon cannot be reached.
+    static NetworkInspect inspect(const std::string& id_or_name);
+
     /// Explicitly remove the network now. Idempotent; after this the destructor
     /// does nothing.
     void remove();

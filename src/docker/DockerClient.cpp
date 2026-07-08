@@ -402,6 +402,20 @@ bool DockerClient::image_exists(const std::string& reference) {
     throw_status_error("image_exists('" + reference + "')", res, reference);
 }
 
+std::string DockerClient::inspect_image_raw(const std::string& reference) {
+    // The reference goes into the path verbatim, exactly like image_exists.
+    const Response res = request("GET", versioned("/images/" + reference + "/json"));
+    if (res.status_code != 200) {
+        // 404 ("no such image") becomes NotFoundError via throw_status_error.
+        throw_status_error("inspect_image('" + reference + "')", res, reference);
+    }
+    return res.body;
+}
+
+ImageInspect DockerClient::inspect_image(const std::string& reference) {
+    return docker::parse_image_inspect(inspect_image_raw(reference));
+}
+
 void DockerClient::build_image(const std::string& context_tar, const docker::BuildOptions& options,
                                const docker::BuildLogConsumer& consumer) {
     const std::string target =
@@ -1022,6 +1036,10 @@ std::string DockerClient::inspect_network_raw(const std::string& id) {
         throw_status_error("inspect_network(" + id + ")", res, id);
     }
     return res.body;
+}
+
+NetworkInspect DockerClient::inspect_network(const std::string& id) {
+    return docker::parse_network_inspect(inspect_network_raw(id));
 }
 
 void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,

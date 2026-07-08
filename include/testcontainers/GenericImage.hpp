@@ -66,6 +66,22 @@ public:
     /// Throws DockerError when the daemon cannot be reached or errors.
     static bool exists(const std::string& name, const std::string& tag = "latest");
 
+    /// A structured snapshot of the image `<name>:<tag>` on the daemon
+    /// (`GET /images/{ref}/json`): id, repo tags/digests, creation time, os /
+    /// architecture, size, and the image config (labels, env, cmd, entrypoint,
+    /// exposed ports, workdir, user). A purely local lookup, no registry is
+    /// contacted; name and tag are separate, exactly like `exists`. Throws
+    /// DockerError if the image is absent (NotFoundError) or the daemon
+    /// cannot be reached. For a full "name[:tag]" reference, an image ID, or a
+    /// digest, call `DockerClient::inspect_image` directly.
+    static ImageInspect inspect(const std::string& name, const std::string& tag = "latest");
+
+    /// `inspect(image(), tag())` — a structured snapshot of THIS config's image
+    /// on the daemon. The reference is used verbatim: no image-name substitutor
+    /// or env-prefix rewrite is applied (exactly like `exists`; `start()` is
+    /// where substitution happens).
+    ImageInspect inspect() const;
+
     // --- In-place builders (single overload; chains on lvalues and temporaries) ---
 
     GenericImage& with_exposed_port(ContainerPort p) {

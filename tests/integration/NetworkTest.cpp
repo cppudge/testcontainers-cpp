@@ -19,12 +19,14 @@
 //   Networks.AliasResolvesOnCustomNetwork - a container with a network alias is reachable by that alias from a peer on the same network (getent resolves the alias to an IP).
 //   Networks.BuilderCreatesNetwork - Network::builder() with a driver, attachable, and an IPAM subnet creates a real network with a non-empty id/name.
 //   Networks.ConnectAttachesRunningContainerWithAlias - Network::connect attaches an already-running container (started WITHOUT with_network) and its runtime alias resolves from a peer on the network.
-//   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via GET /networks/{id}).
+//   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via the typed Network::inspect()).
 //   Networks.StaticIpv4Assigned - with_static_ipv4 on a subnet-bearing network pins the endpoint to exactly the requested address (asserted via container inspect).
+//   Networks.InspectReportsConfigAndContainers - net.inspect() reflects the created driver/IPAM pool/labels and lists an attached container's endpoint; the static Network::inspect(name) resolves the same network; inspect_raw() returns the raw body.
 //   WindowsNetworks.CreateAndRemove - the same create/remove round-trip on a Windows daemon (the default driver there is "nat").
 //   WindowsNetworks.PeerNameRegisteredAndReachable - two nanoserver containers on a user-defined nat network: the daemon registers the peer's container name in DNSNames, and a `ping` of the peer's network IP proves the data path.
 //   WindowsNetworks.AliasRegisteredOnCustomNetwork - with_network_alias lands in the endpoint's Aliases/DNSNames, and the alias-bearing peer is reachable by its network IP.
 //   WindowsNetworks.BuilderCreatesNetwork - Network::builder() with the "nat" driver and an IPAM subnet creates a real network (no attachable — that is a swarm/overlay concept HNS does not take).
+//   WindowsNetworks.InspectReportsDriverAndContainers - net.inspect() on a nat network reflects the driver and IPAM pool and lists an attached container's endpoint; the static Network::inspect(name) resolves the same network.
 
 using namespace testcontainers;
 
@@ -167,8 +169,6 @@ TEST_F(Networks, ConnectAttachesRunningContainerWithAlias) {
 }
 
 TEST_F(Networks, BuilderInternalGatewayAndLabels) {
-    // Internal + gateway + label are not modelled by any typed inspect, so
-    // assert them in the raw network-inspect body.
     Network n = Network::builder()
                     .with_driver("bridge")
                     .with_subnet("172.31.253.0/24")
@@ -177,11 +177,13 @@ TEST_F(Networks, BuilderInternalGatewayAndLabels) {
                     .with_label("tc-test-label", "yes")
                     .create();
 
-    DockerClient client = DockerClient::from_environment();
-    const std::string body = client.request("GET", "/networks/" + n.id()).body;
-    EXPECT_NE(body.find("\"Internal\":true"), std::string::npos) << body.substr(0, 512);
-    EXPECT_NE(body.find("172.31.253.1"), std::string::npos) << body.substr(0, 512);
-    EXPECT_NE(body.find("tc-test-label"), std::string::npos) << body.substr(0, 512);
+    // The typed inspect models all three options directly.
+    const NetworkInspect info = n.inspect();
+    EXPECT_TRUE(info.internal);
+    ASSERT_EQ(info.ipam_pools.size(), 1u);
+    EXPECT_EQ(info.ipam_pools[0].gateway, "172.31.253.1");
+    ASSERT_EQ(info.labels.count("tc-test-label"), 1u);
+    EXPECT_EQ(info.labels.at("tc-test-label"), "yes");
 
     // RAII removes the network at scope exit.
 }
@@ -201,6 +203,45 @@ TEST_F(Networks, StaticIpv4Assigned) {
     // The endpoint must carry exactly the requested address, not a pool pick.
     DockerClient dc = DockerClient::from_environment();
     EXPECT_EQ(ip_on_network(dc, c.id(), net.name()), "172.31.254.10");
+
+    // The container and the network are torn down by RAII at scope exit.
+}
+
+TEST_F(Networks, InspectReportsConfigAndContainers) {
+    // A subnet distinct from every other suite's so shared daemons never collide.
+    Network net = Network::builder()
+                      .with_driver("bridge")
+                      .with_subnet("172.31.249.0/24")
+                      .with_gateway("172.31.249.1")
+                      .with_label("tc-inspect-label", "yes")
+                      .create();
+
+    Container c =
+        GenericImage("alpine", "3.20").with_network(net.name()).with_cmd({"sleep", "60"}).start();
+
+    // The instance method reflects the created configuration...
+    const NetworkInspect info = net.inspect();
+    EXPECT_EQ(info.id, net.id());
+    EXPECT_EQ(info.name, net.name());
+    EXPECT_EQ(info.driver, "bridge");
+    ASSERT_EQ(info.ipam_pools.size(), 1u);
+    EXPECT_EQ(info.ipam_pools[0].subnet, "172.31.249.0/24");
+    EXPECT_EQ(info.ipam_pools[0].gateway, "172.31.249.1");
+    ASSERT_EQ(info.labels.count("tc-inspect-label"), 1u);
+    EXPECT_EQ(info.labels.at("tc-inspect-label"), "yes");
+
+    // ...and lists the attached container's endpoint, its address (CIDR form)
+    // drawn from the pool above.
+    ASSERT_EQ(info.containers.count(c.id()), 1u);
+    EXPECT_TRUE(info.containers.at(c.id()).ipv4_address.starts_with("172.31.249."))
+        << info.containers.at(c.id()).ipv4_address;
+
+    // The static lookup takes a name (or id) and needs no Network handle.
+    const NetworkInspect by_name = Network::inspect(net.name());
+    EXPECT_EQ(by_name.id, net.id());
+
+    // The raw escape hatch returns the same inspect body, unparsed.
+    EXPECT_NE(net.inspect_raw().find("\"Id\""), std::string::npos);
 
     // The container and the network are torn down by RAII at scope exit.
 }
@@ -301,4 +342,31 @@ TEST_F(WindowsNetworks, BuilderCreatesNetwork) {
     EXPECT_FALSE(n.name().empty());
 
     // RAII removes the network at scope exit.
+}
+
+TEST_F(WindowsNetworks, InspectReportsDriverAndContainers) {
+    // The "nat" driver; a subnet distinct from every other suite's so shared
+    // daemons never collide.
+    Network net = Network::builder().with_driver("nat").with_subnet("172.31.248.0/24").create();
+
+    Container c = nanoserver().with_network(net.name()).with_cmd(keep_alive_cmd()).start();
+
+    const NetworkInspect info = net.inspect();
+    EXPECT_EQ(info.id, net.id());
+    EXPECT_EQ(info.name, net.name());
+    EXPECT_EQ(info.driver, "nat");
+    ASSERT_EQ(info.ipam_pools.size(), 1u);
+    EXPECT_EQ(info.ipam_pools[0].subnet, "172.31.248.0/24");
+
+    // HNS fills the Containers map exactly like a Linux daemon: one endpoint
+    // per attached container, its address in CIDR form from the pool above.
+    ASSERT_EQ(info.containers.count(c.id()), 1u);
+    EXPECT_TRUE(info.containers.at(c.id()).ipv4_address.starts_with("172.31.248."))
+        << info.containers.at(c.id()).ipv4_address;
+
+    // The static lookup takes a name (or id) and needs no Network handle.
+    const NetworkInspect by_name = Network::inspect(net.name());
+    EXPECT_EQ(by_name.id, net.id());
+
+    // The container and the network are torn down by RAII at scope exit.
 }

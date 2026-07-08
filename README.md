@@ -102,10 +102,11 @@ Builders: `with_cmd`, `with_entrypoint`, `with_env`, `with_label`, `with_exposed
 `with_working_dir`, `with_user`, `with_privileged`, `with_mount` (`Mount::bind/volume/tmpfs`),
 `with_healthcheck` (`Healthcheck::cmd_shell/cmd`), `with_copy_to`, `with_network`,
 `with_network_alias`, `with_static_ipv4`, `with_container_name`, `with_registry_auth`,
-`with_wait`, `with_startup_timeout`. Statics: `from_reference("name[:tag]")` and
+`with_wait`, `with_startup_timeout`. Statics: `from_reference("name[:tag]")`,
 `exists(name, tag)` — a local-presence probe, e.g. to skip an expensive
 `GenericBuildableImage::build()` (which can stream its output live via
-`with_build_log_consumer`) when a previous run already built the image.
+`with_build_log_consumer`) when a previous run already built the image — and
+`inspect(name, tag)`, a typed `ImageInspect` snapshot (id, tags, os/arch, size, image config).
 
 Wait strategies — `with_wait(wait_for::…)`: `stdout_message` / `stderr_message` / `log`,
 `seconds` / `millis`, `exit` / `exit_code`, `healthy` (Docker healthcheck), `http(path, port, status)`.
@@ -114,9 +115,11 @@ Several may be chained; they run in order under the startup timeout.
 ### Talking to the running container
 
 `Container` is a move-only RAII handle: `host()`, `get_host_port(port)`, `logs()`, `exec(cmd)`,
-`copy_to(src)`, `stop()`, `is_running()`, `remove()`. `keep()` releases removal ownership (the
+`copy_to(src)`, `inspect()` (typed) / `inspect_raw()` (full JSON), `stop()`, `is_running()`,
+`remove()`. `keep()` releases removal ownership (the
 container survives the handle; with Ryuk enabled it is still reaped shortly after the process
-exits — see Cleanup below); `ExecOptions{.detach = true}` runs a command fire-and-forget.
+exits — see Cleanup below); `ExecOptions{.detach = true}` runs a command fire-and-forget;
+the static `Container::inspect(id)` looks up any container by id without a handle.
 
 ```cpp
 ExecResult r = redis.exec({"redis-cli", "PING"});  // r.stdout_data / r.stderr_data / r.exit_code
@@ -126,7 +129,9 @@ redis.copy_to(CopyToContainer::content("seed-data", "/tmp/seed.txt"));
 
 ### Several containers on one network
 
-Put containers on a user-defined network so they resolve each other by container name:
+Put containers on a user-defined network so they resolve each other by container name
+(`net.inspect()` — or the static `Network::inspect(name_or_id)` — returns a typed
+`NetworkInspect`: driver, IPAM pools, labels, and the attached containers' endpoints):
 
 ```cpp
 Network net = Network::create();

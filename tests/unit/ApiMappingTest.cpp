@@ -43,6 +43,10 @@
 //   ApiMapping.BuildVolumeCreateBodyMinimal - a VolumeCreateSpec with only a name emits just Name and no Driver/DriverOpts/Labels.
 //   ApiMapping.ParseVolumeInspect - GET /volumes/{name} JSON parses Name/Driver/Mountpoint/Scope and the Labels/Options maps.
 //   ApiMapping.ParseVolumeInspectNullMaps - null Labels/Options parse into empty maps.
+//   ApiMapping.ParseNetworkInspect - GET /networks/{id} JSON parses id/name/driver/scope, the Internal/Attachable/EnableIPv6 flags, IPAM pools, Options/Labels maps, and the Containers endpoint map.
+//   ApiMapping.ParseNetworkInspectNullsAndGarbage - null/absent Labels/Options/Containers/IPAM.Config parse into empty containers with false flags; a non-JSON body throws DockerError.
+//   ApiMapping.ParseImageInspect - GET /images/{ref}/json JSON parses id/tags/digests/created/arch/os/size and the Config fields (labels, env, cmd, entrypoint, exposed ports, workdir, user).
+//   ApiMapping.ParseImageInspectNullsAndGarbage - null RepoTags (dangling image) and null Config members parse into empty containers, absent Size becomes 0; a non-JSON body throws DockerError.
 //   ApiMapping.BuildCreateBodyPatchDeepMerges - create_body_patch deep-merges into the body, keeping existing fields while adding nested and top-level ones.
 //   ApiMapping.BuildCreateBodyPatchInvalidThrows - an invalid-JSON create_body_patch makes build_create_body throw DockerError.
 //   ApiMapping.BuildCreateQueryEmptyByDefault - a spec with neither name nor platform yields an empty create query.
@@ -91,7 +95,9 @@ using testcontainers::docker::BuildStreamScanner;
 using testcontainers::docker::expect_string_field;
 using testcontainers::docker::parse_container_list;
 using testcontainers::docker::parse_exec_exit_code;
+using testcontainers::docker::parse_image_inspect;
 using testcontainers::docker::parse_inspect;
+using testcontainers::docker::parse_network_inspect;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::split_image;
@@ -515,6 +521,176 @@ TEST(ApiMapping, ParseVolumeInspectNullMaps) {
     EXPECT_EQ(info.name, "plain-vol");
     EXPECT_TRUE(info.labels.empty());
     EXPECT_TRUE(info.options.empty());
+}
+
+TEST(ApiMapping, ParseNetworkInspect) {
+    // A representative GET /networks/{id} body: flags on, two IPAM pools (the
+    // second IPv6-only, i.e. no Gateway), driver options, labels, and one
+    // attached container.
+    const std::string body = R"({
+        "Name": "tc-net",
+        "Id": "0f6bnet",
+        "Created": "2026-07-08T10:00:00Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": true,
+        "IPAM": {
+            "Driver": "default",
+            "Config": [
+                {"Subnet": "172.31.250.0/24", "Gateway": "172.31.250.1"},
+                {"Subnet": "fd00:beef::/64"}
+            ]
+        },
+        "Internal": true,
+        "Attachable": true,
+        "Containers": {
+            "abc123": {
+                "Name": "my-svc",
+                "EndpointID": "ep-1",
+                "MacAddress": "02:42:ac:1f:fa:02",
+                "IPv4Address": "172.31.250.2/24",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {"com.docker.network.bridge.name": "br-tc"},
+        "Labels": {"org.testcontainers.session-id": "s1"}
+    })";
+
+    const auto info = parse_network_inspect(body);
+    EXPECT_EQ(info.id, "0f6bnet");
+    EXPECT_EQ(info.name, "tc-net");
+    EXPECT_EQ(info.driver, "bridge");
+    EXPECT_EQ(info.scope, "local");
+    EXPECT_TRUE(info.internal);
+    EXPECT_TRUE(info.attachable);
+    EXPECT_TRUE(info.enable_ipv6);
+
+    ASSERT_EQ(info.ipam_pools.size(), 2u);
+    EXPECT_EQ(info.ipam_pools[0].subnet, "172.31.250.0/24");
+    EXPECT_EQ(info.ipam_pools[0].gateway, "172.31.250.1");
+    EXPECT_EQ(info.ipam_pools[1].subnet, "fd00:beef::/64");
+    EXPECT_TRUE(info.ipam_pools[1].gateway.empty());
+
+    ASSERT_EQ(info.options.count("com.docker.network.bridge.name"), 1u);
+    EXPECT_EQ(info.options.at("com.docker.network.bridge.name"), "br-tc");
+    ASSERT_EQ(info.labels.count("org.testcontainers.session-id"), 1u);
+    EXPECT_EQ(info.labels.at("org.testcontainers.session-id"), "s1");
+
+    ASSERT_EQ(info.containers.count("abc123"), 1u);
+    const auto& endpoint = info.containers.at("abc123");
+    EXPECT_EQ(endpoint.name, "my-svc");
+    EXPECT_EQ(endpoint.endpoint_id, "ep-1");
+    EXPECT_EQ(endpoint.mac_address, "02:42:ac:1f:fa:02");
+    EXPECT_EQ(endpoint.ipv4_address, "172.31.250.2/24");
+    EXPECT_TRUE(endpoint.ipv6_address.empty());
+}
+
+TEST(ApiMapping, ParseNetworkInspectNullsAndGarbage) {
+    // The daemon emits null (not {} / []) for empty maps, and IPAM.Config can
+    // be null on some driver/daemon combinations.
+    const std::string body = R"({
+        "Name": "bare-net",
+        "Id": "idnet",
+        "Scope": "local",
+        "Driver": "bridge",
+        "IPAM": {"Driver": "default", "Config": null},
+        "Containers": null,
+        "Options": null,
+        "Labels": null
+    })";
+
+    const auto info = parse_network_inspect(body);
+    EXPECT_EQ(info.id, "idnet");
+    EXPECT_EQ(info.name, "bare-net");
+    EXPECT_FALSE(info.internal);
+    EXPECT_FALSE(info.attachable);
+    EXPECT_FALSE(info.enable_ipv6);
+    EXPECT_TRUE(info.ipam_pools.empty());
+    EXPECT_TRUE(info.containers.empty());
+    EXPECT_TRUE(info.options.empty());
+    EXPECT_TRUE(info.labels.empty());
+
+    // A proxy's HTML smuggled through a 200 must surface as DockerError, not a
+    // raw nlohmann exception.
+    EXPECT_THROW(parse_network_inspect("<html>oops</html>"), DockerError);
+}
+
+TEST(ApiMapping, ParseImageInspect) {
+    // A representative GET /images/{ref}/json body (fields the struct models).
+    const std::string body = R"({
+        "Id": "sha256:abcd1234",
+        "RepoTags": ["redis:7.2", "redis:latest"],
+        "RepoDigests": ["redis@sha256:beef"],
+        "Created": "2026-01-02T03:04:05Z",
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 123456789,
+        "Config": {
+            "Env": ["PATH=/usr/local/bin", "REDIS_VERSION=7.2"],
+            "Cmd": ["redis-server"],
+            "Entrypoint": ["docker-entrypoint.sh"],
+            "ExposedPorts": {"6379/tcp": {}},
+            "Labels": {"maintainer": "someone"},
+            "WorkingDir": "/data",
+            "User": "redis"
+        }
+    })";
+
+    const auto info = parse_image_inspect(body);
+    EXPECT_EQ(info.id, "sha256:abcd1234");
+    ASSERT_EQ(info.repo_tags.size(), 2u);
+    EXPECT_EQ(info.repo_tags[0], "redis:7.2");
+    ASSERT_EQ(info.repo_digests.size(), 1u);
+    EXPECT_EQ(info.repo_digests[0], "redis@sha256:beef");
+    EXPECT_EQ(info.created, "2026-01-02T03:04:05Z");
+    EXPECT_EQ(info.architecture, "amd64");
+    EXPECT_EQ(info.os, "linux");
+    EXPECT_EQ(info.size, 123456789);
+
+    ASSERT_EQ(info.env.size(), 2u);
+    EXPECT_EQ(info.env[1], "REDIS_VERSION=7.2");
+    ASSERT_EQ(info.cmd.size(), 1u);
+    EXPECT_EQ(info.cmd[0], "redis-server");
+    ASSERT_EQ(info.entrypoint.size(), 1u);
+    EXPECT_EQ(info.entrypoint[0], "docker-entrypoint.sh");
+    ASSERT_EQ(info.exposed_ports.size(), 1u);
+    EXPECT_EQ(info.exposed_ports[0], "6379/tcp");
+    ASSERT_EQ(info.labels.count("maintainer"), 1u);
+    EXPECT_EQ(info.labels.at("maintainer"), "someone");
+    EXPECT_EQ(info.working_dir, "/data");
+    EXPECT_EQ(info.user, "redis");
+}
+
+TEST(ApiMapping, ParseImageInspectNullsAndGarbage) {
+    // A dangling image has null RepoTags; a minimal image config is full of
+    // nulls. ExposedPorts and Size are absent entirely.
+    const std::string body = R"({
+        "Id": "sha256:ff00",
+        "RepoTags": null,
+        "RepoDigests": null,
+        "Config": {
+            "Env": null,
+            "Cmd": null,
+            "Entrypoint": null,
+            "Labels": null
+        }
+    })";
+
+    const auto info = parse_image_inspect(body);
+    EXPECT_EQ(info.id, "sha256:ff00");
+    EXPECT_TRUE(info.repo_tags.empty());
+    EXPECT_TRUE(info.repo_digests.empty());
+    EXPECT_TRUE(info.created.empty());
+    EXPECT_EQ(info.size, 0);
+    EXPECT_TRUE(info.env.empty());
+    EXPECT_TRUE(info.cmd.empty());
+    EXPECT_TRUE(info.entrypoint.empty());
+    EXPECT_TRUE(info.exposed_ports.empty());
+    EXPECT_TRUE(info.labels.empty());
+
+    // Garbage through a 200 must surface as DockerError, not a raw nlohmann
+    // exception.
+    EXPECT_THROW(parse_image_inspect("not json"), DockerError);
 }
 
 TEST(ApiMapping, BuildCreateBodyPatchDeepMerges) {

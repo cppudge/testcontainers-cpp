@@ -123,7 +123,9 @@ final snapshot check, so `timeout=0` with the message already logged still succe
 
 **Port / inspect getters** — `get_host_port` (IPv4-preferred), `get_host_port_ipv4/_ipv6`,
 `first_mapped_port()` (the first DECLARED port for handles from `start()`; lowest published
-otherwise), `inspect()` / `inspect_raw()`. Uncached: every getter re-inspects the container.
+otherwise), `inspect()` / `inspect_raw()`; the static `Container::inspect(id)` is the same
+lookup for an arbitrary container without a handle (read-only — unlike `adopt`, no ownership).
+Uncached: every getter re-inspects the container.
 
 **Logs** — `logs()` (snapshot) / `follow_logs()` (incremental streaming; BLOCKING with
 cooperative stop via the consumer — run it on your own thread). TTY containers
@@ -166,7 +168,11 @@ without a consumer. `GenericImage::exists(name, tag)` (constructor-style argumen
 `DockerClient::image_exists`, which also takes full references/digests) is the local-presence
 probe for skip-if-built flows; presence
 says nothing about freshness, so derive the tag from a hash of the build inputs when they can
-change. Built images carry no session label (not reaped). `forcerm=1` is always sent —
+change. `GenericImage::inspect(name, tag)` / `img.inspect()` (backed by
+`DockerClient::inspect_image[_raw]`, which also takes full references/digests) return a typed
+`ImageInspect` — id, repo tags/digests, created, os/arch, size, and the image config (labels,
+env, cmd, entrypoint, exposed ports, workdir, user); the instance form uses `image():tag()`
+verbatim, no substitutor. Built images carry no session label (not reaped). `forcerm=1` is always sent —
 without it the legacy builder keeps a failed step's intermediate container, which carries no
 labels and leaks past Ryuk.
 
@@ -177,8 +183,12 @@ AFTER the typed fields, so it overrides them; nest HostConfig fields under `"Hos
 **Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / one
 IPAM subnet+gateway pair / driver options / labels); `with_network_alias` (per-network DNS
 aliases); `with_static_ipv4` (a fixed endpoint address — needs a user-defined network whose
-subnet contains it); `Network::connect` attaches a running container. No network inspect and
-no process-wide dedup — every `create()` makes a brand-new network.
+subnet contains it); `Network::connect` attaches a running container. Inspect: `net.inspect()`
+/ the static `Network::inspect(name_or_id)` return a typed `NetworkInspect` (driver, scope,
+internal/attachable/IPv6 flags, IPAM pools, options, labels, and the attached containers'
+endpoints — addresses in CIDR form), `net.inspect_raw()` the full JSON (both over
+`DockerClient::inspect_network[_raw]`). No process-wide dedup — every `create()` makes a
+brand-new network.
 
 **Host access (`with_exposed_host_port`)** — services listening on the test host become
 reachable from containers at `host.testcontainers.internal:<port>` through the standard

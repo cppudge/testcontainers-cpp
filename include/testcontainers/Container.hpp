@@ -133,6 +133,13 @@ public:
     /// container is gone.
     std::string inspect_raw() const;
 
+    /// A structured snapshot of an arbitrary container by id (or name), without
+    /// a Container handle — a read-only lookup that, unlike `adopt`, takes no
+    /// ownership. Connects via `DockerClient::from_environment()`. Throws
+    /// DockerError if no such container exists (NotFoundError) or the daemon
+    /// cannot be reached.
+    static ContainerInspect inspect(const std::string& id);
+
     /// A snapshot of the container's stdout / stderr logs.
     ContainerLogs logs() const;
 

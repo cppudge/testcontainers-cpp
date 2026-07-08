@@ -174,6 +174,17 @@ public:
     /// contacted. Throws DockerError on any daemon error other than a 404.
     bool image_exists(const std::string& reference);
 
+    /// `GET /images/{reference}/json` — a structured snapshot of the image
+    /// (`reference` is "name[:tag]", an image ID, or a digest). A purely local
+    /// lookup: no registry is contacted. Throws DockerError if the image is
+    /// absent (404 -> NotFoundError) or the daemon errors.
+    ImageInspect inspect_image(const std::string& reference);
+
+    /// `GET /images/{reference}/json` — the RAW response body (the full inspect
+    /// JSON), so callers can read any field `ImageInspect` does not model.
+    /// Throws DockerError exactly like `inspect_image`.
+    std::string inspect_image_raw(const std::string& reference);
+
     /// `POST /build` — build an image from a tar build context (`context_tar`, an
     /// `application/x-tar` body). Blocks until the build finishes. The build
     /// progress is decoded as it arrives: each output line goes to `consumer`
@@ -305,10 +316,16 @@ public:
     /// `POST /networks/create` from a full spec; returns the new network id.
     std::string create_network(const NetworkCreateSpec& spec);
 
+    /// `GET /networks/{id}` — a structured snapshot of a network (`id` may be a
+    /// name or an id, as the Docker API accepts both): driver, flags, IPAM
+    /// pools, options, labels, and the currently attached containers. Throws
+    /// DockerError on any non-200 (NotFoundError on 404).
+    NetworkInspect inspect_network(const std::string& id);
+
     /// `GET /networks/{id}` — the RAW inspect JSON for a network (`id` may be
     /// a name or an id, as the Docker API accepts both), so callers can read
-    /// fields no typed struct models yet. Throws DockerError on any non-200
-    /// (NotFoundError on 404).
+    /// any field `NetworkInspect` does not model. Throws DockerError on any
+    /// non-200 (NotFoundError on 404).
     std::string inspect_network_raw(const std::string& id);
 
     /// `POST /networks/{id}/connect` — attach an existing container, optionally with

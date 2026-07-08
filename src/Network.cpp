@@ -56,6 +56,14 @@ Network Network::Builder::create() const {
 
 void Network::remove() { drop(); }
 
+NetworkInspect Network::inspect() const { return client_.inspect_network(id_); }
+
+std::string Network::inspect_raw() const { return client_.inspect_network_raw(id_); }
+
+NetworkInspect Network::inspect(const std::string& id_or_name) {
+    return DockerClient::from_environment().inspect_network(id_or_name);
+}
+
 void Network::connect(const std::string& container_id,
                       const std::vector<std::string>& aliases) const {
     client_.connect_network(id_, container_id, aliases);

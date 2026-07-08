@@ -43,6 +43,8 @@ suite.
 | `GenericImage(image, tag)` | ✅ | ✅ | ✅ many (RedisMvp, WaitStrategies, Exec, …) | ✅ via `nanoserver()` (WindowsContainer.*, etc.) |
 | `from_reference(ref)` | ✅ | ✅ | ✅ PortGetters.*, Volumes.PopulateThenReadBack, Lifecycle.* | ❌ |
 | `exists(name, tag)` (static) | ✅ | ✅ | ✅ BuildImage.ExistsReflectsLocalImages | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
+| `inspect(name, tag)` (static) | ✅ | ✅ | ✅ BuildImage.InspectReflectsImageConfig | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
+| `inspect()` | ✅ | ✅ | ✅ BuildImage.InspectReflectsImageConfig | ❌ (same code path as the static) |
 | `start()` | ✅ | ✅ | ✅ RedisMvp.StartsConnectsAndAutoRemoves (+ most suites) | ✅ WindowsContainer.EchoExitsWithExpectedLogs |
 | `to_request()` | ✅ | ✅ | ❌ (unit-tested; every `start()` uses it internally) | ❌ |
 | `with_exposed_port` | ✅ | ✅ | ✅ RedisMvp, PortGetters.*, WaitStrategies.* | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
@@ -148,6 +150,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `stop()` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop | ❌ |
 | `is_running()` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.* | ✅ WindowsContainer.ExecRunsInRunningContainer |
 | `keep()` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
+| `inspect(id)` (static) | ✅ | ✅ | ✅ Lifecycle.StaticInspectById (found + NotFoundError) | ❌ (same code path as `inspect_container`) |
 | `remove()` | ✅ | ✅ | ✅ implicit via RAII drop everywhere | ✅ implicit via RAII drop |
 
 Notes:
@@ -168,6 +171,9 @@ Notes:
 | `Network::create()` | ✅ | ✅ | ✅ Networks.ResolvesPeerByContainerName, Networks.AliasResolvesOnCustomNetwork | ✅ WindowsNetworks.PeerNameRegisteredAndReachable, WindowsNetworks.AliasRegisteredOnCustomNetwork |
 | `name()` / `id()` | ✅ | ✅ | ✅ Networks.CreateAndRemove | ✅ WindowsNetworks.CreateAndRemove |
 | `remove()` (+ idempotent) | ✅ | ✅ | ✅ Networks.CreateAndRemove | ✅ WindowsNetworks.CreateAndRemove |
+| `inspect()` | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers, Networks.BuilderInternalGatewayAndLabels | ✅ WindowsNetworks.InspectReportsDriverAndContainers |
+| `inspect_raw()` | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers | ❌ (same code path) |
+| `inspect(name_or_id)` (static) | ✅ | ✅ | ✅ Networks.InspectReportsConfigAndContainers (by name) | ✅ WindowsNetworks.InspectReportsDriverAndContainers (by name) |
 | `connect(id, aliases)` | ✅ | ✅ | ✅ Networks.ConnectAttachesRunningContainerWithAlias | ❌ [a] |
 | `builder()` + `create()` | ✅ | ✅ | ✅ Networks.BuilderCreatesNetwork | ✅ WindowsNetworks.BuilderCreatesNetwork |
 | `Builder::with_driver` | ✅ | ✅ | ✅ Networks.BuilderCreatesNetwork ("bridge") | ✅ WindowsNetworks.BuilderCreatesNetwork ("nat") |
@@ -324,6 +330,8 @@ Network / Volume) on Windows.
 | `is_windows_engine()` | ✅ | ✅ | ✅ EngineGuard | ✅ EngineGuard |
 | `pull_image(image, auth?)` | ✅ | ✅ | ✅ DockerLifecycle, AuthTest, DockerLogs | ❌ (pull happens via create in Windows tests) |
 | `image_exists(reference)` | ✅ | ✅ | ✅ via GenericImage::exists (BuildImage.ExistsReflectsLocalImages) | ✅ via GenericImage::exists (WindowsBuildImage.ExistsAndBuildLogConsumer) |
+| `inspect_image(reference)` | ✅ | ✅ | ✅ via GenericImage::inspect (BuildImage.InspectReflectsImageConfig) | ✅ via GenericImage::inspect (WindowsBuildImage.ExistsAndBuildLogConsumer) |
+| `inspect_image_raw(reference)` | ✅ | ✅ | ✅ implicit — every `inspect_image` goes through it | ✅ implicit |
 | `build_image(tar, opts[, consumer])` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
 | `create_container(spec, auth?)` | ✅ | ✅ | ✅ DockerLifecycle.*, ReaperTest, DockerLogs | ❌ (Windows tests go through `start()`) |
 | `start_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.CreateStartInspectRemove | ❌ |
@@ -341,6 +349,8 @@ Network / Volume) on Windows.
 | `connect_network(net, id, aliases)` | ✅ | ✅ | ✅ via Network.connect (Networks.ConnectAttachesRunningContainerWithAlias) | ❌ [a] |
 | `disconnect_network(net, id, force)` | ✅ | ✅ | ❌ [b] | ❌ |
 | `remove_network(id)` | ✅ | ✅ | ✅ via Network (Networks.CreateAndRemove) | ✅ via Network (WindowsNetworks.CreateAndRemove) |
+| `inspect_network(id)` | ✅ | ✅ | ✅ via Network.inspect (Networks.InspectReportsConfigAndContainers) | ✅ via Network.inspect (WindowsNetworks.InspectReportsDriverAndContainers) |
+| `inspect_network_raw(id)` | ✅ | ✅ | ✅ via Network.inspect_raw (Networks.InspectReportsConfigAndContainers) | ❌ (same code path) |
 | `create_volume(spec)` | ✅ | ✅ | ✅ via Volume (Volumes.*) | ✅ via Volume (WindowsVolumes.*) |
 | `inspect_volume(name)` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove (direct + via handle) | ✅ WindowsVolumes.CreateInspectRemove |
 | `remove_volume(name, force)` | ✅ | ✅ | ✅ via Volume (Volumes.*) | ✅ via Volume (WindowsVolumes.*) |

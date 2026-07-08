@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "testcontainers/Container.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Lifecycle.hpp"
 #include "testcontainers/WaitFor.hpp"
@@ -20,6 +21,7 @@
 //   Lifecycle.StoppingHookFiresOnStop - a stopping hook fires when the container is explicitly stopped.
 //   Lifecycle.StartupRetriesOnFailure - with_startup_attempts(2) retries the whole create→start→wait on failure, creating a fresh container each attempt.
 //   Lifecycle.KeepLeavesContainerRunning - keep() releases removal ownership: after the handle drops, the container is still running (verified and cleaned up via an adopted RemoveOnDrop handle).
+//   Lifecycle.StaticInspectById - the static Container::inspect(id) reads a running container's state without a handle and throws NotFoundError for an id that does not exist.
 //   WindowsLifecycle.HooksFireInOrder - the same hook ordering against a Windows daemon (the hooks are client-side, but each leg drives real Windows-engine create/start calls).
 //   WindowsLifecycle.StartupRetriesOnFailure - startup attempts retry with a fresh Windows container per attempt.
 
@@ -119,6 +121,19 @@ TEST_F(Lifecycle, KeepLeavesContainerRunning) {
     Container adopted =
         Container::adopt(DockerClient::from_environment(), id, AdoptOwnership::RemoveOnDrop);
     EXPECT_TRUE(adopted.is_running());
+}
+
+TEST_F(Lifecycle, StaticInspectById) {
+    Container c = GenericImage::from_reference(kImage).with_cmd({"sleep", "60"}).start();
+
+    // A read-only lookup by id: no handle, no ownership taken (unlike adopt).
+    const ContainerInspect info = Container::inspect(c.id());
+    EXPECT_EQ(info.id, c.id());
+    EXPECT_TRUE(info.running);
+    EXPECT_EQ(info.status, "running");
+
+    // An id that never existed surfaces as NotFoundError (404).
+    EXPECT_THROW(Container::inspect("tc-no-such-container-0000"), NotFoundError);
 }
 
 // The Windows mirror: the hook plumbing is client-side, but each leg drives a

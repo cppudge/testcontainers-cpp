@@ -67,6 +67,10 @@ ContainerInspect Container::inspect() const { return client_.inspect_container(i
 
 std::string Container::inspect_raw() const { return client_.inspect_container_raw(id_); }
 
+ContainerInspect Container::inspect(const std::string& id) {
+    return DockerClient::from_environment().inspect_container(id);
+}
+
 ContainerLogs Container::logs() const {
     LogOptions opts;
     opts.tty = tty_; // a TTY container has a raw/unframed log stream (skip demux)

@@ -4,11 +4,13 @@
 
 #include <charconv>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace testcontainers::docker {
 
@@ -37,6 +39,30 @@ template <class Fn> auto guard_parse(const char* context, const std::string& bod
         throw DockerError(std::string(context) + ": unexpected response from Docker: " + e.what() +
                           "; body: " + body_excerpt(body));
     }
+}
+
+/// Read an object of string values at `key` into a map. Absent / null / wrong
+/// type become an empty map (Docker emits `null` for empty Labels / Options).
+std::map<std::string, std::string> read_string_map(const nlohmann::json& json, const char* key) {
+    std::map<std::string, std::string> out;
+    if (const auto it = json.find(key); it != json.end() && it->is_object()) {
+        for (const auto& [name, value] : it->items()) {
+            out.emplace(name, value.get<std::string>());
+        }
+    }
+    return out;
+}
+
+/// Read an array of strings at `key`. Absent / null become an empty vector
+/// (Docker emits `null` for an empty Entrypoint / RepoTags / ...).
+std::vector<std::string> read_string_array(const nlohmann::json& json, const char* key) {
+    std::vector<std::string> out;
+    if (const auto it = json.find(key); it != json.end() && it->is_array()) {
+        for (const auto& value : *it) {
+            out.push_back(value.get<std::string>());
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -301,15 +327,88 @@ VolumeInspect parse_volume_inspect(const std::string& body) {
         info.mountpoint = json.value("Mountpoint", std::string{});
         info.scope = json.value("Scope", std::string{});
 
-        if (const auto labels = json.find("Labels"); labels != json.end() && labels->is_object()) {
-            for (const auto& [key, value] : labels->items()) {
-                info.labels.emplace(key, value.get<std::string>());
+        info.labels = read_string_map(json, "Labels");
+        info.options = read_string_map(json, "Options");
+
+        return info;
+    });
+}
+
+NetworkInspect parse_network_inspect(const std::string& body) {
+    return guard_parse("inspect_network", body, [&] {
+        const nlohmann::json json = nlohmann::json::parse(body);
+
+        NetworkInspect info;
+        info.id = json.value("Id", std::string{});
+        info.name = json.value("Name", std::string{});
+        info.driver = json.value("Driver", std::string{});
+        info.scope = json.value("Scope", std::string{});
+        info.internal = json.value("Internal", false);
+        info.attachable = json.value("Attachable", false);
+        info.enable_ipv6 = json.value("EnableIPv6", false);
+        info.options = read_string_map(json, "Options");
+        info.labels = read_string_map(json, "Labels");
+
+        if (const auto ipam = json.find("IPAM"); ipam != json.end() && ipam->is_object()) {
+            if (const auto config = ipam->find("Config");
+                config != ipam->end() && config->is_array()) {
+                for (const auto& pool : *config) {
+                    if (!pool.is_object()) {
+                        continue;
+                    }
+                    NetworkIpamPool parsed;
+                    parsed.subnet = pool.value("Subnet", std::string{});
+                    parsed.gateway = pool.value("Gateway", std::string{});
+                    info.ipam_pools.push_back(std::move(parsed));
+                }
             }
         }
-        if (const auto options = json.find("Options");
-            options != json.end() && options->is_object()) {
-            for (const auto& [key, value] : options->items()) {
-                info.options.emplace(key, value.get<std::string>());
+
+        if (const auto containers = json.find("Containers");
+            containers != json.end() && containers->is_object()) {
+            for (const auto& [id, endpoint] : containers->items()) {
+                NetworkEndpoint parsed;
+                if (endpoint.is_object()) {
+                    parsed.name = endpoint.value("Name", std::string{});
+                    parsed.endpoint_id = endpoint.value("EndpointID", std::string{});
+                    parsed.mac_address = endpoint.value("MacAddress", std::string{});
+                    parsed.ipv4_address = endpoint.value("IPv4Address", std::string{});
+                    parsed.ipv6_address = endpoint.value("IPv6Address", std::string{});
+                }
+                info.containers.emplace(id, std::move(parsed));
+            }
+        }
+
+        return info;
+    });
+}
+
+ImageInspect parse_image_inspect(const std::string& body) {
+    return guard_parse("inspect_image", body, [&] {
+        const nlohmann::json json = nlohmann::json::parse(body);
+
+        ImageInspect info;
+        info.id = json.value("Id", std::string{});
+        info.repo_tags = read_string_array(json, "RepoTags");
+        info.repo_digests = read_string_array(json, "RepoDigests");
+        info.created = json.value("Created", std::string{});
+        info.architecture = json.value("Architecture", std::string{});
+        info.os = json.value("Os", std::string{});
+        info.size = json.value("Size", std::int64_t{0});
+
+        if (const auto config = json.find("Config"); config != json.end() && config->is_object()) {
+            info.labels = read_string_map(*config, "Labels");
+            info.env = read_string_array(*config, "Env");
+            info.cmd = read_string_array(*config, "Cmd");
+            info.entrypoint = read_string_array(*config, "Entrypoint");
+            info.working_dir = config->value("WorkingDir", std::string{});
+            info.user = config->value("User", std::string{});
+            if (const auto ports = config->find("ExposedPorts");
+                ports != config->end() && ports->is_object()) {
+                // An object whose KEYS are the ports ("6379/tcp": {}).
+                for (const auto& item : ports->items()) {
+                    info.exposed_ports.push_back(item.key());
+                }
             }
         }
 
