@@ -4,6 +4,7 @@
 
 #include "testcontainers/Error.hpp"
 
+#include <bit>
 #include <cctype>
 #include <charconv>
 #include <cstdint>
@@ -110,10 +111,6 @@ constexpr std::uint32_t kSha256K[64] = {
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 };
 
-constexpr std::uint32_t rotr(std::uint32_t x, std::uint32_t n) {
-    return (x >> n) | (x << (32 - n));
-}
-
 } // namespace
 
 std::string sha256_hex(const std::string& data) {
@@ -143,18 +140,20 @@ std::string sha256_hex(const std::string& data) {
                    (static_cast<std::uint32_t>(b2) << 8) | static_cast<std::uint32_t>(b3);
         }
         for (int i = 16; i < 64; ++i) {
-            const std::uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-            const std::uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            const std::uint32_t s0 =
+                std::rotr(w[i - 15], 7) ^ std::rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const std::uint32_t s1 =
+                std::rotr(w[i - 2], 17) ^ std::rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
             w[i] = w[i - 16] + s0 + w[i - 7] + s1;
         }
 
         std::uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
         std::uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
         for (int i = 0; i < 64; ++i) {
-            const std::uint32_t s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+            const std::uint32_t s1 = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
             const std::uint32_t ch = (e & f) ^ (~e & g);
             const std::uint32_t t1 = hh + s1 + ch + kSha256K[i] + w[i];
-            const std::uint32_t s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+            const std::uint32_t s0 = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
             const std::uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
             const std::uint32_t t2 = s0 + maj;
             hh = g;

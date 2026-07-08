@@ -11,6 +11,7 @@
 
 #include <boost/asio/error.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/core/string.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/optional.hpp>
 
@@ -27,19 +28,6 @@ namespace testcontainers {
 namespace {
 
 namespace http = boost::beast::http;
-
-bool iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) !=
-            std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
 
 /// Percent-encode a query-parameter value (leaves unreserved chars and '/').
 std::string url_encode(std::string_view value) {
@@ -164,7 +152,7 @@ void read_ok_header(docker::ITransport& transport, docker::TransportStream& stre
 
 std::string Response::header(std::string_view name) const {
     for (const auto& [key, value] : headers) {
-        if (iequals(key, name)) {
+        if (boost::beast::iequals(key, name)) {
             return value;
         }
     }
