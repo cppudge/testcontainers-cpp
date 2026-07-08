@@ -33,47 +33,24 @@ GenericImage& GenericImage::with_network(const Network& network) {
     return with_network(network.name());
 }
 
-CreateContainerSpec GenericImage::build_spec() const {
-    // Start from the embedded spec — it already carries every verbatim create
-    // field (cmd, mounts, labels, host-config knobs, network, name, platform, …).
-    CreateContainerSpec spec = spec_;
+ContainerRequest GenericImage::to_request() const {
+    // The embedded request already carries everything except the two fields
+    // translated lazily: the image reference and env. Patch them into a COPY —
+    // the builder stays reusable and repeated snapshots must not accumulate.
+    ContainerRequest request = request_;
 
     // Resolve the effective image reference: a custom substitutor overrides the
     // default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX).
     const std::string raw_ref = image_ + ":" + tag_;
-    spec.image = substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
+    request.spec.image =
+        substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
 
     for (const auto& [key, value] : env_) {
         // Build in place: chained + would allocate a temporary per entry.
-        std::string& entry = spec.env.emplace_back(key);
+        std::string& entry = request.spec.env.emplace_back(key);
         entry += '=';
         entry += value;
     }
-    for (const ContainerPort& p : exposed_ports_) {
-        spec.exposed_ports.push_back(to_string(p));
-    }
-    // Let Docker assign host ports for everything we expose.
-    spec.publish_all_ports = !exposed_ports_.empty();
-
-    return spec;
-}
-
-ContainerRequest GenericImage::to_request() const {
-    ContainerRequest request;
-    request.spec = build_spec();
-    request.exposed_ports = exposed_ports_;
-    request.copy_to_sources = copy_to_sources_;
-    request.host_access_ports = host_access_ports_;
-    request.waits = waits_;
-    request.startup_timeout = startup_timeout_;
-    request.registry_auth = registry_auth_;
-    request.pull_policy = pull_policy_;
-    request.reuse = reuse_;
-    request.created_hooks = created_hooks_;
-    request.starting_hooks = starting_hooks_;
-    request.started_hooks = started_hooks_;
-    request.stopping_hooks = stopping_hooks_;
-    request.startup_attempts = startup_attempts_;
     return request;
 }
 

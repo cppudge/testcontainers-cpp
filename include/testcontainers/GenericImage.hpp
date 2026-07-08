@@ -32,14 +32,16 @@ class Network;
 /// consume-self, no use-after-move. A single unqualified overload chains on both
 /// a named lvalue and a temporary (`GenericImage("redis","7.2").with_*()...`).
 ///
-/// The "create" fields (command, mounts, labels, host-config knobs, …) are held
-/// directly in an embedded `CreateContainerSpec spec_`, so a new create option is
-/// added in one place (a setter + getter forwarding to `spec_`) without a
-/// parallel private field and a hand-written copy in `start()`. Only the fields
-/// that need real translation before create — the image reference (resolve +
-/// substitution), env (`pair` → "KEY=VALUE"), and exposed ports (`ContainerPort`
-/// → "6379/tcp" + publish-all) — are kept as separate domain fields, alongside
-/// the orchestration-only state (waits, copy-to sources, hooks, reuse, …).
+/// The whole configuration is held directly in an embedded `ContainerRequest
+/// request_` — create fields in `request_.spec`, the orchestration state
+/// (waits, copy-to sources, hooks, reuse, …) beside them — so a new option is
+/// added in one place (a setter + getter forwarding to `request_`) without a
+/// parallel private field and a hand-written copy in `to_request()`. Exposed
+/// ports are rendered into the spec as they are declared, keeping the
+/// typed/string/publish-all trio consistent by construction. Only the fields
+/// whose translation must wait until `start()` — the image reference (resolve
+/// + substitution) and env (`pair` → "KEY=VALUE"; the pair form backs the
+/// `env()` getter) — are kept as separate domain fields.
 class GenericImage {
 public:
     /// Construct from an image name and tag.
@@ -87,7 +89,11 @@ public:
     // --- In-place builders (single overload; chains on lvalues and temporaries) ---
 
     GenericImage& with_exposed_port(ContainerPort p) {
-        exposed_ports_.push_back(p);
+        // Rendered into the spec right away, so the typed/string/publish-all
+        // port trio stays consistent by construction.
+        request_.exposed_ports.push_back(p);
+        request_.spec.exposed_ports.push_back(to_string(p));
+        request_.spec.publish_all_ports = true;
         return *this;
     }
 
@@ -97,27 +103,27 @@ public:
     }
 
     GenericImage& with_cmd(std::vector<std::string> cmd) {
-        spec_.cmd = std::move(cmd);
+        request_.spec.cmd = std::move(cmd);
         return *this;
     }
 
     GenericImage& with_entrypoint(std::vector<std::string> entrypoint) {
-        spec_.entrypoint = std::move(entrypoint);
+        request_.spec.entrypoint = std::move(entrypoint);
         return *this;
     }
 
     GenericImage& with_working_dir(std::string working_dir) {
-        spec_.working_dir = std::move(working_dir);
+        request_.spec.working_dir = std::move(working_dir);
         return *this;
     }
 
     GenericImage& with_user(std::string user) {
-        spec_.user = std::move(user);
+        request_.spec.user = std::move(user);
         return *this;
     }
 
     GenericImage& with_privileged(bool privileged = true) {
-        spec_.privileged = privileged;
+        request_.spec.privileged = privileged;
         return *this;
     }
 
@@ -129,7 +135,7 @@ public:
     /// Leave unset on Linux daemons — they REJECT any non-default value at
     /// create time ("Invalid isolation: ... Unix only supports 'default'").
     GenericImage& with_isolation(std::string isolation) {
-        spec_.isolation = std::move(isolation);
+        request_.spec.isolation = std::move(isolation);
         return *this;
     }
 
@@ -138,12 +144,12 @@ public:
     /// `Container::logs()` / `follow_logs()` read it without demuxing. Note a TTY
     /// also rewrites `\n` to `\r\n`.
     GenericImage& with_tty(bool tty = true) {
-        spec_.tty = tty;
+        request_.spec.tty = tty;
         return *this;
     }
 
     GenericImage& with_mount(Mount mount) {
-        spec_.mounts.push_back(std::move(mount));
+        request_.spec.mounts.push_back(std::move(mount));
         return *this;
     }
 
@@ -153,34 +159,34 @@ public:
     /// the image; a directory source creates the target chain itself. Add
     /// several to copy multiple entries.
     GenericImage& with_copy_to(CopyToContainer source) {
-        copy_to_sources_.push_back(std::move(source));
+        request_.copy_to_sources.push_back(std::move(source));
         return *this;
     }
 
     GenericImage& with_label(std::string key, std::string value) {
-        spec_.labels.emplace_back(std::move(key), std::move(value));
+        request_.spec.labels.emplace_back(std::move(key), std::move(value));
         return *this;
     }
 
     GenericImage& with_wait(WaitFor w) {
-        waits_.push_back(std::move(w));
+        request_.waits.push_back(std::move(w));
         return *this;
     }
 
     GenericImage& with_startup_timeout(std::chrono::milliseconds timeout) {
-        startup_timeout_ = timeout;
+        request_.startup_timeout = timeout;
         return *this;
     }
 
     GenericImage& with_healthcheck(Healthcheck hc) {
-        spec_.healthcheck = std::move(hc);
+        request_.spec.healthcheck = std::move(hc);
         return *this;
     }
 
     /// Join the container to a user-defined network (`HostConfig.NetworkMode`).
     /// Containers on the same network resolve each other by container name.
     GenericImage& with_network(std::string network) {
-        spec_.network = std::move(network);
+        request_.spec.network = std::move(network);
         return *this;
     }
 
@@ -194,7 +200,7 @@ public:
     /// addition to its container name. Requires `with_network(...)` to take
     /// effect; aliases without a target network are ignored.
     GenericImage& with_network_alias(std::string alias) {
-        spec_.network_aliases.push_back(std::move(alias));
+        request_.spec.network_aliases.push_back(std::move(alias));
         return *this;
     }
 
@@ -204,14 +210,14 @@ public:
     /// address (e.g. one created via `Network::builder().with_subnet(...)`);
     /// without a target network there is no endpoint to pin, so this is ignored.
     GenericImage& with_static_ipv4(std::string ip) {
-        spec_.static_ipv4 = std::move(ip);
+        request_.spec.static_ipv4 = std::move(ip);
         return *this;
     }
 
     /// Set an explicit container name (passed as `?name=` on create). Useful so
     /// peers on the same network can resolve this container by name.
     GenericImage& with_container_name(std::string name) {
-        spec_.name = std::move(name);
+        request_.spec.name = std::move(name);
         return *this;
     }
 
@@ -219,51 +225,51 @@ public:
     /// "windows/amd64"), sent as the `?platform=` query on create. Useful to
     /// select a Windows image variant on a Windows-containers engine.
     GenericImage& with_platform(std::string platform) {
-        spec_.platform = std::move(platform);
+        request_.spec.platform = std::move(platform);
         return *this;
     }
 
     /// Supply explicit registry credentials for pulling a private image. When
     /// unset, credentials are auto-resolved from the Docker config (if any).
     GenericImage& with_registry_auth(RegistryAuth auth) {
-        registry_auth_ = std::move(auth);
+        request_.registry_auth = std::move(auth);
         return *this;
     }
 
     /// Set a hard memory limit in bytes (`HostConfig.Memory`).
     GenericImage& with_memory_limit(std::int64_t bytes) {
-        spec_.memory_bytes = bytes;
+        request_.spec.memory_bytes = bytes;
         return *this;
     }
 
     /// Set the size of `/dev/shm` in bytes (`HostConfig.ShmSize`).
     GenericImage& with_shm_size(std::int64_t bytes) {
-        spec_.shm_size_bytes = bytes;
+        request_.spec.shm_size_bytes = bytes;
         return *this;
     }
 
     /// Add a process resource limit (`HostConfig.Ulimits`), e.g.
     /// `with_ulimit("nofile", 1024, 2048)`. Add several to set multiple limits.
     GenericImage& with_ulimit(std::string name, std::int64_t soft, std::int64_t hard) {
-        spec_.ulimits.push_back(Ulimit{std::move(name), soft, hard});
+        request_.spec.ulimits.push_back(Ulimit{std::move(name), soft, hard});
         return *this;
     }
 
     /// Add a Linux capability to grant (`HostConfig.CapAdd`), e.g. "NET_ADMIN".
     GenericImage& with_cap_add(std::string cap) {
-        spec_.cap_add.push_back(std::move(cap));
+        request_.spec.cap_add.push_back(std::move(cap));
         return *this;
     }
 
     /// Add a Linux capability to drop (`HostConfig.CapDrop`).
     GenericImage& with_cap_drop(std::string cap) {
-        spec_.cap_drop.push_back(std::move(cap));
+        request_.spec.cap_drop.push_back(std::move(cap));
         return *this;
     }
 
     /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
     GenericImage& with_extra_host(const std::string& host, const std::string& ip) {
-        spec_.extra_hosts.push_back(host + ":" + ip);
+        request_.spec.extra_hosts.push_back(host + ":" + ip);
         return *this;
     }
 
@@ -283,7 +289,7 @@ public:
     /// `TC_HOST_PORT_FORWARDING=OFF` (a build without libssh2/OpenSSL),
     /// start() throws a DockerError naming that option.
     GenericImage& with_exposed_host_port(std::uint16_t port) {
-        host_access_ports_.push_back(port);
+        request_.host_access_ports.push_back(port);
         return *this;
     }
 
@@ -292,7 +298,7 @@ public:
     /// This is the escape hatch for any field not exposed as a typed setter: nest
     /// HostConfig fields under `"HostConfig"`. `json_object` must be a JSON object.
     GenericImage& with_create_body_patch(std::string json_object) {
-        spec_.create_body_patch = std::move(json_object);
+        request_.spec.create_body_patch = std::move(json_object);
         return *this;
     }
 
@@ -300,7 +306,7 @@ public:
     /// lazy behavior (pull only on a create 404); `Always` pulls before create
     /// even when the image is already present locally.
     GenericImage& with_image_pull_policy(ImagePullPolicy policy) {
-        pull_policy_ = policy;
+        request_.pull_policy = policy;
         return *this;
     }
 
@@ -313,7 +319,7 @@ public:
     /// survives across runs). When reuse is not enabled globally this is a no-op:
     /// `start()` behaves exactly like a normal (reaped, auto-removed) container.
     GenericImage& with_reuse(bool reuse = true) {
-        reuse_ = reuse;
+        request_.reuse = reuse;
         return *this;
     }
 
@@ -331,7 +337,7 @@ public:
     /// in registration order. The hook receives the public DockerClient and the
     /// container id, so it can inspect/exec/copy via the existing API.
     GenericImage& with_created_hook(LifecycleHook hook) {
-        created_hooks_.push_back(std::move(hook));
+        request_.created_hooks.push_back(std::move(hook));
         return *this;
     }
 
@@ -339,7 +345,7 @@ public:
     /// is started. A throwing starting hook aborts start() and the partial
     /// container is cleaned up. Add several to run them in registration order.
     GenericImage& with_starting_hook(LifecycleHook hook) {
-        starting_hooks_.push_back(std::move(hook));
+        request_.starting_hooks.push_back(std::move(hook));
         return *this;
     }
 
@@ -348,7 +354,7 @@ public:
     /// started hook aborts start() and the container is cleaned up. Add several
     /// to run them in registration order.
     GenericImage& with_started_hook(LifecycleHook hook) {
-        started_hooks_.push_back(std::move(hook));
+        request_.started_hooks.push_back(std::move(hook));
         return *this;
     }
 
@@ -358,7 +364,7 @@ public:
     /// persistent (reusable) handle's drop. A throwing stopping hook is swallowed
     /// (teardown is best-effort). Add several to run them in registration order.
     GenericImage& with_stopping_hook(LifecycleHook hook) {
-        stopping_hooks_.push_back(std::move(hook));
+        request_.stopping_hooks.push_back(std::move(hook));
         return *this;
     }
 
@@ -366,7 +372,7 @@ public:
     /// fails (each retry creates a brand-new container). Values < 1 are treated
     /// as 1 (a single attempt, no retry).
     GenericImage& with_startup_attempts(int n) {
-        startup_attempts_ = n < 1 ? 1 : n;
+        request_.startup_attempts = n < 1 ? 1 : n;
         return *this;
     }
 
@@ -374,60 +380,87 @@ public:
 
     const std::string& image() const noexcept { return image_; }
     const std::string& tag() const noexcept { return tag_; }
-    const std::vector<ContainerPort>& exposed_ports() const noexcept { return exposed_ports_; }
+    const std::vector<ContainerPort>& exposed_ports() const noexcept {
+        return request_.exposed_ports;
+    }
     const std::vector<std::pair<std::string, std::string>>& env() const noexcept { return env_; }
-    const std::vector<std::string>& cmd() const noexcept { return spec_.cmd; }
-    const std::vector<std::string>& entrypoint() const noexcept { return spec_.entrypoint; }
-    const std::optional<std::string>& working_dir() const noexcept { return spec_.working_dir; }
-    const std::optional<std::string>& user() const noexcept { return spec_.user; }
-    bool privileged() const noexcept { return spec_.privileged; }
-    const std::optional<std::string>& isolation() const noexcept { return spec_.isolation; }
-    bool tty() const noexcept { return spec_.tty; }
-    const std::vector<Mount>& mounts() const noexcept { return spec_.mounts; }
+    const std::vector<std::string>& cmd() const noexcept { return request_.spec.cmd; }
+    const std::vector<std::string>& entrypoint() const noexcept { return request_.spec.entrypoint; }
+    const std::optional<std::string>& working_dir() const noexcept {
+        return request_.spec.working_dir;
+    }
+    const std::optional<std::string>& user() const noexcept { return request_.spec.user; }
+    bool privileged() const noexcept { return request_.spec.privileged; }
+    const std::optional<std::string>& isolation() const noexcept { return request_.spec.isolation; }
+    bool tty() const noexcept { return request_.spec.tty; }
+    const std::vector<Mount>& mounts() const noexcept { return request_.spec.mounts; }
     const std::vector<CopyToContainer>& copy_to_sources() const noexcept {
-        return copy_to_sources_;
+        return request_.copy_to_sources;
     }
     const std::vector<std::pair<std::string, std::string>>& labels() const noexcept {
-        return spec_.labels;
+        return request_.spec.labels;
     }
-    const std::vector<WaitFor>& waits() const noexcept { return waits_; }
-    std::chrono::milliseconds startup_timeout() const noexcept { return startup_timeout_; }
-    const std::optional<Healthcheck>& healthcheck() const noexcept { return spec_.healthcheck; }
-    const std::optional<std::string>& network() const noexcept { return spec_.network; }
+    const std::vector<WaitFor>& waits() const noexcept { return request_.waits; }
+    std::chrono::milliseconds startup_timeout() const noexcept { return request_.startup_timeout; }
+    const std::optional<Healthcheck>& healthcheck() const noexcept {
+        return request_.spec.healthcheck;
+    }
+    const std::optional<std::string>& network() const noexcept { return request_.spec.network; }
     const std::vector<std::string>& network_aliases() const noexcept {
-        return spec_.network_aliases;
+        return request_.spec.network_aliases;
     }
-    const std::optional<std::string>& static_ipv4() const noexcept { return spec_.static_ipv4; }
-    const std::optional<std::string>& container_name() const noexcept { return spec_.name; }
-    const std::optional<std::string>& platform() const noexcept { return spec_.platform; }
-    const std::optional<RegistryAuth>& registry_auth() const noexcept { return registry_auth_; }
-    const std::optional<std::int64_t>& memory_limit() const noexcept { return spec_.memory_bytes; }
-    const std::optional<std::int64_t>& shm_size() const noexcept { return spec_.shm_size_bytes; }
-    const std::vector<Ulimit>& ulimits() const noexcept { return spec_.ulimits; }
-    const std::vector<std::string>& cap_add() const noexcept { return spec_.cap_add; }
-    const std::vector<std::string>& cap_drop() const noexcept { return spec_.cap_drop; }
-    const std::vector<std::string>& extra_hosts() const noexcept { return spec_.extra_hosts; }
+    const std::optional<std::string>& static_ipv4() const noexcept {
+        return request_.spec.static_ipv4;
+    }
+    const std::optional<std::string>& container_name() const noexcept { return request_.spec.name; }
+    const std::optional<std::string>& platform() const noexcept { return request_.spec.platform; }
+    const std::optional<RegistryAuth>& registry_auth() const noexcept {
+        return request_.registry_auth;
+    }
+    const std::optional<std::int64_t>& memory_limit() const noexcept {
+        return request_.spec.memory_bytes;
+    }
+    const std::optional<std::int64_t>& shm_size() const noexcept {
+        return request_.spec.shm_size_bytes;
+    }
+    const std::vector<Ulimit>& ulimits() const noexcept { return request_.spec.ulimits; }
+    const std::vector<std::string>& cap_add() const noexcept { return request_.spec.cap_add; }
+    const std::vector<std::string>& cap_drop() const noexcept { return request_.spec.cap_drop; }
+    const std::vector<std::string>& extra_hosts() const noexcept {
+        return request_.spec.extra_hosts;
+    }
     const std::vector<std::uint16_t>& exposed_host_ports() const noexcept {
-        return host_access_ports_;
+        return request_.host_access_ports;
     }
-    const std::string& create_body_patch() const noexcept { return spec_.create_body_patch; }
-    ImagePullPolicy image_pull_policy() const noexcept { return pull_policy_; }
-    bool reuse() const noexcept { return reuse_; }
+    const std::string& create_body_patch() const noexcept {
+        return request_.spec.create_body_patch;
+    }
+    ImagePullPolicy image_pull_policy() const noexcept { return request_.pull_policy; }
+    bool reuse() const noexcept { return request_.reuse; }
     const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
         return substitutor_;
     }
-    const std::vector<LifecycleHook>& created_hooks() const noexcept { return created_hooks_; }
-    const std::vector<LifecycleHook>& starting_hooks() const noexcept { return starting_hooks_; }
-    const std::vector<LifecycleHook>& started_hooks() const noexcept { return started_hooks_; }
-    const std::vector<LifecycleHook>& stopping_hooks() const noexcept { return stopping_hooks_; }
-    int startup_attempts() const noexcept { return startup_attempts_; }
+    const std::vector<LifecycleHook>& created_hooks() const noexcept {
+        return request_.created_hooks;
+    }
+    const std::vector<LifecycleHook>& starting_hooks() const noexcept {
+        return request_.starting_hooks;
+    }
+    const std::vector<LifecycleHook>& started_hooks() const noexcept {
+        return request_.started_hooks;
+    }
+    const std::vector<LifecycleHook>& stopping_hooks() const noexcept {
+        return request_.stopping_hooks;
+    }
+    int startup_attempts() const noexcept { return request_.startup_attempts; }
 
     /// Snapshot this builder into a self-contained `ContainerRequest` — the
     /// fully-translated create spec (resolved/substituted image reference, env
-    /// joined to "KEY=VALUE", ports rendered to "6379/tcp" + publish-all) plus
-    /// every run-time input (waits, copy-to sources, hooks, pull/reuse/retry
-    /// policy). `start()` is exactly `run(to_request())`; call this directly to
-    /// tweak the request or to `run()` it on a custom DockerClient.
+    /// joined to "KEY=VALUE"; exposed ports were already rendered as declared)
+    /// plus every run-time input (waits, copy-to sources, hooks,
+    /// pull/reuse/retry policy). `start()` is exactly `run(to_request())`; call
+    /// this directly to tweak the request or to `run()` it on a custom
+    /// DockerClient.
     ContainerRequest to_request() const;
 
     /// Create, start, and wait for a container from this image, returning a RAII
@@ -436,38 +469,17 @@ public:
     Container start() const;
 
 private:
-    /// Assemble the create spec for this image: a copy of the embedded `spec_`
-    /// (which already holds every verbatim create field) with the fields that
-    /// need translation filled in — the resolved/substituted image reference,
-    /// env joined to "KEY=VALUE", and exposed ports rendered to "6379/tcp" with
-    /// publish-all turned on. Session/reuse labels are layered on by `run()`.
-    CreateContainerSpec build_spec() const;
-
     std::string image_;
     std::string tag_;
-    /// Domain ports (declared order); rendered at start().
-    std::vector<ContainerPort> exposed_ports_;
-    /// Domain env; joined to "K=V" at start().
+    /// Domain env; joined to "K=V" at start() (the pair form backs `env()`).
     std::vector<std::pair<std::string, std::string>> env_;
-
-    /// Every verbatim create field (cmd, entrypoint, mounts, labels, host-config
-    /// knobs, network, name, platform, …). Setters write here, getters read here,
-    /// and start() copies it as the base of the create spec.
-    CreateContainerSpec spec_;
-
-    std::vector<CopyToContainer> copy_to_sources_;
-    std::vector<std::uint16_t> host_access_ports_; ///< host ports exposed via the sshd sidecar
-    std::vector<WaitFor> waits_;
-    std::chrono::milliseconds startup_timeout_{std::chrono::seconds(60)};
-    std::optional<RegistryAuth> registry_auth_;
-    ImagePullPolicy pull_policy_ = ImagePullPolicy::Default;
     std::function<std::string(const std::string&)> substitutor_;
-    bool reuse_ = false;
-    std::vector<LifecycleHook> created_hooks_;  ///< fired after create, before copy/start
-    std::vector<LifecycleHook> starting_hooks_; ///< fired after copy, before start
-    std::vector<LifecycleHook> started_hooks_;  ///< fired after wait-until-ready
-    std::vector<LifecycleHook> stopping_hooks_; ///< fired by the Container on teardown
-    int startup_attempts_ = 1;                  ///< create→start→wait retry count (>=1)
+
+    /// The whole remaining configuration, held in the exact shape `start()`
+    /// consumes: create fields in `request_.spec`, orchestration state beside
+    /// them. Setters write here, getters read here; `to_request()` copies it
+    /// and patches in the two lazily-translated fields (image reference, env).
+    ContainerRequest request_;
 };
 
 } // namespace testcontainers
