@@ -16,9 +16,9 @@ CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 > the Windows job drives real Windows containers — build/volumes/networks/exec/copy/ports/
 > waits/lifecycle each have a Windows mirror suite). CI also gates on `-Wall -Wextra`//W4
 > as errors, pinned clang-format + clang-tidy, an ASan+UBSan run of both test suites, and
-> CodeQL. The feature reference
-> with known limits: [`docs/06`](docs/06-feature-notes.md). End-to-end TLS against a real
-> remote daemon is the main unverified gap.
+> CodeQL. The feature reference with known limits: [`docs/06`](docs/06-feature-notes.md);
+> the per-API engine-mode coverage matrix: [`docs/07`](docs/07-public-api-test-coverage.md).
+> End-to-end TLS against a real remote daemon is the main unverified gap.
 
 This is a from-scratch rewrite. A previous attempt (`testcontainers-cxx/`, in this repo for
 reference) wrapped the Rust `testcontainers` library over a cxx FFI bridge; this project drops
@@ -154,9 +154,13 @@ Container app = GenericImage("my/app", "latest")
 Containers and networks are removed when their handle goes out of scope; `keep()` on either
 handle releases removal ownership (`keep(false)` re-arms it, so a "keep my resources" debug
 flag forwards in one call). As a crash-safety net, a
-[Ryuk](https://github.com/testcontainers/moby-ryuk) sidecar reaps everything tagged with the run's
-session label if the process dies (e.g. `SIGKILL`, where destructors never run). Opt out with
-`TESTCONTAINERS_RYUK_DISABLED=true`. Runnable examples live in [`tests/integration/`](tests/integration).
+[Ryuk](https://github.com/testcontainers/moby-ryuk) sidecar — on Linux engines only — reaps
+everything tagged with the run's session label if the process dies (e.g. `SIGKILL`, where
+destructors never run); opt out with `TESTCONTAINERS_RYUK_DISABLED=true`. To share one
+container across test runs there is `with_reuse` (find-or-create by a config hash, gated on
+`TESTCONTAINERS_REUSE_ENABLE`); reused containers are deliberately neither auto-removed nor
+reaped — prune them externally. Runnable examples live in
+[`tests/integration/`](tests/integration).
 
 ## Tech stack
 
@@ -220,77 +224,6 @@ TODO.md                      actionable backlog (implemented features + limits: 
 _research/testcontainers-rs/ cloned Rust reference sources (gitignored)
 testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignored)
 ```
-
-## Roadmap
-
-- [x] Architecture analysis of testcontainers-rs
-- [x] Dependency selection (Conan 2 / Boost.Beast)
-- [x] Native interface design (audit of the FFI fork)
-- [x] **CMake + Conan project skeleton** (smoke build links all deps)
-- [x] **`DockerClient`**: transport abstraction (unix socket / Windows named pipe / TCP) +
-      Docker host resolution + `GET /_ping` (verified against Docker Desktop over named pipe).
-      _TLS (https) transport still pending._
-- [x] **Core container endpoints**: pull / create (+ lazy pull on 404) / start / inspect /
-      stop / remove, with `ApiMapping` (types ↔ Docker JSON). Covered by 21 unit tests +
-      3 integration tests (real container lifecycle, skipped if no daemon).
-- [x] **Multiplexed log-stream parser**; container logs + `GET /containers/{id}/logs`
-      (incremental demuxer handling split headers/payloads, `DockerClient::logs()`).
-- [x] Value types (`ContainerPort`, `WaitFor`) & `GenericImage`/`Container` builder; `start()` lifecycle
-- [x] Host-port discovery from `NetworkSettings.Ports` (`Container::get_host_port`)
-- [x] Wait strategies: log message, fixed duration, **exit (optional code), healthcheck (`State.Health`),
-      and HTTP probe (host-port GET)**, run sequentially under a shared 60s startup timeout
-- [x] **MVP**: `GenericImage("redis","7.2")` up → connect → auto-remove
-- [x] **Richer container config**: entrypoint, working dir, user, privileged, and a `Mount`
-      value type (bind / volume / tmpfs) mapped into the create body + `HostConfig`
-- [x] **`exec`** (run a command in a running container, capturing stdout/stderr + exit code)
-      and **user-defined networks** (`Network` RAII handle; `GenericImage::with_network` /
-      `with_container_name` so peers resolve each other by name)
-- [x] **Ryuk resource reaper** (crash-safety net): a process-wide session id +
-      `org.testcontainers.{managed-by,session-id}` labels on every created container/network;
-      a single `testcontainers/ryuk:0.11.0` sidecar (docker.sock bind-mounted, 8080/tcp published)
-      holds a persistent TCP control connection and reaps everything matching the session label
-      when the process dies (covers `SIGKILL`/crash where C++ destructors don't run). Opt out via
-      `TESTCONTAINERS_RYUK_DISABLED=true`.
-- [x] **Registry authentication** (pull private images): `X-Registry-Auth` on
-      `POST /images/create`, sent for both explicit credentials
-      (`GenericImage::with_registry_auth` / `DockerClient::pull_image(image, auth)`)
-      and auto-resolved ones from the Docker config (`DOCKER_AUTH_CONFIG` →
-      `$DOCKER_CONFIG/config.json` → `~/.docker/config.json`). Registry resolution
-      follows the Docker CLI heuristic (`ghcr.io/...`→`ghcr.io`,
-      `confluentinc/cp-kafka`→`index.docker.io`), with a small standalone base64
-      codec. Credential helpers (`credsStore`/`credHelpers`) are not yet
-      supported (no shelling out). Covered by 17 unit tests.
-- [x] **Copy files/data into containers**: a `CopyToContainer` value type
-      (`host_file` / `content` / recursive `host_dir` + `with_mode`) PUT as a tar
-      to `PUT /containers/{id}/archive?path=/` (libarchive USTAR, built
-      in-memory; Windows drive-rooted targets like `C:\dir\x` are normalized).
-      Supported both at creation (`GenericImage::with_copy_to`, applied
-      create→copy→start so a copy failure removes the container) and into a
-      running container (`Container::copy_to`).
-- [x] **Windows-container support** (parity with testcontainers-dotnet): daemon-OS
-      detection (`DockerClient::server_os()` / `is_windows_engine()` via `GET /version`,
-      cached process-wide), a free-form create `platform` (`GenericImage::with_platform`,
-      e.g. `windows/amd64` → `?platform=`), and **skipping Ryuk on the Windows engine**
-      (the Linux Ryuk image cannot run there — so there is **no crash-safe reaping on
-      Windows**; cleanup falls back to RAII removal + `AutoRemove`). Integration tests are
-      engine-aware: Linux-image tests skip in Windows-containers mode and vice versa (see
-      `tests/integration/EngineGuard.hpp`), and every cross-engine feature has a Windows
-      mirror suite (`WindowsBuildImage` / `WindowsVolumes` / `WindowsNetworks` / `WindowsExec`
-      / `WindowsCopy` / `WindowsPortGetters` / `WindowsWaitStrategies` / `WindowsLifecycle` +
-      the `WindowsContainer` smoke suite) running real `mcr.microsoft.com/windows/nanoserver`
-      (and, for the in-container TCP listener, `servercore`) containers end to end.
-      `with_isolation` ("process"/"hyperv") maps to `HostConfig.Isolation` for Windows
-      daemons. Covered by 7 unit tests + 34 Windows-mode integration tests. Engine-mode
-      coverage matrix: [`docs/07`](docs/07-public-api-test-coverage.md).
-- [x] **Everything since** — transport I/O deadlines + structured errors, TLS transport, full
-      Docker host resolution, follow/streaming logs, exec stdin/tty/streaming, TTY containers,
-      lifecycle hooks + startup retry, build-from-Dockerfile, image pull policy + name
-      substitution, credential helpers, container reuse, named volumes, richer networks,
-      Docker Compose (three client modes), the `ContainerRequest`/`Runner` split, scoped
-      keep-alive sessions, and host-port exposure (`with_exposed_host_port`:
-      `testcontainers/sshd` sidecar + libssh2 remote forwards, so containers reach host
-      services at `host.testcontainers.internal:<port>`). Current state and known limits per
-      feature: [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
 
 ## Build
 
