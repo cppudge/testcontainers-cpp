@@ -1,5 +1,6 @@
 #include "docker/Tar.hpp"
 
+#include "FileRead.hpp"
 #include "testcontainers/Error.hpp"
 
 #include <archive.h>
@@ -9,8 +10,6 @@
 #include <cctype>
 #include <cstddef>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -28,19 +27,6 @@ la_ssize_t append_to_string(struct archive* /*a*/, void* client_data, const void
     auto* out = static_cast<std::string*>(client_data);
     out->append(static_cast<const char*>(buffer), length);
     return static_cast<la_ssize_t>(length);
-}
-
-/// Read the whole host file into a string (binary), or throw DockerError.
-std::string read_host_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw DockerError("copy_to_container: cannot open host file '" + path.string() + "'");
-    }
-    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        throw DockerError("copy_to_container: failed reading host file '" + path.string() + "'");
-    }
-    return data;
 }
 
 /// One entry queued for a tar archive (a regular file or a directory).
@@ -158,7 +144,9 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
                 // it still lands as a (possibly empty) directory.
                 out.push_back(PendingEntry{name + "/", "", 0755, true});
             } else if (item.is_regular_file()) {
-                out.push_back(PendingEntry{name, read_host_file(item.path()), file_mode, false});
+                out.push_back(
+                    PendingEntry{name, detail::read_file_or_throw(item.path(), "copy_to_container"),
+                                 file_mode, false});
             }
             // Anything else (sockets, FIFOs, dangling symlinks) is skipped.
         }
@@ -203,7 +191,9 @@ std::string build_tar(const CopyToContainer& source) {
         entries = walk_host_dir(source.host_path(), name, source.mode());
     } else {
         // The entry body: either the host file's bytes or the in-memory bytes.
-        std::string body = source.is_file() ? read_host_file(source.host_path()) : source.bytes();
+        std::string body = source.is_file()
+                               ? detail::read_file_or_throw(source.host_path(), "copy_to_container")
+                               : source.bytes();
         entries.push_back(PendingEntry{name, std::move(body), source.mode(), false});
     }
     return write_tar(entries, "copy_to_container");

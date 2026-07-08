@@ -10,13 +10,6 @@
 
 namespace testcontainers {
 
-namespace {
-
-/// Generate a unique-ish volume name like "tc-1a2b3c4d5e6f7a8b".
-std::string random_volume_name() { return "tc-" + detail::random_hex(16); }
-
-} // namespace
-
 Volume Volume::create(std::string name) {
     // Bring up the reaper first so a volume created here is reaped on a crash
     // (no-op if Ryuk is disabled).
@@ -32,7 +25,7 @@ Volume Volume::create(std::string name) {
     return Volume(std::move(client), std::move(created));
 }
 
-Volume Volume::create() { return create(random_volume_name()); }
+Volume Volume::create() { return create(detail::random_resource_name()); }
 
 Volume Volume::Builder::create() const {
     // Bring up the reaper first so a volume created here is reaped on a crash
@@ -41,7 +34,7 @@ Volume Volume::Builder::create() const {
 
     VolumeCreateSpec spec;
     // A volume always needs a name; default to a generated unique one.
-    spec.name = name_.empty() ? random_volume_name() : name_;
+    spec.name = name_.empty() ? detail::random_resource_name() : name_;
     spec.driver = driver_;
     spec.driver_opts = driver_opts_;
     spec.labels = labels_;

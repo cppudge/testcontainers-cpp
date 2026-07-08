@@ -1,16 +1,17 @@
 #include "testcontainers/docker/DockerHost.hpp"
 
+#include "Env.hpp"
+#include "FileRead.hpp"
+#include "Strings.hpp"
 #include "docker/HostResolve.hpp"
 
 #include "testcontainers/Error.hpp"
 
 #include <bit>
-#include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -18,13 +19,6 @@
 namespace testcontainers {
 
 namespace {
-
-std::string to_lower(std::string s) {
-    for (char& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
-}
 
 // Parse "host:port" (optionally followed by a path) into the host fields.
 void parse_host_port(std::string rest, std::string& hostname, std::uint16_t& port,
@@ -64,31 +58,6 @@ void parse_host_port(std::string rest, std::string& hostname, std::uint16_t& por
         }
         port = static_cast<std::uint16_t>(parsed);
     }
-}
-
-// ===== File / home-dir helpers (resolve() only) =====
-
-/// Read `path` in full; "" if absent/unreadable. Mirrors Auth.cpp's read_file.
-std::string read_text_file(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        return {};
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-/// The user's home directory (HOME, else USERPROFILE on Windows); "" if neither
-/// is set. Same precedence as Auth.cpp / Reuse.cpp.
-std::string home_dir() {
-    if (const char* h = std::getenv("HOME"); h && *h) {
-        return h;
-    }
-    if (const char* up = std::getenv("USERPROFILE"); up && *up) {
-        return up; // Windows
-    }
-    return {};
 }
 
 } // namespace
@@ -186,15 +155,7 @@ std::string sha256_hex(const std::string& data) {
 }
 
 std::optional<std::string> docker_host_from_properties(const std::string& properties_body) {
-    // Trim ASCII spaces / tabs / CR / LF from both ends; "" if all whitespace.
-    const auto trim = [](const std::string& s) -> std::string {
-        const std::size_t begin = s.find_first_not_of(" \t\r\n");
-        if (begin == std::string::npos) {
-            return {};
-        }
-        const std::size_t end = s.find_last_not_of(" \t\r\n");
-        return s.substr(begin, end - begin + 1);
-    };
+    using detail::trim;
 
     std::istringstream stream(properties_body);
     std::string line;
@@ -272,7 +233,7 @@ DockerHost DockerHost::parse(const std::string& url) {
     std::string scheme;
     std::string rest;
     if (const auto sep = url.find("://"); sep != std::string::npos) {
-        scheme = to_lower(url.substr(0, sep));
+        scheme = detail::to_lower(url.substr(0, sep));
         rest = url.substr(sep + 3);
     } else if (!url.empty() && (url.front() == '/' || url.front() == '\\')) {
         scheme = "unix"; // bare path
@@ -306,11 +267,11 @@ namespace {
 // Step 2: docker.host from ~/.testcontainers.properties. nullopt on
 // absent/unreadable/missing-key (never throws).
 std::optional<DockerHost> resolve_from_properties() {
-    const std::string home = home_dir();
+    const std::string home = detail::home_dir();
     if (home.empty()) {
         return std::nullopt;
     }
-    const std::string body = read_text_file(home + "/.testcontainers.properties");
+    const std::string body = detail::read_file(home + "/.testcontainers.properties");
     if (body.empty()) {
         return std::nullopt;
     }
@@ -330,13 +291,13 @@ std::optional<DockerHost> resolve_from_properties() {
 // "default". An empty / "default" name resolves nothing (use step 4). nullopt
 // on any missing/unreadable file (never throws).
 std::optional<DockerHost> resolve_from_context() {
-    const std::string home = home_dir();
+    const std::string home = detail::home_dir();
 
     std::string context;
     if (const char* env = std::getenv("DOCKER_CONTEXT"); env && *env) {
         context = env;
     } else if (!home.empty()) {
-        const std::string config = read_text_file(home + "/.docker/config.json");
+        const std::string config = detail::read_file(home + "/.docker/config.json");
         if (!config.empty()) {
             if (const auto current = docker::current_context_from_config(config)) {
                 context = *current;
@@ -353,7 +314,7 @@ std::optional<DockerHost> resolve_from_context() {
 
     const std::string meta_path =
         home + "/.docker/contexts/meta/" + docker::sha256_hex(context) + "/meta.json";
-    const std::string meta = read_text_file(meta_path);
+    const std::string meta = detail::read_file(meta_path);
     if (meta.empty()) {
         return std::nullopt;
     }
@@ -396,7 +357,7 @@ DockerHost DockerHost::resolve() {
             return parse("unix://" + sock);
         }
     }
-    if (const std::string home = home_dir(); !home.empty()) {
+    if (const std::string home = detail::home_dir(); !home.empty()) {
         const std::string sock = home + "/.docker/run/docker.sock";
         if (std::filesystem::exists(sock)) {
             return parse("unix://" + sock);

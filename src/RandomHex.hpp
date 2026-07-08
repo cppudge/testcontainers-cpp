@@ -22,4 +22,8 @@ inline std::string random_hex(std::size_t chars) {
     return out;
 }
 
+/// Generate a unique-ish resource name like "tc-1a2b3c4d5e6f7a8b" — the one
+/// shape shared by generated network and volume names.
+inline std::string random_resource_name() { return "tc-" + random_hex(16); }
+
 } // namespace testcontainers::detail

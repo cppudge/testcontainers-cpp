@@ -1,5 +1,7 @@
 #include "docker/Transport.hpp"
 
+#include "AsioRun.hpp"
+#include "Env.hpp"
 #include "docker/TlsConfig.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
@@ -52,31 +54,7 @@ std::chrono::milliseconds remaining(Clock::time_point deadline) {
     return left > std::chrono::milliseconds::zero() ? left : std::chrono::milliseconds::zero();
 }
 
-/// Run `ioc` until the single pending async operation marks `done` or
-/// `timeout` expires. On expiry invoke `cancel` and keep running until the
-/// handler fires anyway — it may still reference caller-owned buffers, so it
-/// must complete before this returns — then report the expiry as
-/// asio::error::timed_out (unless the operation genuinely completed while
-/// draining, in which case its real result stands). No timeout -> run to
-/// completion.
-template <class Cancel>
-void run_pending(asio::io_context& ioc, const std::optional<std::chrono::milliseconds>& timeout,
-                 const bool& done, boost::system::error_code& ec, Cancel cancel) {
-    ioc.restart();
-    if (!timeout) {
-        ioc.run();
-        return;
-    }
-    ioc.run_for(*timeout);
-    if (done) {
-        return;
-    }
-    cancel();
-    ioc.run();
-    if (!done || ec == asio::error::operation_aborted) {
-        ec = asio::error::timed_out;
-    }
-}
+using detail::run_pending;
 
 /// Deadline-bounded single I/O operation. `initiate(handler)` must start
 /// exactly one async operation on `ioc` completing with (error_code, bytes);
@@ -578,18 +556,6 @@ private:
 };
 #endif // _WIN32
 
-/// The user's home directory (HOME, else USERPROFILE on Windows); "" if neither
-/// is set. Same precedence as Auth.cpp / DockerHost.cpp.
-std::string home_dir() {
-    if (const char* h = std::getenv("HOME"); h && *h) {
-        return h;
-    }
-    if (const char* up = std::getenv("USERPROFILE"); up && *up) {
-        return up; // Windows
-    }
-    return {};
-}
-
 } // namespace
 
 TlsFiles resolve_tls_files(const std::string& cert_dir) {
@@ -611,21 +577,14 @@ std::string docker_cert_path() {
     // Docker's documented fallback: when verification is on but no explicit cert
     // path is set, look in ~/.docker.
     if (docker_tls_verify()) {
-        if (const std::string home = home_dir(); !home.empty()) {
+        if (const std::string home = detail::home_dir(); !home.empty()) {
             return (std::filesystem::path(home) / ".docker").string();
         }
     }
     return {};
 }
 
-bool docker_tls_verify() {
-    const char* value = std::getenv("DOCKER_TLS_VERIFY");
-    if (!value || !*value) {
-        return false;
-    }
-    const std::string v = value;
-    return v == "1" || v == "true" || v == "TRUE" || v == "True";
-}
+bool docker_tls_verify() { return detail::env_truthy("DOCKER_TLS_VERIFY"); }
 
 void throw_transport_error(const std::string& message, const boost::system::error_code& ec) {
     if (ec == asio::error::timed_out) {

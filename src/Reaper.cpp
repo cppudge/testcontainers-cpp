@@ -1,5 +1,7 @@
 #include "Reaper.hpp"
 
+#include "AsioRun.hpp"
+#include "Env.hpp"
 #include "RandomHex.hpp"
 #include "docker/Ports.hpp"
 #include "docker/Transport.hpp" // throw_transport_error
@@ -19,7 +21,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdlib>
 #include <istream>
 #include <string>
 #include <thread>
@@ -37,34 +38,6 @@ constexpr const char* kRyukPort = "8080/tcp";
 
 constexpr const char* kManagedByLabel = "org.testcontainers.managed-by";
 constexpr const char* kSessionIdLabel = "org.testcontainers.session-id";
-
-bool env_truthy(const char* name) {
-    const char* v = std::getenv(name);
-    if (v == nullptr) {
-        return false;
-    }
-    const std::string s(v);
-    return s == "1" || s == "true" || s == "TRUE" || s == "True";
-}
-
-/// Deadline-bounded run of the single pending async op on `io` (the transport
-/// layer's run_pending pattern, see docker/Transport.cpp): on expiry invoke
-/// `cancel`, drain the handler, and report asio::error::timed_out unless the
-/// op genuinely completed while draining.
-template <class Cancel>
-void run_bounded(asio::io_context& io, std::chrono::milliseconds timeout, const bool& done,
-                 boost::system::error_code& ec, Cancel cancel) {
-    io.restart();
-    io.run_for(timeout);
-    if (done) {
-        return;
-    }
-    cancel();
-    io.run();
-    if (!done || ec == asio::error::operation_aborted) {
-        ec = asio::error::timed_out;
-    }
-}
 
 } // namespace
 
@@ -225,7 +198,7 @@ void Reaper::start_locked(DockerClient& client) {
                             });
         // Close-not-cancel on expiry: a cancelled multi-endpoint connect just
         // moves on to the next endpoint (see docker/Transport.cpp).
-        run_bounded(impl->io, budget_left(), done, ec, [&] {
+        run_pending(impl->io, budget_left(), done, ec, [&] {
             boost::system::error_code ignore;
             impl->socket.close(ignore);
         });
@@ -237,7 +210,7 @@ void Reaper::start_locked(DockerClient& client) {
                                   done = true;
                                   ec = op_ec;
                               });
-            run_bounded(impl->io, budget_left(), done, ec, [&] {
+            run_pending(impl->io, budget_left(), done, ec, [&] {
                 boost::system::error_code ignore;
                 impl->socket.cancel(ignore);
             });
@@ -251,7 +224,7 @@ void Reaper::start_locked(DockerClient& client) {
                                        done = true;
                                        ec = op_ec;
                                    });
-            run_bounded(impl->io, budget_left(), done, ec, [&] {
+            run_pending(impl->io, budget_left(), done, ec, [&] {
                 boost::system::error_code ignore;
                 impl->socket.cancel(ignore);
             });

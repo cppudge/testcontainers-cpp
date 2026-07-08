@@ -8,13 +8,6 @@
 
 namespace testcontainers {
 
-namespace {
-
-/// Generate a unique-ish network name like "tc-1a2b3c4d5e6f7a8b".
-std::string random_network_name() { return "tc-" + detail::random_hex(16); }
-
-} // namespace
-
 Network Network::create(std::string name) {
     // Bring up the reaper first so a network created here is reaped on a crash
     // (no-op if Ryuk is disabled).
@@ -25,7 +18,7 @@ Network Network::create(std::string name) {
     return Network(std::move(client), std::move(id), std::move(name));
 }
 
-Network Network::create() { return create(random_network_name()); }
+Network Network::create() { return create(detail::random_resource_name()); }
 
 Network Network::Builder::create() const {
     // Bring up the reaper first so a network created here is reaped on a crash
@@ -34,7 +27,7 @@ Network Network::Builder::create() const {
 
     NetworkCreateSpec spec;
     // A network always needs a name; default to a generated unique one.
-    spec.name = name_.empty() ? random_network_name() : name_;
+    spec.name = name_.empty() ? detail::random_resource_name() : name_;
     spec.driver = driver_;
     spec.internal = internal_;
     spec.attachable = attachable_;

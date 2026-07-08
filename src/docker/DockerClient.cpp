@@ -1,5 +1,6 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include "Strings.hpp"
 #include "docker/ApiMapping.hpp"
 #include "docker/Auth.hpp"
 #include "docker/LogDemux.hpp"
@@ -345,14 +346,8 @@ std::string DockerClient::server_os() {
 }
 
 bool DockerClient::is_windows_engine() {
-    const std::string os = server_os();
     // Case-insensitive "contains windows".
-    std::string lower;
-    lower.reserve(os.size());
-    for (const unsigned char c : os) {
-        lower.push_back(static_cast<char>(std::tolower(c)));
-    }
-    return lower.find("windows") != std::string::npos;
+    return detail::to_lower(server_os()).find("windows") != std::string::npos;
 }
 
 void DockerClient::pull_image(const std::string& image, const std::optional<RegistryAuth>& auth) {

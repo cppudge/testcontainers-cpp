@@ -3,12 +3,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
+#include "Env.hpp"
+#include "FileRead.hpp"
 #include "Process.hpp"
 
 namespace testcontainers::docker {
@@ -32,16 +32,6 @@ std::array<std::uint8_t, 256> make_decode_table() {
 // for it inside config.json's "auths" map.
 constexpr const char* kDockerHub = "index.docker.io";
 constexpr const char* kDockerHubAuthKey = "https://index.docker.io/v1/";
-
-std::string read_file(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        return {};
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
 
 } // namespace
 
@@ -287,18 +277,12 @@ std::string read_docker_auth_config() {
     }
 
     if (const char* cfg_dir = std::getenv("DOCKER_CONFIG"); cfg_dir && *cfg_dir) {
-        const std::string contents = read_file(std::string(cfg_dir) + "/config.json");
+        const std::string contents = detail::read_file(std::string(cfg_dir) + "/config.json");
         return contents.empty() ? "{}" : contents;
     }
 
-    std::string home;
-    if (const char* h = std::getenv("HOME"); h && *h) {
-        home = h;
-    } else if (const char* up = std::getenv("USERPROFILE"); up && *up) {
-        home = up; // Windows
-    }
-    if (!home.empty()) {
-        const std::string contents = read_file(home + "/.docker/config.json");
+    if (const std::string home = detail::home_dir(); !home.empty()) {
+        const std::string contents = detail::read_file(home + "/.docker/config.json");
         if (!contents.empty()) {
             return contents;
         }

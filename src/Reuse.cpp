@@ -1,9 +1,10 @@
 #include "Reuse.hpp"
 
-#include <cctype>
+#include "Env.hpp"
+#include "FileRead.hpp"
+#include "Strings.hpp"
+
 #include <cstdint>
-#include <cstdlib>
-#include <fstream>
 #include <sstream>
 #include <string>
 
@@ -13,51 +14,13 @@ namespace {
 
 constexpr const char* kReuseHashLabel = "org.testcontainers.reuse.hash";
 
-/// Trim ASCII spaces / tabs / CR / LF from both ends of `s`.
-std::string trim(const std::string& s) {
-    const std::size_t begin = s.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos) {
-        return {};
-    }
-    const std::size_t end = s.find_last_not_of(" \t\r\n");
-    return s.substr(begin, end - begin + 1);
-}
-
-bool env_truthy(const char* name) {
-    const char* v = std::getenv(name);
-    if (v == nullptr) {
-        return false;
-    }
-    const std::string s(v);
-    return s == "1" || s == "true" || s == "TRUE" || s == "True";
-}
-
 /// Read ~/.testcontainers.properties (HOME or USERPROFILE) in full; "" if absent.
 std::string read_properties_file() {
-    std::string home;
-    if (const char* h = std::getenv("HOME"); h && *h) {
-        home = h;
-    } else if (const char* up = std::getenv("USERPROFILE"); up && *up) {
-        home = up; // Windows
-    }
+    const std::string home = home_dir();
     if (home.empty()) {
         return {};
     }
-    std::ifstream in(home + "/.testcontainers.properties", std::ios::binary);
-    if (!in) {
-        return {};
-    }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-/// ASCII-lowercase a copy of `s`.
-std::string to_lower(std::string s) {
-    for (char& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
+    return read_file(home + "/.testcontainers.properties");
 }
 
 } // namespace

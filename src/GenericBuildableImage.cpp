@@ -1,38 +1,17 @@
 #include "testcontainers/GenericBuildableImage.hpp"
 
 #include <filesystem>
-#include <fstream>
-#include <ios>
-#include <iterator>
 #include <string>
 #include <system_error>
 #include <vector>
 
+#include "FileRead.hpp"
 #include "docker/Tar.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
 namespace testcontainers {
-
-namespace {
-
-/// Read the whole host file into a string (binary), or throw DockerError.
-std::string read_host_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw DockerError("GenericBuildableImage: cannot open context file '" + path.string() +
-                          "'");
-    }
-    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        throw DockerError("GenericBuildableImage: failed reading context file '" + path.string() +
-                          "'");
-    }
-    return data;
-}
-
-} // namespace
 
 GenericImage GenericBuildableImage::build() const {
     // Expand the build-context entries into tar files. An in-memory entry maps to
@@ -56,10 +35,14 @@ GenericImage GenericBuildableImage::build() const {
                 }
                 const std::string rel = it.path().lexically_relative(src).generic_string();
                 const std::string name = (base / rel).generic_string();
-                files.push_back(docker::TarFile{name, read_host_file(it.path()), entry.mode()});
+                files.push_back(docker::TarFile{
+                    name, detail::read_file_or_throw(it.path(), "GenericBuildableImage"),
+                    entry.mode()});
             }
         } else {
-            files.push_back(docker::TarFile{entry.target(), read_host_file(src), entry.mode()});
+            files.push_back(docker::TarFile{
+                entry.target(), detail::read_file_or_throw(src, "GenericBuildableImage"),
+                entry.mode()});
         }
     }
 
