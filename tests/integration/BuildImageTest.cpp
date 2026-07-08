@@ -9,6 +9,7 @@
 #include "testcontainers/GenericBuildableImage.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
+#include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
 #include "TempPaths.hpp"
@@ -23,7 +24,7 @@
 //   BuildImage.BuildLogConsumerStreamsSteps - with_build_log_consumer receives the step banners and a RUN step's own echo output during build().
 //   BuildImage.BuildFailureCarriesStepOutput - a failing RUN's own output (echoed before the exit) appears in the DockerError message, not just the daemon's exit-code line.
 //   BuildImage.ExistsReflectsLocalImages - GenericImage::exists is true for a just-built tag and false for a name that was never built.
-//   BuildImage.InspectReflectsImageConfig - GenericImage::inspect (static and instance) returns the built image's id/tag/os and Config (label, exposed port, workdir, cmd); a never-built reference throws NotFoundError.
+//   BuildImage.InspectReflectsImageConfig - GenericImage::inspect (static and instance) returns the built image's id/tag/os and Config (label, exposed port, workdir, cmd); inspect_image_raw returns the raw body; a never-built reference throws NotFoundError.
 //   WindowsBuildImage.BuildsAndRunsInlineDockerfile - the same round-trip on a Windows daemon: a nanoserver-based Dockerfile bakes a file, the built image types it out.
 //   WindowsBuildImage.BuildFailureThrows - a failing RUN (cmd `exit 3`) in a Windows build surfaces as DockerError.
 //   WindowsBuildImage.ExistsAndBuildLogConsumer - on a Windows daemon: the consumer sees build output, GenericImage::exists reflects the built tag, and GenericImage::inspect reports os "windows" with the tag in repo_tags.
@@ -198,6 +199,12 @@ TEST_F(BuildImage, InspectReflectsImageConfig) {
 
     // The instance form inspects this config's own image():tag().
     EXPECT_EQ(GenericImage("tc-inspect-probe").inspect().id, info.id);
+
+    // The raw escape hatch returns the same inspect body, unparsed.
+    EXPECT_NE(DockerClient::from_environment()
+                  .inspect_image_raw("tc-inspect-probe:latest")
+                  .find("\"Id\""),
+              std::string::npos);
 
     // A reference that never existed surfaces as NotFoundError (404).
     EXPECT_THROW(GenericImage::inspect("tc-definitely-never-built", "v9"), NotFoundError);

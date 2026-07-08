@@ -117,9 +117,9 @@ struct NetworkInspect {
 
 /// The subset of `GET /images/{reference}/json` we currently care about.
 struct ImageInspect {
-    std::string id;                     ///< "sha256:..."
-    std::vector<std::string> repo_tags; ///< "redis:7.2"-style references (may be empty)
-    std::vector<std::string> repo_digests;
+    std::string id;                            ///< "sha256:..."
+    std::vector<std::string> repo_tags;        ///< "redis:7.2"-style references (may be empty)
+    std::vector<std::string> repo_digests;     ///< "redis@sha256:..." entries (may be empty)
     std::string created;                       ///< RFC 3339 timestamp, verbatim
     std::string architecture;                  ///< "amd64" / "arm64" / ...
     std::string os;                            ///< "linux" / "windows"

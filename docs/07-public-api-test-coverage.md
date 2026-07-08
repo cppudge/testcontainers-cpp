@@ -331,7 +331,7 @@ Network / Volume) on Windows.
 | `pull_image(image, auth?)` | ✅ | ✅ | ✅ DockerLifecycle, AuthTest, DockerLogs | ❌ (pull happens via create in Windows tests) |
 | `image_exists(reference)` | ✅ | ✅ | ✅ via GenericImage::exists (BuildImage.ExistsReflectsLocalImages) | ✅ via GenericImage::exists (WindowsBuildImage.ExistsAndBuildLogConsumer) |
 | `inspect_image(reference)` | ✅ | ✅ | ✅ via GenericImage::inspect (BuildImage.InspectReflectsImageConfig) | ✅ via GenericImage::inspect (WindowsBuildImage.ExistsAndBuildLogConsumer) |
-| `inspect_image_raw(reference)` | ✅ | ✅ | ✅ implicit — every `inspect_image` goes through it | ✅ implicit |
+| `inspect_image_raw(reference)` | ✅ | ✅ | ✅ BuildImage.InspectReflectsImageConfig (direct; also under every `inspect_image`) | ✅ implicit — every `inspect_image` goes through it |
 | `build_image(tar, opts[, consumer])` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
 | `create_container(spec, auth?)` | ✅ | ✅ | ✅ DockerLifecycle.*, ReaperTest, DockerLogs | ❌ (Windows tests go through `start()`) |
 | `start_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.CreateStartInspectRemove | ❌ |
