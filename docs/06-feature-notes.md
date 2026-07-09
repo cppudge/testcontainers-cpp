@@ -245,7 +245,7 @@ label sweep), so moves/destruction need no hand-written member lists and a faile
 (including a partial `up`) cleans up after itself. Compose containers carry no session label
 (not Ryuk-reaped).
 
-**Windows containers** (docs/04) — engine-mode detection (`server_os()` /
+**Windows containers** — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the
 Windows engine (RAII + AutoRemove only — testcontainers-dotnet parity). copy-to accepts
 drive-rooted targets: `C:\dir\x.txt` is normalized to the `/dir/x.txt` form the daemon

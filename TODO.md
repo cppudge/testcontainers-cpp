@@ -44,7 +44,8 @@ when it lands (adding a short note there if it needs one).
   socket); the process-global reaper binds to the FIRST daemon it starts against — a second
   daemon used later in the same process gets labels but no crash-safe reaping (a per-daemon
   reaper map would be the full fix). A real Windows Ryuk (named-pipe mount + Windows reaper
-  image) is unexplored — see docs/04. (`src/Reaper.*`)
+  image) is unexplored — the feasibility notes lived in docs/04, removed at v0.1.0 (git
+  history). (`src/Reaper.*`)
 - **Log path costs** — wait probes open a fresh TCP connection + `io_context` per probe (fine
   at 200ms polling; noted in case frequency increases). The log wait itself streams over one
   follow connection now, and `LogDemuxer::feed` compacts lazily via a consumed offset — both
@@ -144,6 +145,10 @@ when it lands (adding a short note there if it needs one).
 - **TLS end-to-end in CI** — the transport is implemented and the cert resolution unit-tested,
   but `TlsTransportTest` needs a reachable remote TLS daemon (skipped otherwise), so the path
   is unproven end to end.
+- **Ecosystem modules (Tier 4)** — prebuilt module wrappers (Postgres/MySQL/Kafka/…, the
+  testcontainers-java "modules" layer) plus the two foundations they'd need first: an
+  exec-based wait strategy and a `host()` override. The exploration doc lived in docs/05,
+  removed at v0.1.0 (git history).
 
 > Implemented milestones (container config, wait strategies, exec, networks, volumes, compose,
 > reuse, hooks, Ryuk, auth, build-from-Dockerfile, …) are documented with their known limits in
