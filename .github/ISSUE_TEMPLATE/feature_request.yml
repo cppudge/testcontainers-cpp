@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a new capability or API for testcontainers-cpp.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that the library does not currently support?
+    validations:
+      required: true
+  - type: textarea
+    id: api-sketch
+    attributes:
+      label: Proposed API sketch
+      description: How might it look at the call site? A rough builder / method sketch is enough. Rendered as C++.
+      render: cpp
+    validations:
+      required: false
+  - type: textarea
+    id: parity
+    attributes:
+      label: Parity reference
+      description: >
+        Does another Testcontainers implementation already have this (Java, Go, Rust, ...)?
+        Link the equivalent API if you can — matching an established design speeds up review.
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else — constraints, alternatives considered, willingness to implement it.
+    validations:
+      required: false

@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a defect in testcontainers-cpp (the library itself, not Docker or a test image).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. A minimal reproducer and the exact versions make triage far faster.
+
+        Security vulnerabilities: do **not** file them here. Report them privately via the
+        Security tab -> "Report a vulnerability" (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducer
+      description: The smallest code snippet that triggers it. Rendered as C++.
+      render: cpp
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Library version
+      description: testcontainers-cpp version or git commit (e.g. 0.1.0).
+    validations:
+      required: true
+  - type: input
+    id: os-compiler
+    attributes:
+      label: OS and compiler
+      description: e.g. Ubuntu 24.04 / gcc 13, Windows 11 / MSVC 19.4, macOS 14 / apple-clang 15.
+    validations:
+      required: true
+  - type: dropdown
+    id: docker-flavor
+    attributes:
+      label: Docker flavor
+      options:
+        - Docker Desktop
+        - Docker Engine (native install)
+        - Remote daemon (tcp:// or https://)
+        - Other / unsure
+    validations:
+      required: true
+  - type: input
+    id: daemon-version
+    attributes:
+      label: Docker daemon version
+      description: The Server version from `docker version` (or the API version, if known).
+    validations:
+      required: false
+  - type: dropdown
+    id: engine-mode
+    attributes:
+      label: Engine mode
+      options:
+        - Linux containers
+        - Windows containers
+        - Not applicable / unsure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: DockerError exception text, container logs, or CI output. Rendered as text.
+      render: shell
+    validations:
+      required: false

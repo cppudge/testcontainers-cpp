@@ -16,17 +16,32 @@
 name: CI
 
 on:
+  # Same-repo branch pushes (the owner works directly on this repo) build here.
   push:
     branches: ['**']
+  # Fork PRs can't push branches to this repo, so without a pull_request trigger
+  # they'd get no CI. Adding it means SAME-repo PRs would run twice (once for the
+  # push, once for the PR), so every job below carries a fork-only guard:
+  #   if: github.event_name == 'push'
+  #       || github.event.pull_request.head.repo.full_name != github.repository
+  # which skips the pull_request run for same-repo PRs (their push already covers
+  # them) and runs it only when the PR head is a fork.
+  pull_request:
   workflow_dispatch:
 
+# Key the concurrency group on the event name too: a push run and a pull_request
+# run of the same ref must land in different groups so they don't cancel each
+# other (a fork PR's merge ref won't collide with a branch ref, but this keys
+# them apart regardless).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   linux:
     name: Linux (gcc, Release)
+    # Fork-only PR guard (see the pull_request note under `on:` above).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -80,6 +95,7 @@ jobs:
   # platform-agnostic, and MSVC-minimal was verified out-of-band.
   linux-minimal:
     name: Linux (gcc, no TLS / no host-port-forwarding)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -137,6 +153,7 @@ jobs:
 
   windows:
     name: Windows (MSVC, Release)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
@@ -230,6 +247,7 @@ jobs:
   # and Windows skip the test build — their unit suites already run above.
   conan-package:
     name: conan create (${{ matrix.os }})
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -290,6 +308,7 @@ jobs:
   # Seconds of runtime — no cache, no configure.
   format:
     name: clang-format
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -316,6 +335,7 @@ jobs:
   # without a build.
   tidy:
     name: clang-tidy
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -353,6 +373,7 @@ jobs:
   # into a hard failure.
   sanitizers:
     name: Linux (ASan + UBSan)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
