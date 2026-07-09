@@ -15,7 +15,7 @@ It intentionally differs from the in-repo `/conanfile.py`, which exists for loca
 Verify locally (the tarball must be published — tag first):
 
     conan create packaging/conan-center/recipes/testcontainers-cpp/all \
-        --version=0.1.0-alpha.1 --build=missing -s compiler.cppstd=20
+        --version=0.1.0 --build=missing -s compiler.cppstd=20
 
 Releasing a new version: bump `TC_VERSION_FULL`, tag `v<version>`, publish the GitHub
 Release, then add the version key to BOTH `config.yml` and `conandata.yml`, and the
@@ -28,8 +28,6 @@ the PR), reference a package-request issue (`fixes #N`), open the PR titled
 `testcontainers-cpp/<version>: new recipe`; their CI builds ~30 configurations and two
 maintainer approvals are required.
 
-**Known submission blocker (2026-07 readiness review):** CCI's version model expects a
-released tag or the dated `0.0.0.cci.YYYYMMDD` snapshot form; a semver PRERELEASE like
-`0.1.0-alpha.1` will very likely be pushed back on (it is also invisible to consumers'
-version ranges by default). Before the actual PR, cut a stable `v0.1.0` release and
-re-pin `config.yml`/`conandata.yml` to it.
+The recipe is pinned to the stable `v0.1.0` tag (CCI's version model expects a released
+tag; semver prereleases get pushed back on and are invisible to consumers' version
+ranges by default — the earlier `0.1.0-alpha.1` pin was replaced on 2026-07-10).
