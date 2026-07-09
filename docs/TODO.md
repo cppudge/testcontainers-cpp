@@ -1,7 +1,7 @@
 # TODO / Backlog
 
 Actionable work only. What is already implemented — and its known, ACCEPTED limits — is
-documented in [docs/06-feature-notes.md](docs/06-feature-notes.md); an item leaves this list
+documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
@@ -113,7 +113,7 @@ when it lands (adding a short note there if it needs one).
   blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.
   Remaining Windows-mode test gaps: the http wait (needs a real HTTP server image —
   the PowerShell TcpListener in servercore covers listening_port only), bind mounts, and
-  the stopping hook (see docs/07 for the full matrix).
+  the stopping hook (see public-api-test-coverage.md for the full matrix).
 - **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
   are not consumed, only the `Host` endpoint; only `docker.host` is read from
   `~/.testcontainers.properties`. (`src/docker/HostResolve.hpp`)
@@ -139,7 +139,8 @@ when it lands (adding a short note there if it needs one).
 
 ## Open / not yet built
 - **Full connection pool (option B)** — deferred until a real remote-TCP/TLS use case appears;
-  scoped keep-alive sessions cover the polling hot path today (decision record in docs/06).
+  scoped keep-alive sessions cover the polling hot path today (decision record in
+  feature-notes.md).
   Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,
   4–8 idle per endpoint, retry-once-only-on-unsent, streaming excluded.
 - **TLS end-to-end in CI** — the transport is implemented and the cert resolution unit-tested,
@@ -152,4 +153,4 @@ when it lands (adding a short note there if it needs one).
 
 > Implemented milestones (container config, wait strategies, exec, networks, volumes, compose,
 > reuse, hooks, Ryuk, auth, build-from-Dockerfile, …) are documented with their known limits in
-> [docs/06-feature-notes.md](docs/06-feature-notes.md).
+> [feature-notes.md](feature-notes.md).

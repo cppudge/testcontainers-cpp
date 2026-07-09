@@ -426,7 +426,7 @@ void wait_until_ready(DockerClient& client, const std::string& id,
     // the session's stale-connection retry is safe. This scoped reuse is the
     // one deviation from the connection-per-request default shared with the
     // Rust reference (bollard pools nothing); see the DockerClient class doc
-    // and TODO.md for the analysis.
+    // and docs/TODO.md for the analysis.
     const DockerClient::Session session(client);
 
     const Clock::time_point deadline = Clock::now() + timeout;

@@ -32,5 +32,5 @@ only when it is actually being followed.
   ```
 
 ## Backlog
-- Known limitations and deferred work are tracked in [`TODO.md`](../TODO.md), not
+- Known limitations and deferred work are tracked in [`TODO.md`](TODO.md), not
   scattered through code comments. When you spot tech debt during review, add it there.

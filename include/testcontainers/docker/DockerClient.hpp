@@ -45,7 +45,7 @@ struct Response {
 /// `Session` opts one instance into keep-alive reuse for consecutive GETs
 /// (used internally by the wait-strategy polling loops, where the per-request
 /// TCP/TLS handshake actually costs); a process-wide connection pool is
-/// deliberately NOT provided (see TODO.md for the analysis).
+/// deliberately NOT provided (see docs/TODO.md for the analysis).
 class DockerClient {
 public:
     /// Construct a client for an explicitly resolved host.

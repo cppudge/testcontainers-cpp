@@ -3,8 +3,9 @@
 [![CI](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml)
 
 Native C++20 port of [Testcontainers](https://testcontainers.com/) — spin up real Docker
-containers from your integration tests and tear them down automatically. **No Rust, no `docker`
-CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
+containers from your integration tests and tear them down automatically. **No `docker` CLI
+required**: a single C++ library speaking the Docker Engine HTTP API directly, with full
+streaming control over pulls, logs, and exec.
 
 Run your tests against the real thing — Postgres, Redis, a broker, your own image — instead of a
 mock. Each test owns an isolated, disposable environment, created on `start()` and force-removed
@@ -124,7 +125,7 @@ green on Windows (named pipe) and Linux (unix socket):
 Known gaps: **end-to-end TLS against a real remote daemon** is the main unverified path (the pure
 `TlsConfig` resolution is unit-tested), and shared builds are **static-only on Windows** (the
 sources carry no symbol-export macros yet). Per-feature limits are tracked in
-[`docs/06`](docs/06-feature-notes.md) and [`TODO.md`](TODO.md).
+[`docs/feature-notes.md`](docs/feature-notes.md) and [`docs/TODO.md`](docs/TODO.md).
 
 ---
 
@@ -171,8 +172,8 @@ the Rust reference also makes), with hot polling loops opting into scoped keep-a
 - **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a mirror
   integration suite (build / volumes / networks / exec / copy / ports / waits / lifecycle).
 
-Per-feature reference with known limits: [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
-Public-API coverage in each engine mode: [`docs/07-public-api-test-coverage.md`](docs/07-public-api-test-coverage.md).
+Per-feature reference with known limits: [`docs/feature-notes.md`](docs/feature-notes.md).
+Public-API coverage in each engine mode: [`docs/public-api-test-coverage.md`](docs/public-api-test-coverage.md).
 
 ## Development
 

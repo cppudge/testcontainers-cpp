@@ -5,7 +5,7 @@ Audit date: 2026-07-05. Updated the same day after the gap-closing test batch
 
 This file audits the integration-test coverage of every public interface under
 `include/testcontainers/` against a real Docker daemon, in each of the two engine
-modes. It is a companion to [06-feature-notes.md](06-feature-notes.md) (what
+modes. It is a companion to [feature-notes.md](feature-notes.md) (what
 exists and its limits); this one asks the narrower question: *is each public
 function exercised by a test in `tests/integration/` against a live daemon, and
 in which engine mode?*
@@ -424,7 +424,7 @@ connect, build-context variants, typed 404s on Linux are all now covered).
    server image (e.g. an IIS/servercore-based one) to gate on a 200.
 2. **Bind mounts on Windows containers** (`Mount::bind` of a host directory at
    `C:\...`) — untested; interacts with the copy-to path normalization caveat
-   (docs/06, TODO.md).
+   (feature-notes.md, TODO.md).
 3. **`with_stopping_hook` / `Container::stop()` on Windows** — the teardown-hook
    path is only ever exercised on Linux.
 4. **Windows-mode reuse, pull policy, substitutor, `with_extra_host`,
@@ -449,4 +449,4 @@ connect, build-context variants, typed 404s on Linux are all now covered).
    `with_enable_ipv6` / `with_option`; Volume `Builder::with_driver` /
    `with_driver_opt`; `with_platform`; `with_create_body_patch`.
 6. **`TransportTimeoutError` against a real wedged endpoint** and end-to-end TLS
-   to a real remote daemon (docs/06 records both as not CI-verified).
+   to a real remote daemon (feature-notes.md records both as not CI-verified).

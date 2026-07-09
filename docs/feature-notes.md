@@ -2,7 +2,7 @@
 
 Short reference notes on the implemented subsystems, distilled from the backlog as items were
 completed. This file records what EXISTS, where it lives, and the caveats a user or maintainer
-should know; the actionable leftovers live in [TODO.md](../TODO.md).
+should know; the actionable leftovers live in [TODO.md](TODO.md).
 
 ## Transport & client
 
