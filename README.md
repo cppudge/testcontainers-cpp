@@ -2,63 +2,20 @@
 
 [![CI](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml)
 
-Native C++ port of [Testcontainers](https://testcontainers.com/) — spin up real Docker
+Native C++20 port of [Testcontainers](https://testcontainers.com/) — spin up real Docker
 containers from your integration tests and tear them down automatically. **No Rust, no `docker`
 CLI**: a pure C++ client that talks to the Docker Engine HTTP API directly.
 
-> **Status:** alpha, feature-complete core. `GenericImage` / `GenericBuildableImage` /
-> `Container` / `Network` / `Volume` / `DockerComposeContainer`, six wait strategies, exec
-> (stdin / tty / streaming), copy to/from container, lifecycle hooks, container reuse, the Ryuk
-> crash-safety reaper, registry auth incl. credential helpers, host-port exposure
-> (`with_exposed_host_port`, sshd sidecar + SSH tunnel), and the TLS transport are
-> implemented, covered by ~300 unit + ~115 integration tests against a real daemon — green on
-> Windows (named pipe) and Linux (unix socket; CI runs the full suite in BOTH engine modes:
-> the Windows job drives real Windows containers — build/volumes/networks/exec/copy/ports/
-> waits/lifecycle each have a Windows mirror suite). CI also gates on `-Wall -Wextra`//W4
-> as errors, pinned clang-format + clang-tidy, an ASan+UBSan run of both test suites, and
-> CodeQL. The feature reference with known limits: [`docs/06`](docs/06-feature-notes.md);
-> the per-API engine-mode coverage matrix: [`docs/07`](docs/07-public-api-test-coverage.md).
-> End-to-end TLS against a real remote daemon is the main unverified gap.
+Run your tests against the real thing — Postgres, Redis, a broker, your own image — instead of a
+mock. Each test owns an isolated, disposable environment, created on `start()` and force-removed
+when its handle leaves scope (RAII), with a crash-safety reaper as backstop. First-class on Linux
+(unix socket), Windows (Docker Desktop named pipe, including real **Windows containers**), and
+remote daemons (TCP+TLS).
 
-This is a from-scratch rewrite. A previous attempt (`testcontainers-cxx/`, in this repo for
-reference) wrapped the Rust `testcontainers` library over a cxx FFI bridge; this project drops
-the bridge and reimplements everything natively in idiomatic C++.
+## Quick start
 
-## Why
-
-- Run integration tests against real services (databases, brokers, …) the same way you run unit
-  tests — each test owns an isolated, disposable environment.
-- A single C++ dependency, no Rust toolchain, no shelling out to `docker`.
-- First-class Windows support (Docker Desktop named pipe), Linux/macOS (unix socket), and remote
-  Docker (TCP+TLS).
-
-## How it works
-
-Testcontainers is, at its core, a **client over the Docker Engine HTTP API**. The flow:
-
-1. Resolve where the Docker daemon listens (env vars → socket/pipe → defaults).
-2. `POST /containers/create` → `POST /containers/{id}/start`.
-3. **Wait for readiness** (log message, HTTP probe, healthcheck, exit).
-4. `GET /containers/{id}/json` → discover the **host port** Docker published.
-5. Hand the user a handle to talk to the container.
-6. On scope exit, `DELETE /containers/{id}` (RAII), with a Ryuk reaper as crash-safety net.
-
-Transport matrix (all HTTP/1.1, over a single Boost.Asio stream abstraction):
-
-| Platform | Docker endpoint | Asio stream |
-|---|---|---|
-| Linux / macOS | unix socket `/var/run/docker.sock` | `local::stream_protocol::socket` |
-| Windows | named pipe `//./pipe/docker_engine` | `windows::stream_handle` |
-| Remote / CI | `tcp://` / `https://` | `tcp::socket` / `ssl::stream` |
-
-Full architecture analysis of the reference Rust implementation: [`docs/01`](docs/01-how-testcontainers-rs-works.md).
-
-## Usage
-
-Include the umbrella header `testcontainers/testcontainers.hpp` (or the individual headers) and link
-the `testcontainers::testcontainers` CMake target. Everything lives in `namespace testcontainers`.
-
-### Quick start — a service in a test
+Include the umbrella header `testcontainers/testcontainers.hpp`, link the
+`testcontainers::testcontainers` target, and everything lives in `namespace testcontainers`:
 
 ```cpp
 #include <gtest/gtest.h>
@@ -73,7 +30,7 @@ TEST(Cache, RedisIsReachable) {
                           .with_wait(wait_for::stdout_message("Ready to accept connections"))
                           .start();
 
-    const std::string   host = redis.host();                  // "localhost" for a local daemon
+    const std::string   host = redis.host();                   // "localhost" for a local daemon
     const std::uint16_t port = redis.get_host_port(tcp(6379)); // the published host port
 
     // ... point your Redis client at host:port and run assertions ...
@@ -82,198 +39,203 @@ TEST(Cache, RedisIsReachable) {
     // the Ryuk reaper removes it a few seconds later.
 ```
 
-### Configuring the image
-
-`GenericImage` is a copyable, reusable builder; each `with_*` mutates in place and chains:
-
-```cpp
-auto postgres = GenericImage("postgres", "16-alpine")
-                    .with_env("POSTGRES_PASSWORD", "secret")
-                    .with_env("POSTGRES_DB", "test")
-                    .with_exposed_port(tcp(5432))
-                    .with_wait(wait_for::stdout_message("ready to accept connections", 2))
-                    .with_startup_timeout(std::chrono::seconds(30));
-
-Container a = postgres.start();   // reusable — start as many as you need
-Container b = postgres.start();
-```
-
-Builders: `with_cmd`, `with_entrypoint`, `with_env`, `with_label`, `with_exposed_port`,
-`with_working_dir`, `with_user`, `with_privileged`, `with_mount` (`Mount::bind/volume/tmpfs`),
-`with_healthcheck` (`Healthcheck::cmd_shell/cmd`), `with_copy_to`, `with_network`,
-`with_network_alias`, `with_static_ipv4`, `with_container_name`, `with_registry_auth`,
-`with_wait`, `with_startup_timeout`. Statics: `from_reference("name[:tag]")`,
-`exists(name, tag)` — a local-presence probe, e.g. to skip an expensive
-`GenericBuildableImage::build()` (which can stream its output live via
-`with_build_log_consumer`) when a previous run already built the image — and
-`inspect(name, tag)`, a typed `ImageInspect` snapshot (id, tags, os/arch, size, image config).
-
-Wait strategies — `with_wait(wait_for::…)`: `stdout_message` / `stderr_message` / `log`,
-`seconds` / `millis`, `exit` / `exit_code`, `healthy` (Docker healthcheck), `http(path, port, status)`.
-Several may be chained; they run in order under the startup timeout.
-
-### Talking to the running container
-
-`Container` is a move-only RAII handle: `host()`, `get_host_port(port)`, `logs()`, `exec(cmd)`,
-`copy_to(src)`, `inspect()` (typed) / `inspect_raw()` (full JSON), `stop()`, `is_running()`,
-`remove()`. `keep()` releases removal ownership (the
-container survives the handle; with Ryuk enabled it is still reaped shortly after the process
-exits — see Cleanup below); `ExecOptions{.detach = true}` runs a command fire-and-forget;
-the static `Container::inspect(id)` looks up any container by id without a handle.
-
-```cpp
-ExecResult r = redis.exec({"redis-cli", "PING"});  // r.stdout_data / r.stderr_data / r.exit_code
-ContainerLogs l = redis.logs();                     // l.stdout_data / l.stderr_data
-redis.copy_to(CopyToContainer::content("seed-data", "/tmp/seed.txt"));
-```
-
-### Several containers on one network
-
-Put containers on a user-defined network so they resolve each other by container name —
-`with_network` takes the `Network` handle directly, or a network name string
-(`net.inspect()` — or the static `Network::inspect(name_or_id)` — returns a typed
-`NetworkInspect`: driver, IPAM pools, labels, and the attached containers' endpoints):
-
-```cpp
-Network net = Network::create();
-
-Container redis = GenericImage("redis", "7.2")
-                      .with_network(net)
-                      .with_container_name("redis")          // peers reach it as "redis"
-                      .with_wait(wait_for::stdout_message("Ready to accept connections"))
-                      .start();
-
-Container app = GenericImage("my/app", "latest")
-                    .with_network(net)
-                    .with_env("REDIS_URL", "redis://redis:6379")
-                    .start();
-```
-
-### Cleanup
-
-Containers and networks are removed when their handle goes out of scope; `keep()` on either
-handle releases removal ownership (`keep(false)` re-arms it, so a "keep my resources" debug
-flag forwards in one call). As a crash-safety net, a
-[Ryuk](https://github.com/testcontainers/moby-ryuk) sidecar — on Linux engines only — reaps
-everything tagged with the run's session label if the process dies (e.g. `SIGKILL`, where
-destructors never run); opt out with `TESTCONTAINERS_RYUK_DISABLED=true`. To share one
-container across test runs there is `with_reuse` (find-or-create by a config hash, gated on
-`TESTCONTAINERS_REUSE_ENABLE`); reused containers are deliberately neither auto-removed nor
-reaped — prune them externally. Runnable examples live in
+`GenericImage` is a copyable, reusable builder; each `with_*` mutates in place and chains.
+`Container` is a move-only RAII handle: `host()`, `get_host_port()`, `logs()`, `exec()`,
+`copy_to()`, `inspect()`, `stop()`, `remove()`. Errors are thrown, not returned — a `DockerError`
+exception hierarchy carrying the HTTP status and resource id. Runnable end-to-end examples live in
 [`tests/integration/`](tests/integration).
 
-## Tech stack
+## Installation
 
-Dependencies are managed by **Conan 2** (public ConanCenter) and wired into CMake via
-[`cmake-conan`](https://github.com/conan-io/cmake-conan) (vendored at `cmake/cmake-conan/`).
+testcontainers-cpp is a **Conan 2** package. A ConanCenter submission is staged for right after the
+`v0.1.0` tag (see [Packaging](#packaging)); until it lands, build the package from this repo into
+your local Conan cache:
 
-| Package | Version | Role |
+```sh
+git clone https://github.com/cppudge/testcontainers-cpp
+conan create testcontainers-cpp --build=missing -s compiler.cppstd=20
+```
+
+Then require it from your project's `conanfile.txt` (the package reference is `testcontainers-cpp`):
+
+```ini
+[requires]
+testcontainers-cpp/0.1.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+```
+
+and wire it into CMake with `find_package` (the CMake package and target are named `testcontainers`):
+
+```cmake
+find_package(testcontainers REQUIRED)
+target_link_libraries(my_tests PRIVATE testcontainers::testcontainers)
+```
+
+A plain `cmake --install` of this repo works too, exporting the same
+`find_package(testcontainers)` / `testcontainers::testcontainers` contract for non-Conan consumers.
+
+Two build options (both default **ON**) let consumers who must avoid a transitive OpenSSL trim the
+graph: conan `tls` / CMake `TC_TLS` gates the `https://` transport, and conan `host_port_forwarding`
+/ CMake `TC_HOST_PORT_FORWARDING` gates `with_exposed_host_port`'s sshd sidecar (libssh2). Disabling
+**both** removes OpenSSL from the dependency graph entirely; a disabled path throws a `DockerError`
+naming the option.
+
+## Requirements
+
+- **C++20** — the public headers require it (they will not parse under C++17).
+- **Docker** reachable from the test host (local daemon, Docker Desktop, or a remote engine).
+- **CMake ≥ 3.21**, **Conan ≥ 2**, and **Ninja** to build from source.
+
+Supported compilers (enforced by the Conan recipe's `validate()`):
+
+| Compiler | Minimum |
+|---|---|
+| GCC | 12 |
+| Clang | 15 |
+| MSVC | 19.3 (Visual Studio 2022) |
+| Apple Clang | 15 |
+
+Platform support — CI builds and runs the full suite against a real daemon in **both** engine
+modes:
+
+| Platform | Docker endpoint | CI coverage |
 |---|---|---|
-| `boost` (header-only: Beast + Asio) | 1.91.0 | HTTP/1.1 + transport (unix socket / **Windows named pipe** / TCP+TLS), streaming & connection hijack |
-| `openssl` | 3.6.3 | TLS for `https://`/`tcp+tls` Docker hosts — **optional**, see below |
-| `nlohmann_json` | 3.12.0 | request/response bodies, `inspect`/`Ports`/`Health` parsing |
-| `libarchive` | 3.8.7 | tar for copy-to/from container and build context |
-| `libssh2` | 1.11.1 | SSH tunnel for `with_exposed_host_port` — **optional**, see below |
+| Linux | unix socket | full unit + integration suite (gcc) |
+| Windows | named pipe | full suite against **real Windows containers** (MSVC) |
+| macOS | unix socket (Docker Desktop) | `conan create` + unit suite (apple-clang) |
+| Remote | `tcp://` / `https://` | TLS unit-tested; end-to-end against a remote daemon not yet verified |
 
-Rationale for choosing Boost.Beast+Asio over libcurl/cpr/cpp-httplib (named-pipe support was the
-deciding factor): [`docs/02`](docs/02-dependencies.md).
+## Status
 
-Two features are build options (both default ON), for consumers who must avoid the transitive
-dependencies: CMake `TC_TLS` / conan `tls` gates the `https://` transport (OpenSSL), and CMake
-`TC_HOST_PORT_FORWARDING` / conan `host_port_forwarding` gates `with_exposed_host_port`'s sshd
-sidecar tunnel (libssh2, whose crypto backend is OpenSSL). Disabling **both** removes OpenSSL from
-the dependency graph entirely (e.g. `-o 'testcontainers-cpp/*:tls=False'
--o 'testcontainers-cpp/*:host_port_forwarding=False'`, or `-DTC_TLS=OFF
--DTC_HOST_PORT_FORWARDING=OFF` when building this repo directly). A disabled feature fails loudly:
-connecting to an `https://` daemon or starting a container with `with_exposed_host_port` throws a
-`DockerError` naming the option.
+**v0.1.0 — first release; feature-complete core, pre-1.0.** The public API is settled enough to use
+but may still evolve before 1.0. The library is exception-based by design (the `DockerError`
+hierarchy). Implemented and covered by **~300 unit + ~115 integration** tests against a real daemon,
+green on Windows (named pipe) and Linux (unix socket):
 
-## Design principles (native C++, not a Rust transliteration)
+- `GenericImage` / `GenericBuildableImage` / `Container` / `Network` / `Volume` /
+  `DockerComposeContainer`
+- six wait strategies, `exec` (stdin / tty / streaming), copy to/from container, lifecycle hooks
+- container reuse, the Ryuk crash-safety reaper, registry auth incl. credential helpers
+- host-port exposure (`with_exposed_host_port` — sshd sidecar + SSH tunnel), and the TLS transport
 
-Lessons from auditing the FFI fork ([`docs/03`](docs/03-cxx-interface-evaluation.md)):
+Known gaps: **end-to-end TLS against a real remote daemon** is the main unverified path (the pure
+`TlsConfig` resolution is unit-tested), and shared builds are **static-only on Windows** (the
+sources carry no symbol-export macros yet). Per-feature limits are tracked in
+[`docs/06`](docs/06-feature-notes.md) and [`TODO.md`](TODO.md).
 
-- **Value types are plain, copyable structs/enums** (`ContainerPort`, `Mount`, `WaitFor`, …).
-  No move-only-on-data, no opaque handles.
-- **Builders mutate in place and chain** via a single `with_*` overload returning `T&` — one
-  unqualified overload chains on both named lvalues and temporaries. No "consume-self-return-Self"
-  — named configs are reusable, no use-after-move footguns. (Move-only handles like
-  `DockerComposeContainer` keep a `&`/`&&` pair so a chained temporary can move-construct.)
-- **No trait-mirror interfaces.** Runtime polymorphism only where there's real extension:
-  a user-facing `Image` base (custom images) and optionally `IWaitStrategy`.
-- **`WaitFor` is a `std::variant`** of small structs, matched with `std::visit`.
-- **RAII only where a real resource is owned** — the running `Container` (auto-removed on
-  destruction); everything else is a value.
-- **Structured errors** (exception hierarchy carrying HTTP status / container id), since we own
-  the HTTP layer.
-- **Connection-per-request, no global pool** — the correctness-first choice the Rust reference
-  (bollard) also makes; the Java reference's shared unvalidated pool is the source of its
-  stale-connection and fd-leak issues. Hot polling loops opt into scoped keep-alive reuse via
-  `DockerClient::Session` (idempotent requests only, retry-once on a stale connection).
+---
 
-## Project layout
+## How it works
 
-```
-include/testcontainers/      public API (GenericImage, Container, Network, value types)
-  docker/                    DockerClient + low-level types (DockerHost, ContainerSpec, Logs)
-src/  src/docker/            implementation: transport, endpoints, tar, auth, log demux, Ryuk
-examples/                    tc_smoke (links all deps), tc_ping (GET /_ping)
-tests/unit/  tests/integration/   GoogleTest — unit (no Docker) + integration (real daemon)
-cmake/cmake-conan/           vendored cmake-conan provider
-docs/                        design + feature docs (01–06) + conventions
-TODO.md                      actionable backlog (implemented features + limits: docs/06)
-_research/testcontainers-rs/ cloned Rust reference sources (gitignored)
-testcontainers-cxx/          previous FFI-bridge fork (reference only, gitignored)
-```
+Testcontainers is, at its core, a **client over the Docker Engine HTTP API**. The flow:
 
-## Build
+1. Resolve where the Docker daemon listens (env vars → socket/pipe → defaults).
+2. `POST /containers/create` → `POST /containers/{id}/start`.
+3. **Wait for readiness** (log message, HTTP probe, healthcheck, exit).
+4. `GET /containers/{id}/json` → discover the **host port** Docker published.
+5. Hand the user a handle to talk to the container.
+6. On scope exit, `DELETE /containers/{id}` (RAII), with a Ryuk reaper as crash-safety net.
 
-Requires CMake ≥ 3.21, a C++20 compiler, Conan ≥ 2, and Ninja. `cmake-conan` (vendored) runs
-`conan install` automatically during configure and auto-detects a profile — no manual
-`conan profile detect` needed.
+Every transport is HTTP/1.1 over a single Boost.Asio stream abstraction (`ITransport`), chosen by
+the resolved endpoint's scheme:
 
-By default the build uses a **project-local Conan home** at `./.conan2` (the project root),
-isolated from your global Conan home and seeded with only the public ConanCenter remote. Set
-`-DTC_LOCAL_CONAN_HOME=OFF` to use the global home instead (then ensure ConanCenter is reachable
-there: `conan remote add conancenter https://center2.conan.io`).
+| Platform | Docker endpoint | Asio stream |
+|---|---|---|
+| Linux / macOS | unix socket `/var/run/docker.sock` | `local::stream_protocol::socket` |
+| Windows | named pipe `//./pipe/docker_engine` | `windows::stream_handle` |
+| Remote / CI | `tcp://` / `https://` | `tcp::socket` / `ssl::stream` |
+
+Boost.Beast+Asio was chosen over libcurl/cpr/cpp-httplib because Windows named-pipe support was
+the deciding factor. The client is connection-per-request by default (the correctness-first choice
+the Rust reference also makes), with hot polling loops opting into scoped keep-alive reuse.
+
+## Features
+
+- **Images** — `GenericImage` builder (env, cmd, entrypoint, labels, mounts, user, privileged,
+  healthcheck, static IPv4, copy-to, registry auth) and `GenericBuildableImage` (build from a
+  Dockerfile + context, live build-log streaming, local-presence `exists`/`inspect` probes).
+- **Wait strategies** — log message, fixed duration, exit code, Docker healthcheck, HTTP probe,
+  listening port; chained under one startup timeout.
+- **Containers** — typed/raw `inspect`, `logs` (snapshot + streaming follow), `exec` (env / cwd /
+  user / tty / stdin / detached / streaming), copy to/from, IPv4/IPv6 host-port getters.
+- **Networking & volumes** — user-defined `Network` (driver, IPAM, aliases) and named `Volume`
+  handles, both RAII and session-labeled.
+- **Lifecycle** — created/starting/started/stopping hooks, startup retry, container `reuse`
+  (find-or-create by config hash), and the [Ryuk](https://github.com/testcontainers/moby-ryuk)
+  reaper for crash-safe cleanup (Linux engines).
+- **Host access & Compose** — `with_exposed_host_port` (a `testcontainers/sshd` sidecar tunnel back
+  to the test host) and `DockerComposeContainer` (local CLI / containerised / auto client modes).
+- **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a mirror
+  integration suite (build / volumes / networks / exec / copy / ports / waits / lifecycle).
+
+Per-feature reference with known limits: [`docs/06-feature-notes.md`](docs/06-feature-notes.md).
+Public-API coverage in each engine mode: [`docs/07-public-api-test-coverage.md`](docs/07-public-api-test-coverage.md).
+
+## Development
+
+Dependencies are managed by Conan 2 (public ConanCenter) and wired into CMake via the vendored
+[`cmake-conan`](https://github.com/conan-io/cmake-conan) provider, which runs `conan install`
+automatically during configure — no manual `conan profile detect` needed. By default the build uses
+a project-local Conan home at `./.conan2` (set `-DTC_LOCAL_CONAN_HOME=OFF` for the global one).
+
+Core dependencies: `boost` 1.91.0 (header-only Beast + Asio), `nlohmann_json` 3.12.0, `libarchive`
+3.8.7, plus `openssl` 3.6.3 and `libssh2` 1.11.1 for the optional TLS / host-port features.
 
 Presets live in `CMakePresets.json`:
 
-| Preset | Generator | Config | Build dir |
-|---|---|---|---|
-| `ninja` | Ninja | Release | `build/ninja` |
-| `ninja-debug` | Ninja | Debug | `build/ninja-debug` |
-| `msvc` | Visual Studio 2022 | Release | `build/msvc` |
+| Preset | Generator | Config |
+|---|---|---|
+| `ninja` | Ninja | Release |
+| `ninja-debug` | Ninja | Debug |
+| `msvc` | Visual Studio 2022 | Release |
 
 ```sh
 cmake --preset ninja
 cmake --build --preset ninja
 ctest --preset ninja                 # ctest --preset ninja-unit  → unit tests only
-./build/ninja/bin/tc_smoke           # tc_smoke / tc_ping (.exe on Windows)
+./build/ninja/bin/tc_smoke           # tc_smoke / tc_ping examples (.exe on Windows)
 ```
 
-On Windows, Ninja needs the MSVC toolchain on `PATH`: run the commands from an
-**"x64 Native Tools Command Prompt for VS 2022"**, or use VS Code (below), which applies the
-developer environment for you. The `ninja-debug` preset's first configure builds the Debug
-dependencies (e.g. OpenSSL) from source.
+On Windows, Ninja needs the MSVC toolchain on `PATH` (run from an *"x64 Native Tools Command Prompt
+for VS 2022"*, or use VS Code with the CMake Tools + clangd extensions, which apply the developer
+environment for you).
 
-### Open in VS Code
+Two test suites: **unit** (`tc_unit_tests`, no Docker) and **integration** (`tc_integration_tests`,
+requires a reachable daemon; skips gracefully otherwise). CI gates every push on:
 
-1. Install the recommended extensions (VS Code offers them from `.vscode/extensions.json`):
-   **CMake Tools** and **clangd**.
-2. Open the folder. CMake Tools reads `CMakePresets.json` — pick the **`ninja`** configure preset
-   from the status bar and configure. That runs Conan, generates the compile database, and applies
-   the VS developer environment automatically.
-3. clangd reads `build/ninja/compile_commands.json` (via the `.clangd` file) for accurate
-   IntelliSense and diagnostics. Build / run tests from the CMake Tools status bar.
+- `-Wall -Wextra` (gcc/clang) / `/W4` (MSVC) **as errors** (`TC_WERROR`).
+- Pinned **clang-format** (22.1.5) and **clang-tidy** (18.1.8) — `.clang-format` / `.clang-tidy` are
+  the single source of truth (clangd applies the same in-editor).
+- An **ASan + UBSan** run of both suites.
+- **CodeQL** semantic analysis, whose traced build also doubles as the clang compile+link gate.
+- A minimal-features Linux build (`TC_TLS=OFF` + `TC_HOST_PORT_FORWARDING=OFF`) that asserts OpenSSL
+  and libssh2 are absent from the build.
 
-Style and static analysis are enforced in CI: `.clang-format` (pinned wheel —
-`pip install clang-format==22.1.5`, run over `*.cpp *.hpp`) and `.clang-tidy`
-(`pip install clang-tidy==18.1.8`, run with `-p build/ninja`; clangd applies the same
-config in-editor as you type).
+## Packaging
 
-> Note: `libarchive` is built with `with_iconv=False` — its `libiconv` dependency has no prebuilt
-> Windows/msvc-194 binary and fails to build from source (rc.exe flag mismatch); we don't need
-> iconv for tar.
+`conan create .` builds a consumer-grade package and runs the unit suite; a `test_package/` proves
+`find_package` + link + run from a downstream project (no daemon needed). A CI job creates the
+package on Linux, Windows, and macOS. The version lives in exactly one place —
+`TC_VERSION_FULL` in `CMakeLists.txt` — from which `project()`, `version.cpp`, and the Conan recipe's
+`set_version()` all derive it.
+
+A ConanCenter-shaped recipe is staged verbatim in
+[`packaging/conan-center/`](packaging/conan-center/) (release-tarball sources pinned by sha256, no
+forced dependency options, verified against a fully compiled default Boost on gcc/clang/msvc). It is
+kept byte-in-sync with the in-repo `test_package/` by a CI check. Submission is planned right after
+the `v0.1.0` tag; the process and the recipe-vs-recipe split are documented in its
+[README](packaging/conan-center/README.md).
+
+## History
+
+This is a from-scratch native rewrite. A previous attempt, `testcontainers-cxx/` (kept in this repo
+for reference only), wrapped the Rust `testcontainers` library over a cxx FFI bridge. This project
+drops the bridge and reimplements everything in idiomatic C++ — plain copyable value types,
+in-place-mutating builders, RAII only where a real resource is owned, and a structured exception
+hierarchy over a transport layer we own.
 
 ## License
 
@@ -282,8 +244,8 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 
-at your option.
+at your option (`SPDX: MIT OR Apache-2.0`).
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
-in this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
-without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
+this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
