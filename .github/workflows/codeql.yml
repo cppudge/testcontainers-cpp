@@ -2,6 +2,13 @@
 # taint tracking and the security query pack, not lint-style checks. Runs on
 # main pushes / PRs into main / weekly (to pick up new queries) — not on every
 # feature-branch push, because the traced build makes it the slowest job.
+#
+# The traced build compiles with CLANG (runner default, clang 18 on
+# ubuntu-24.04): every other Linux job builds gcc, so this doubles as the
+# clang compile+link gate — the configuration ConanCenter's clang builds will
+# exercise (they build the whole dependency graph with clang too). clang-tidy
+# already fails parse-level clang warnings via clang-diagnostic-*; what this
+# adds is codegen, linking, and clang-built dependencies.
 name: CodeQL
 
 on:
@@ -34,12 +41,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build
           pipx install conan
 
+      # Own key, no fallback to the gcc jobs' cache: the clang profile gives
+      # every dependency a different package ID, and ConanCenter ships no
+      # Linux clang prebuilts — the first run builds the graph from source
+      # and caches it here. Seeding from the gcc cache would only bake its
+      # dead-weight binaries into this entry (the 10 GB cache is the budget).
       - name: Cache Conan packages
         uses: actions/cache@v4
         with:
           path: .conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: conan-${{ runner.os }}-
+          key: conan-clang-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-clang-${{ runner.os }}-
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -47,12 +59,18 @@ jobs:
           languages: c-cpp
           build-mode: manual
 
-      # The same preset build the CI jobs use; CodeQL traces the compiler
-      # invocations, so dependencies fetched by Conan are seen but only our
-      # sources are analyzed.
+      # The same preset build the CI jobs use, compiled with clang (the
+      # cmake-conan provider derives the clang profile from CC/CXX); CodeQL
+      # traces the compiler invocations, so dependencies fetched by Conan are
+      # seen but only our sources are analyzed. TC_WERROR makes this the gate
+      # for clang-only codegen warnings, same contract as the gcc jobs.
       - name: Build (traced)
+        env:
+          CC: clang
+          CXX: clang++
         run: |
-          cmake --preset ninja
+          clang --version
+          cmake --preset ninja -DTC_WERROR=ON
           cmake --build build/ninja
 
       - name: Analyze
