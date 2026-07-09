@@ -318,6 +318,13 @@ public:
     /// container on destruction, and the container is NOT Ryuk-reaped, so it
     /// survives across runs). When reuse is not enabled globally this is a no-op:
     /// `start()` behaves exactly like a normal (reaped, auto-removed) container.
+    ///
+    /// Matching is CONFIG-based, not content-based: the reuse hash covers the
+    /// create body and the copy-to descriptors, but a host-path copy-to source
+    /// contributes its PATH only (byte sources contribute their content) —
+    /// editing a copied fixture file in place does NOT invalidate an existing
+    /// reused container. Remove the container (or change the path) to pick the
+    /// new content up.
     GenericImage& with_reuse(bool reuse = true) {
         request_.reuse = reuse;
         return *this;

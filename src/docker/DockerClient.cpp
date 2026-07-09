@@ -20,6 +20,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -322,15 +323,19 @@ void DockerClient::end_session() noexcept {
 bool DockerClient::ping() { return request("GET", "/_ping").ok(); }
 
 std::string DockerClient::server_os() {
-    // The engine mode (Linux vs Windows containers) is fixed for the life of the
-    // process, so the first successful answer is cached and reused. Guarded by a
-    // mutex because a process may share the daemon across threads.
+    // The engine mode (Linux vs Windows containers) is fixed for the life of a
+    // DAEMON, not the process — a process may talk to several daemons (e.g. both
+    // Docker Desktop engines, or a local plus a remote one) — so the answer is
+    // cached per endpoint. Guarded by a mutex because a process may share the
+    // daemon across threads.
     static std::mutex cache_mutex;
-    static std::optional<std::string> cached;
+    static std::map<std::string, std::string> cached; // endpoint URL -> Os
+    const std::string endpoint = host_.to_string();
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
-        if (cached) {
-            return *cached;
+        const auto it = cached.find(endpoint);
+        if (it != cached.end()) {
+            return it->second;
         }
     }
 
@@ -341,7 +346,7 @@ std::string DockerClient::server_os() {
     std::string os = docker::parse_server_os(res.body);
 
     std::lock_guard<std::mutex> lock(cache_mutex);
-    cached = os;
+    cached.emplace(endpoint, os);
     return os;
 }
 

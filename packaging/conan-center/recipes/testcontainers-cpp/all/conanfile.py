@@ -51,7 +51,10 @@ class TestcontainersCppConan(ConanFile):
         # tar building/extraction for copy-to/from-container and image builds.
         self.requires("libarchive/3.8.7")
         if self.options.tls or self.options.host_port_forwarding:
-            # TLS transport and/or libssh2's crypto backend.
+            # TLS transport and/or libssh2's crypto backend. openssl is on CCI's
+            # version-range allowlist (documented exception range [>=1.1 <4]);
+            # the floor here is 3 because that is what the library is built and
+            # tested against (1.1 has been EOL since 2023-09).
             self.requires("openssl/[>=3 <4]")
         if self.options.host_port_forwarding:
             # SSH client for the host-port-exposure sidecar tunnel.

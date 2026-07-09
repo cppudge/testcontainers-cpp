@@ -69,8 +69,8 @@ when it lands (adding a short note there if it needs one).
   not representable in the ANSI code page won't round-trip — switch to UTF-8 end to end if it
   ever bites. (`src/Process.cpp`)
 - **`server_os()` cache race is benign but unrealized** — the mutex is released between the
-  cache read and the `GET /version`, so two threads can both issue the first request
-  (idempotent, harmless). `std::call_once` would realize the double-checked intent.
+  per-endpoint cache lookup and the `GET /version`, so two threads can both issue an
+  endpoint's first request (idempotent, harmless; the loser's emplace is a quiet no-op).
   (`src/docker/DockerClient.cpp`)
 - **`pull_image` has no retry on transient registry errors** — a Docker Hub blip surfaces
   immediately as `DockerError: pull_image(...) failed: HTTP 500` (observed twice on 2026-07-09:
@@ -79,6 +79,27 @@ when it lands (adding a short note there if it needs one).
   that pull on every run). `POST /images/create` is idempotent, so a bounded retry with backoff on daemon
   5xx (say 3 attempts) matches what testcontainers-java does and keeps permanent failures
   (bad image name also comes back as 500 "not found") failing fast. (`src/docker/DockerClient.cpp`)
+- **Upload/download paths buffer whole payloads in memory** (2026-07-10 audit) — copy-to
+  holds the file/tree bodies plus the finished tar plus the request-body copy (~2× the
+  payload); the build context lives ~3× buffered for the whole build; copy-from /
+  `read_file` hold the full archive plus the extracted body (~2–3×). Fine for test
+  fixtures; a multi-GB payload dies with a clean `bad_alloc` (or an OOM-kill on a
+  memory-capped runner). Every streaming fix is INTERNAL — libarchive already writes
+  through a callback, USTAR sizes are stat-computable so the PUT can send a real
+  Content-Length, and downloads can mirror the `LogConsumer` pattern — EXCEPT
+  `DockerClient::build_image(const std::string& context_tar, …)`, whose string parameter a
+  streaming source would replace (treat `GenericBuildableImage::build()` as the stable
+  surface; the low-level signature may change for streaming). The Docker API needs nothing
+  new: tar streams both directions, `POST /build?remote=` makes the daemon fetch the
+  context itself, and `HEAD /containers/{id}/archive` returns the file size for a cheap
+  pre-download cap. A configurable `body_limit` ceiling (today `body_limit(none)`) would
+  turn a runaway download into a `DockerError` instead of a crash.
+  (`src/docker/Tar.cpp`, `src/GenericBuildableImage.cpp`, `src/docker/DockerClient.cpp`)
+- **Reuse hash is not content-aware for host-path copy-to sources** — the hash canonical
+  takes a host-path source's PATH only (byte sources contribute content), so editing a
+  fixture file in place still adopts the stale reused container. Documented on
+  `with_reuse`; hashing size+mtime per entry would be the cheap freshness fix (full
+  content hashing collides with the buffering entry above). (`src/Runner.cpp`)
 - **Credential helpers** — output is not cached (the helper is re-invoked on every pull,
   alongside the per-pull config re-read); no end-to-end private-registry integration test
   against a real authenticated registry. (`src/docker/Auth.cpp`)

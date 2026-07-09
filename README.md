@@ -123,8 +123,10 @@ green on Windows (named pipe) and Linux (unix socket):
 - host-port exposure (`with_exposed_host_port` — sshd sidecar + SSH tunnel), and the TLS transport
 
 Known gaps: **end-to-end TLS against a real remote daemon** is the main unverified path (the pure
-`TlsConfig` resolution is unit-tested), and shared builds are **static-only on Windows** (the
-sources carry no symbol-export macros yet). Per-feature limits are tracked in
+`TlsConfig` resolution is unit-tested); shared builds are **static-only on Windows** (the
+sources carry no symbol-export macros yet); and the Ryuk reaper and the host-port-forwarding
+sidecar are **process-global** — they bind to the first daemon used, so a process talking to a
+second daemon gets labels but no crash-safe reaping there. Per-feature limits are tracked in
 [`docs/feature-notes.md`](docs/feature-notes.md) and [`docs/TODO.md`](docs/TODO.md).
 
 ---
