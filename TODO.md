@@ -69,6 +69,13 @@ when it lands (adding a short note there if it needs one).
   cache read and the `GET /version`, so two threads can both issue the first request
   (idempotent, harmless). `std::call_once` would realize the double-checked intent.
   (`src/docker/DockerClient.cpp`)
+- **`pull_image` has no retry on transient registry errors** — a Docker Hub blip surfaces
+  immediately as `DockerError: pull_image(...) failed: HTTP 500` (observed twice on 2026-07-09:
+  the daemon relayed a 500 and later a 502 from auth.docker.io's anonymous-token endpoint —
+  the only failures in ~250 local integration-suite loop iterations, hitting only the tests
+  that pull on every run). `POST /images/create` is idempotent, so a bounded retry with backoff on daemon
+  5xx (say 3 attempts) matches what testcontainers-java does and keeps permanent failures
+  (bad image name also comes back as 500 "not found") failing fast. (`src/docker/DockerClient.cpp`)
 - **Credential helpers** — output is not cached (the helper is re-invoked on every pull,
   alongside the per-pull config re-read); no end-to-end private-registry integration test
   against a real authenticated registry. (`src/docker/Auth.cpp`)
