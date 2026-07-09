@@ -53,7 +53,7 @@ cmake_minimum_required(VERSION 3.20)
 # set_source_files_properties below), conanfile.py's set_version() parses it
 # out, and project() takes the numeric prefix (CMake versions cannot carry a
 # "-alpha.N" prerelease suffix).
-set(TC_VERSION_FULL "0.1.0-alpha.1")
+set(TC_VERSION_FULL "0.1.0")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" TC_VERSION_NUMERIC "${TC_VERSION_FULL}")
 project(testcontainers VERSION ${TC_VERSION_NUMERIC} LANGUAGES CXX)
 
