@@ -182,7 +182,9 @@ a DockerError instead of unbounded allocation); streaming paths are unaffected.
 string; context from host files/dirs and in-memory data; `build()` returns a runnable
 `GenericImage`. Since 2026-07-10 the context STREAMS: host files are descriptors read in
 blocks while the chunked `POST /build` upload runs (`build_image` gained a `BodyProducer`
-overload; the string overload wraps it), and a directory source honors a `.dockerignore` at
+overload; the string overload wraps it — each block goes out under the base io deadline,
+and the 10-minute silent-step widening starts only after the response header), and a
+directory source honors a `.dockerignore` at
 its root with docker-build (moby/patternmatcher) semantics — component globs, `**`, negation
 last-wins, parent-dir exclusion, `^` in classes literal — while a root-mapped source's
 `.dockerignore`/`Dockerfile` always ship (an explicit `with_dockerfile*` beats a walked-up
