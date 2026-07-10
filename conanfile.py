@@ -130,6 +130,9 @@ class TestcontainersCppRecipe(ConanFile):
         tc.cache_variables["SKIP_CONAN_PROVIDER_CMAKE"] = True
         # A package build ships the library only — examples are for the repo.
         tc.cache_variables["TC_BUILD_EXAMPLES"] = False
+        # build() runs the unit suite only (integration wants a Docker daemon a
+        # package build cannot assume), so don't compile integration at all.
+        tc.cache_variables["TC_BUILD_INTEGRATION_TESTS"] = False
         # Mirror the feature options into the CMake build (their CMake
         # defaults are ON; the conan options are the source of truth here).
         tc.cache_variables["TC_TLS"] = bool(self.options.tls)

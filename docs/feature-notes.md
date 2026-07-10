@@ -296,7 +296,9 @@ attach loop (exec's stdin path is the interactive tool).
 
 **Conan package** (2026-07-05) — `conan create .` produces a consumer-grade package:
 `test_package/` proves find_package + link + run from a downstream project (no daemon
-needed), the recipe runs the unit suite via ctest unless `tools.build:skip_test`, and a
+needed), the recipe runs the unit suite via ctest unless `tools.build:skip_test` (the
+integration suite is not even compiled: the recipe pins `TC_BUILD_INTEGRATION_TESTS=OFF`,
+2026-07-10), and a
 CI job creates the package on Linux/Windows/macOS (macOS coverage lives ONLY there).
 The version is written once, in CMakeLists' `TC_VERSION_FULL`: `project()` takes the
 numeric prefix, `version.cpp` compiles the full string in, `set_version()` parses it out.

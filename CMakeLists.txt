@@ -66,6 +66,10 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(TC_BUILD_EXAMPLES "Build examples" ON)
+# A package build runs only the unit suite (integration wants a Docker daemon
+# the build machine cannot assume), so the Conan recipes pin this OFF and skip
+# compiling the ~20 integration TUs they would never run. Repo builds keep both.
+option(TC_BUILD_INTEGRATION_TESTS "Build the Docker-daemon integration test suite" ON)
 
 if(BUILD_SHARED_LIBS)
     if(WIN32)
@@ -291,65 +295,69 @@ if(BUILD_TESTING)
     add_test(NAME unit COMMAND tc_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS "unit")
 
-    # Integration tests — require a reachable Docker daemon (skipped otherwise).
-    add_executable(tc_integration_tests
-        tests/integration/ContainerLifecycleTest.cpp
-        tests/integration/LifecycleTest.cpp
-        tests/integration/ContainerLogsTest.cpp
-        tests/integration/ContainerConfigTest.cpp
-        tests/integration/PortGettersTest.cpp
-        tests/integration/RedisMvpTest.cpp
-        tests/integration/WaitStrategiesTest.cpp
-        tests/integration/ExecTest.cpp
-        tests/integration/TtyTest.cpp
-        tests/integration/CopyTest.cpp
-        tests/integration/BuildImageTest.cpp
-        tests/integration/NetworkTest.cpp
-        tests/integration/VolumeTest.cpp
-        tests/integration/ReaperTest.cpp
-        tests/integration/ReuseTest.cpp
-        tests/integration/AuthTest.cpp
-        tests/integration/HostAccessTest.cpp
-        tests/integration/WindowsContainerTest.cpp
-        tests/integration/ComposeTest.cpp
-        tests/integration/TlsTransportTest.cpp
-    )
-    target_link_libraries(tc_integration_tests PRIVATE
-        testcontainers::testcontainers
-        # RedisMvpTest / ReaperTest open raw TCP sockets with Boost.Asio (allowed
-        # in a test translation unit — it is not a public header).
-        Boost::headers
-        # ReaperTest parses raw inspect JSON to read back a container's labels.
-        nlohmann_json::nlohmann_json
-        GTest::gtest
-        GTest::gtest_main
-    )
-    # TlsTransportTest / HostAccessTest swap their suites for the
-    # disabled-path checks when a feature is off (see the #if in each file).
-    target_compile_definitions(tc_integration_tests PRIVATE ${TC_FEATURE_DEFINES})
-    if(TC_TLS)
-        # TlsTransportTest runs an in-process Boost.Asio TLS echo server and
-        # generates a self-signed cert/key via the OpenSSL C API.
-        target_link_libraries(tc_integration_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    endif()
-    # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id);
-    # tests/support holds helpers shared with the unit tree (TestEnv.hpp).
-    target_include_directories(tc_integration_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
-    )
-    tc_apply_warnings(tc_integration_tests)
-    if(WIN32)
-        target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
-    endif()
-    add_test(NAME integration COMMAND tc_integration_tests)
-    set_tests_properties(integration PROPERTIES LABELS "integration")
-
     if(MSVC)
         # Tests call portable getenv/fopen on purpose (the _s variants are
         # Windows-only); silence the CRT's C4996 deprecation for them.
         target_compile_definitions(tc_unit_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-        target_compile_definitions(tc_integration_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+
+    # Integration tests — require a reachable Docker daemon (skipped otherwise).
+    if(TC_BUILD_INTEGRATION_TESTS)
+        add_executable(tc_integration_tests
+            tests/integration/ContainerLifecycleTest.cpp
+            tests/integration/LifecycleTest.cpp
+            tests/integration/ContainerLogsTest.cpp
+            tests/integration/ContainerConfigTest.cpp
+            tests/integration/PortGettersTest.cpp
+            tests/integration/RedisMvpTest.cpp
+            tests/integration/WaitStrategiesTest.cpp
+            tests/integration/ExecTest.cpp
+            tests/integration/TtyTest.cpp
+            tests/integration/CopyTest.cpp
+            tests/integration/BuildImageTest.cpp
+            tests/integration/NetworkTest.cpp
+            tests/integration/VolumeTest.cpp
+            tests/integration/ReaperTest.cpp
+            tests/integration/ReuseTest.cpp
+            tests/integration/AuthTest.cpp
+            tests/integration/HostAccessTest.cpp
+            tests/integration/WindowsContainerTest.cpp
+            tests/integration/ComposeTest.cpp
+            tests/integration/TlsTransportTest.cpp
+        )
+        target_link_libraries(tc_integration_tests PRIVATE
+            testcontainers::testcontainers
+            # RedisMvpTest / ReaperTest open raw TCP sockets with Boost.Asio (allowed
+            # in a test translation unit — it is not a public header).
+            Boost::headers
+            # ReaperTest parses raw inspect JSON to read back a container's labels.
+            nlohmann_json::nlohmann_json
+            GTest::gtest
+            GTest::gtest_main
+        )
+        # TlsTransportTest / HostAccessTest swap their suites for the
+        # disabled-path checks when a feature is off (see the #if in each file).
+        target_compile_definitions(tc_integration_tests PRIVATE ${TC_FEATURE_DEFINES})
+        if(TC_TLS)
+            # TlsTransportTest runs an in-process Boost.Asio TLS echo server and
+            # generates a self-signed cert/key via the OpenSSL C API.
+            target_link_libraries(tc_integration_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+        endif()
+        # ReaperTest includes the internal src/Reaper.hpp (detail::start_ryuk, session_id);
+        # tests/support holds helpers shared with the unit tree (TestEnv.hpp).
+        target_include_directories(tc_integration_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
+        )
+        tc_apply_warnings(tc_integration_tests)
+        if(WIN32)
+            target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
+        endif()
+        if(MSVC)
+            target_compile_definitions(tc_integration_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+        endif()
+        add_test(NAME integration COMMAND tc_integration_tests)
+        set_tests_properties(integration PROPERTIES LABELS "integration")
     endif()
 endif()
 
