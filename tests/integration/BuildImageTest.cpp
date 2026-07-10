@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <ios>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/Error.hpp"
@@ -23,6 +27,7 @@
 //   BuildImage.DockerfilePathAndTargetStage - with_dockerfile(host path) + with_target build only the named multi-stage target; with_pull refreshes the base.
 //   BuildImage.BuildLogConsumerStreamsSteps - with_build_log_consumer receives the step banners and a RUN step's own echo output during build().
 //   BuildImage.BuildFailureCarriesStepOutput - a failing RUN's own output (echoed before the exit) appears in the DockerError message, not just the daemon's exit-code line.
+//   BuildImage.DockerignoreFiltersContext - a .dockerignore at a directory source's root keeps excluded files out of the uploaded context (COPY sees keep.txt and the .dockerignore itself, not *.log or the ignored dir).
 //   BuildImage.ExistsReflectsLocalImages - GenericImage::exists is true for a just-built tag and false for a name that was never built.
 //   BuildImage.InspectReflectsImageConfig - GenericImage::inspect (static and instance) returns the built image's id/tag/os and Config (label, exposed port, workdir, cmd); inspect_image_raw returns the raw body; a never-built reference throws NotFoundError.
 //   WindowsBuildImage.BuildsAndRunsInlineDockerfile - the same round-trip on a Windows daemon: a nanoserver-based Dockerfile bakes a file, the built image types it out.
@@ -155,6 +160,47 @@ TEST_F(BuildImage, BuildFailureCarriesStepOutput) {
         // The daemon's own failure line, e.g. "... returned a non-zero code: 7".
         EXPECT_NE(what.find("non-zero code: 7"), std::string::npos) << what;
     }
+}
+
+TEST_F(BuildImage, DockerignoreFiltersContext) {
+    // A directory context whose root .dockerignore excludes *.log and a whole
+    // subdirectory: the excluded files must never reach the daemon, while the
+    // .dockerignore itself still ships (docker build parity). COPY the whole
+    // context in and list it to see exactly what arrived.
+    struct ContextDir {
+        std::filesystem::path dir;
+        ContextDir() {
+            dir = std::filesystem::temp_directory_path() /
+                  ("tc_buildignore_" + tcit::random_suffix());
+            std::filesystem::create_directories(dir / "logs");
+            std::ofstream(dir / "keep.txt", std::ios::binary) << "keep-me";
+            std::ofstream(dir / "skip.log", std::ios::binary) << "skip-me";
+            std::ofstream(dir / "logs" / "nested.log", std::ios::binary) << "nested";
+            std::ofstream(dir / ".dockerignore", std::ios::binary) << "*.log\nlogs\n";
+        }
+        ~ContextDir() {
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+    } context;
+
+    GenericImage image = GenericBuildableImage("tc-build-ignore", "latest")
+                             .with_dockerfile_string("FROM alpine:3.20\n"
+                                                     "COPY . /ctx\n"
+                                                     "CMD [\"ls\", \"-A\", \"/ctx\"]\n")
+                             .with_file(context.dir, "")
+                             .build();
+
+    Container c = image.with_wait(wait_for::exit()).start();
+
+    const ContainerLogs out = c.logs();
+    EXPECT_NE(out.stdout_data.find("keep.txt"), std::string::npos)
+        << "stdout was: " << out.stdout_data;
+    EXPECT_NE(out.stdout_data.find(".dockerignore"), std::string::npos)
+        << "stdout was: " << out.stdout_data;
+    EXPECT_EQ(out.stdout_data.find("skip.log"), std::string::npos)
+        << "stdout was: " << out.stdout_data;
+    EXPECT_EQ(out.stdout_data.find("logs"), std::string::npos) << "stdout was: " << out.stdout_data;
 }
 
 TEST_F(BuildImage, ExistsReflectsLocalImages) {

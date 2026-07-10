@@ -152,6 +152,7 @@ add_library(testcontainers
     src/docker/Auth.cpp
     src/docker/LogDemux.cpp
     src/docker/Tar.cpp
+    src/docker/DockerIgnore.cpp
     src/docker/DockerClient.cpp
     src/WaitStrategies.cpp
     src/GenericImage.cpp
@@ -247,6 +248,8 @@ if(BUILD_TESTING)
         tests/unit/ResponseTest.cpp
         tests/unit/CannedHttpServerTest.cpp
         tests/unit/CopyWireTest.cpp
+        tests/unit/BuildWireTest.cpp
+        tests/unit/DockerIgnoreTest.cpp
         tests/unit/ApiMappingTest.cpp
         tests/unit/ApiVersionTest.cpp
         tests/unit/AuthTest.cpp

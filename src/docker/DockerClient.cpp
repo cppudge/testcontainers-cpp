@@ -515,35 +515,38 @@ ImageInspect DockerClient::inspect_image(const std::string& reference) {
 
 void DockerClient::build_image(const std::string& context_tar, const docker::BuildOptions& options,
                                const docker::BuildLogConsumer& consumer) {
+    // One chunk carrying the whole (already in-memory) context; the wire
+    // format is identical to the streaming overload's.
+    build_image([&context_tar](
+                    const docker::ByteSink& sink) { sink(context_tar.data(), context_tar.size()); },
+                options, consumer);
+}
+
+void DockerClient::build_image(const docker::BodyProducer& context,
+                               const docker::BuildOptions& options,
+                               const docker::BuildLogConsumer& consumer) {
     const std::string target =
         versioned("/build" + docker::build_build_query(
                                  options, [](const std::string& v) { return url_encode(v); }));
+    const std::string ctx = "build_image('" + options.tag + "')";
 
-    // Stream the response instead of buffering it: build output is decoded as
-    // the daemon emits it, so a consumer sees steps live and a failure carries
-    // the output that preceded it (mirrors follow_logs).
+    // Stream both directions: the context goes out in chunks as it is
+    // produced, and the response is decoded as the daemon emits it, so a
+    // consumer sees steps live and a failure carries the output that
+    // preceded it (mirrors follow_logs).
     auto transport = docker::connect(host_, timeouts_);
     docker::TransportStream stream{*transport};
 
-    auto req = make_request<http::string_body>(http::verb::post, target, host_);
+    auto req = make_request<http::buffer_body>(http::verb::post, target, host_);
     req.set(http::field::content_type, "application/x-tar");
-    req.body() = context_tar;
-    req.prepare_payload();
+    write_chunked_request(*transport, stream, req, context, ctx, options.tag);
 
     boost::system::error_code ec;
-    http::write(stream, req, ec);
-    if (ec) {
-        transport->close();
-        docker::throw_transport_error(
-            "Failed to send request to Docker (POST " + target + "): " + ec.message(), ec);
-    }
-
     boost::beast::flat_buffer buffer;
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
-    const std::string context = "build_image('" + options.tag + "')";
-    read_ok_header(*transport, stream, buffer, parser, context, options.tag);
+    read_ok_header(*transport, stream, buffer, parser, ctx, options.tag);
 
     // The legacy /build endpoint streams output only when a step produces it —
     // a silent RUN step can legitimately idle for minutes — so widen the io
@@ -587,7 +590,7 @@ void DockerClient::build_image(const std::string& context_tar, const docker::Bui
     if (ec) {
         // The body ended early without a build error: surface the transport
         // problem (a deadline expiry becomes TransportTimeoutError).
-        docker::throw_transport_error(context + " failed reading the build stream: " + ec.message(),
+        docker::throw_transport_error(ctx + " failed reading the build stream: " + ec.message(),
                                       ec);
     }
 }

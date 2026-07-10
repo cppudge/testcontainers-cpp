@@ -238,6 +238,17 @@ public:
     void build_image(const std::string& context_tar, const docker::BuildOptions& options,
                      const docker::BuildLogConsumer& consumer = {});
 
+    /// Streaming `POST /build`: `context` writes the tar build context
+    /// incrementally into the sink it is handed, and each block goes out as
+    /// one chunk of the request body — the context is never held in memory
+    /// whole (GenericBuildableImage::build() streams host files this way).
+    /// Response handling (live progress decoding, embedded-error detection,
+    /// the widened silent-step deadline) matches the string overload; on a
+    /// mid-upload rejection the daemon's error status is preferred over the
+    /// raw transport error.
+    void build_image(const docker::BodyProducer& context, const docker::BuildOptions& options,
+                     const docker::BuildLogConsumer& consumer = {});
+
     // --- Container lifecycle ---
 
     /// `POST /containers/create` — returns the new container id. If the image is

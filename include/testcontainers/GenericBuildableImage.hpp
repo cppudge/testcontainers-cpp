@@ -62,8 +62,14 @@ public:
     }
 
     /// Add a host file or directory to the build context at `target` (a directory
-    /// is added recursively, each file under `target/<relpath>`). The Dockerfile
-    /// must be named `Dockerfile` unless added via `with_dockerfile*`.
+    /// is added recursively, each regular file under `target/<relpath>`; empty
+    /// directories are not shipped). A `.dockerignore` at the directory's root
+    /// filters the walk with `docker build` semantics; for a directory mapped to
+    /// the context root (`target` empty) the `.dockerignore` itself always ships,
+    /// and so does its `Dockerfile` — unless one was added via `with_dockerfile*`
+    /// or `with_data`, which always takes precedence. File bytes are read only
+    /// while the build uploads, so large contexts are never held in memory. The
+    /// Dockerfile must be named `Dockerfile` unless added via `with_dockerfile*`.
     GenericBuildableImage& with_file(std::filesystem::path source_path, std::string target) {
         context_.push_back(CopyToContainer::host_file(std::move(source_path), std::move(target)));
         return *this;
