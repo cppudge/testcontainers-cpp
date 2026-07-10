@@ -313,3 +313,9 @@ dependency options (verified against a fully compiled default Boost on gcc, msvc
 clang-15), compiler floor gcc 12 / clang 15 / apple-clang 15 / msvc 193, and
 `cpp_info.requires` scoping consumers to `boost::headers` instead of the umbrella.
 Submission process and the recipe-vs-recipe split are documented in its README.
+
+**Release workflow** (2026-07-10, `.github/workflows/release.yml`) — pushing a `v*` tag
+verifies the tag matches `TC_VERSION_FULL`, runs `conan create` (with the unit suite) from
+the tagged tree, computes the tag-tarball sha256, and creates a DRAFT GitHub Release whose
+notes carry the sha256 plus a ready `conandata.yml` entry for the ConanCenter version bump.
+Publishing stays a human decision — the workflow never publishes the draft.

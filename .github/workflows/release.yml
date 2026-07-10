@@ -1,0 +1,101 @@
+# Release ritual on a version tag (vX.Y.Z): verify the tag is coherent and
+# that the tagged tree still packages, then DRAFT the GitHub Release with the
+# artifacts the ritual needs — above all the tag-tarball sha256 that pins the
+# version in ConanCenter's conandata.yml. The draft is never published
+# automatically: a human reviews the generated notes and presses publish.
+#
+# Deliberately lean: the tagged commit already ran the full per-push CI
+# (unit + integration on Linux/Windows, sanitizers, clang-format/tidy, plus
+# CodeQL's clang build), so this workflow re-verifies only the packaging path
+# and the release-specific guards a push run cannot cover.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify tag + conan create
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The classic release-day mistake: tagging a commit whose
+      # TC_VERSION_FULL still says the previous version. Fail before any
+      # release object exists.
+      - name: Check the tag matches TC_VERSION_FULL
+        run: |
+          version="$(sed -n 's/^set(TC_VERSION_FULL "\([^"]*\)").*$/\1/p' CMakeLists.txt)"
+          echo "CMakeLists.txt says ${version}; the tag says ${GITHUB_REF_NAME}"
+          test "v${version}" = "${GITHUB_REF_NAME}"
+
+      - name: Install conan
+        run: pipx install conan
+
+      # Shares the per-push conan-create job's cache key, so a release run
+      # after a green push starts warm.
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-create-ubuntu-24.04-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-create-ubuntu-24.04-
+
+      - name: Detect profile
+        run: conan profile detect --force
+
+      # Same contract as ci.yml's conan-package job (validate() requires
+      # cppstd=20), but WITH the unit suite — a release gate can afford it.
+      - name: conan create
+        run: >
+          conan create . --build=missing
+          -s compiler.cppstd=20
+          -c tools.build:skip_test=False
+
+  draft-release:
+    name: Draft the GitHub Release
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # creates the draft release object
+    steps:
+      # GitHub generates tag tarballs on demand; this is the exact artifact
+      # ConanCenter's source() will download, so its sha256 is THE value the
+      # conandata.yml bump needs.
+      - name: Compute the tag-tarball sha256
+        id: tarball
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          sha256="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" --jq .body > notes.md
+          cat >> notes.md <<EOF
+
+          ## Packaging
+
+          Source tarball: ${{ steps.tarball.outputs.url }}
+          sha256: \`${{ steps.tarball.outputs.sha256 }}\`
+
+          ConanCenter \`conandata.yml\` entry for this version:
+          \`\`\`yaml
+          "${GITHUB_REF_NAME#v}":
+            url: "${{ steps.tarball.outputs.url }}"
+            sha256: "${{ steps.tarball.outputs.sha256 }}"
+          \`\`\`
+          EOF
+          gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --draft --verify-tag --title "${GITHUB_REF_NAME}" --notes-file notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"

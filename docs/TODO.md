@@ -7,8 +7,6 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 2 of the agreed batch order (2026-07-10; batch 1 — pull retry + credential-helper
 cache — landed the same day): CI/packaging + test gaps —
-- a `release.yml` on `v*` tags: version-tag guard, `conan create` from the tagged tree,
-  tag-tarball sha256 (the CCI conandata pin), draft GitHub Release
 - TLS end-to-end in CI (`docker:dind` with `DOCKER_TLS_CERTDIR` on the ubuntu runner —
   the integration suite against a real TLS daemon)
 
