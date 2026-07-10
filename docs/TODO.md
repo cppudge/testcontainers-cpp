@@ -5,11 +5,10 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day — see
-[feature-notes.md](feature-notes.md) and the git history): lifecycle — reuse freshness
-(size+mtime in the hash) is the remaining item. (Landed already: session labels on built
-images, compose reaping via the `com.docker.compose.project` filter, per-daemon
-Reaper/HostPortForwarder maps.)
+Batch 5 of the agreed batch order (2026-07-10; batches 1–4 landed — see
+[feature-notes.md](feature-notes.md) and the git history): typed HostConfig — cpu limits,
+restart policy, dns, sysctls, devices, pids-limit setters + surfacing those fields in
+`ContainerInspect` (CreateContainerSpec stays a Docker-typed DTO).
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
@@ -79,12 +78,11 @@ Reaper/HostPortForwarder maps.)
   the raw sink overload + own untar); per-source error attribution is coarser in a batched
   copy (the context names the source COUNT; host-read failures still name the file).
   (`src/docker/DockerClient.cpp`, `src/docker/Tar.cpp`)
-- **Reuse hash is not content-aware for host-path copy-to sources** — the hash canonical
-  takes a host-path source's PATH only (byte sources contribute content), so editing a
-  fixture file in place still adopts the stale reused container. Documented on
-  `with_reuse`; hashing size+mtime per entry is the agreed batch-4 fix (full content
-  hashing stays rejected — it would re-read the whole tree on every start).
-  (`src/Runner.cpp`)
+- **Reuse freshness is metadata-based** — host-path copy-to sources hash size+mtime per
+  file (full content hashing stays rejected — it would re-read the whole tree on every
+  start), so an edit that preserves BOTH size and mtime (deliberate timestamp reset) still
+  adopts the stale container; a stale reuse container also lingers after any hash change
+  until pruned externally. (`src/Runner.cpp`)
 - **Credential helpers** — the config file is still re-read on every pull (only the helper
   subprocess outcome is cached, 5-min TTL since 2026-07-10); no end-to-end private-registry
   integration test against a real authenticated registry (a `registry:2` + htpasswd fixture
@@ -122,11 +120,6 @@ Reaper/HostPortForwarder maps.)
 - **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
   time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
-- **Test gaps** — `Runner.ReuseAdoptsRunningMatch` /
-  `Runner.ReuseCreateBodyCarriesHashNotSessionLabel` script exactly as many canned connections
-  as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
-  (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
-  tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses.
 - **Host access residuals** — remote forwards are never cancelled once added; the
   tunnel pump wakes every 100ms even when idle (fine for test traffic).
   (`src/HostPortForwarding.cpp`)

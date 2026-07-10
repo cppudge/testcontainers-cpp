@@ -1,8 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <ios>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "CannedHttpServer.hpp"
@@ -30,6 +36,8 @@
 //   Runner.WaitTimeoutRemovesContainerAndConsumesAttempts - a readiness timeout surfaces as StartupTimeoutError, force-removes the partial container, and consumes a startup attempt (it IS retried).
 //   Runner.ReuseAdoptsRunningMatch - with reuse enabled, a running hash-match is adopted (no create, not retried) and the handle is persistent (no DELETE on drop).
 //   Runner.ReuseCreateBodyCarriesHashNotSessionLabel - with reuse enabled and no match, the fresh container's create body carries the reuse-hash label and NEVER the session-id label (Ryuk must not reap it); the handle is persistent.
+//   Runner.ReuseHashTracksHostFileFreshness - a host-file copy-to source hashes size+mtime: the hash is stable while the file is unchanged, and changes on an in-place edit and on an mtime-only bump.
+//   Runner.ReuseHashCoversDirectoryTree - a host-dir source hashes the sorted walked tree: stable across runs, changed by editing a nested file or adding an empty directory.
 
 namespace {
 
@@ -166,8 +174,13 @@ TEST(Runner, WaitTimeoutRemovesContainerAndConsumesAttempts) {
 
 TEST(Runner, ReuseAdoptsRunningMatch) {
     const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
-    CannedHttpServer server(
-        {ping_ok(), http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])")});
+    // The spare removed() entry is a tripwire (the KeepSkipsRemovalOnDrop
+    // pattern): if the persistent handle regressed and DID send a DELETE on
+    // drop, that connection gets accepted and recorded — failing the count
+    // below — instead of hanging unaccepted until the io timeout.
+    CannedHttpServer server({ping_ok(),
+                             http_response(200, "OK", R"([{"Id":"reused1","State":"running"}])"),
+                             removed()});
 
     ContainerRequest request = busybox_request();
     request.reuse = true;
@@ -190,6 +203,7 @@ TEST(Runner, ReuseCreateBodyCarriesHashNotSessionLabel) {
         http_response(200, "OK", "[]"), // no running match
         created("fresh1"),
         started(),
+        removed(), // tripwire: an unexpected drop-time DELETE fails the count
     });
 
     ContainerRequest request = busybox_request();
@@ -208,6 +222,115 @@ TEST(Runner, ReuseCreateBodyCarriesHashNotSessionLabel) {
     EXPECT_NE(requests[2].find("org.testcontainers.reuse.hash"), std::string::npos) << requests[2];
     EXPECT_NE(requests[2].find("org.testcontainers.managed-by"), std::string::npos) << requests[2];
     EXPECT_EQ(requests[2].find("org.testcontainers.session-id"), std::string::npos) << requests[2];
+}
+
+namespace {
+
+/// The 16-hex reuse-hash label value inside a recorded create request.
+std::string reuse_hash_of(const std::string& create_request) {
+    const std::string key = R"("org.testcontainers.reuse.hash":")";
+    const std::size_t pos = create_request.find(key);
+    EXPECT_NE(pos, std::string::npos) << create_request;
+    return pos == std::string::npos ? std::string{} : create_request.substr(pos + key.size(), 16);
+}
+
+/// Run one reuse-enabled request (no canned match -> fresh create) against a
+/// throwaway canned daemon and return the create body's reuse hash.
+std::string reuse_hash_for(const ContainerRequest& request) {
+    CannedHttpServer server({
+        ping_ok(),
+        http_response(200, "OK", "[]"), // no running match
+        created("fresh1"),
+        http_response(200, "OK", "{}"), // PUT /containers/fresh1/archive (copy-to)
+        started(),
+        removed(), // tripwire; a persistent drop sends nothing
+    });
+    testcontainers::DockerClient client{server.host()};
+    {
+        const Container c = Runner::run(client, request);
+    }
+    const auto requests = server.requests();
+    EXPECT_EQ(requests.size(), 5u) << "expected ping, list, create, copy PUT, start";
+    return requests.size() > 2 ? reuse_hash_of(requests[2]) : std::string{};
+}
+
+/// A self-cleaning temp directory for fixture files.
+class TempDir {
+public:
+    TempDir() {
+        static std::atomic<unsigned> counter{0};
+        dir_ = std::filesystem::temp_directory_path() /
+               ("tc_runner_reuse_" + std::to_string(counter.fetch_add(1)));
+        std::filesystem::create_directories(dir_);
+    }
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+    const std::filesystem::path& path() const { return dir_; }
+
+private:
+    std::filesystem::path dir_;
+};
+
+void write_file(const std::filesystem::path& p, const std::string& content) {
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+} // namespace
+
+TEST(Runner, ReuseHashTracksHostFileFreshness) {
+    const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
+    const TempDir tmp;
+    const std::filesystem::path file = tmp.path() / "fixture.txt";
+    write_file(file, "v1");
+
+    ContainerRequest request = busybox_request();
+    request.reuse = true;
+    request.copy_to_sources = {CopyToContainer::host_file(file, "/data/fixture.txt")};
+
+    // Unchanged file -> the same hash on every start (adoption works).
+    const std::string first = reuse_hash_for(request);
+    EXPECT_EQ(reuse_hash_for(request), first);
+
+    // A size-changing edit in place -> a different hash (no stale adoption).
+    write_file(file, "v2-now-longer");
+    const std::string edited = reuse_hash_for(request);
+    EXPECT_NE(edited, first);
+
+    // An mtime-only change (same size) is also freshness: bump mtime explicitly.
+    std::error_code ec;
+    const auto mtime = std::filesystem::last_write_time(file, ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(file, mtime + std::chrono::hours(1), ec);
+    ASSERT_FALSE(ec);
+    EXPECT_NE(reuse_hash_for(request), edited);
+}
+
+TEST(Runner, ReuseHashCoversDirectoryTree) {
+    const ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "1");
+    const TempDir tmp;
+    std::filesystem::create_directories(tmp.path() / "sub");
+    write_file(tmp.path() / "a.txt", "alpha");
+    write_file(tmp.path() / "sub" / "b.txt", "beta");
+
+    ContainerRequest request = busybox_request();
+    request.reuse = true;
+    request.copy_to_sources = {CopyToContainer::host_dir(tmp.path(), "/data")};
+
+    // Stable across runs (the walk is sorted, so iteration order cannot leak in).
+    const std::string first = reuse_hash_for(request);
+    EXPECT_EQ(reuse_hash_for(request), first);
+
+    // Editing a nested file changes the tree's hash.
+    write_file(tmp.path() / "sub" / "b.txt", "beta-changed");
+    const std::string edited = reuse_hash_for(request);
+    EXPECT_NE(edited, first);
+
+    // So does adding an empty directory (it is copied, so it is identity).
+    std::filesystem::create_directories(tmp.path() / "sub2");
+    EXPECT_NE(reuse_hash_for(request), edited);
 }
 
 TEST(Runner, HooksFireInOrderAroundCopy) {

@@ -1,7 +1,11 @@
 #include "Runner.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #include "HostPortForwarding.hpp"
 #include "Reaper.hpp"
@@ -14,6 +18,79 @@
 namespace testcontainers {
 
 namespace detail {
+
+namespace {
+
+/// "|<size>|<mtime-ticks>" for one host file, or "|stat-failed" when the
+/// metadata cannot be read — the copy itself raises the real error later, so
+/// hashing must not fail first.
+std::string file_meta(const std::filesystem::path& path) {
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    if (!ec) {
+        const std::filesystem::file_time_type mtime = std::filesystem::last_write_time(path, ec);
+        if (!ec) {
+            return "|" + std::to_string(size) + "|" +
+                   std::to_string(mtime.time_since_epoch().count());
+        }
+    }
+    return "|stat-failed";
+}
+
+/// Append one copy-to source to the reuse canonical: target + mode, then the
+/// content identity. Byte sources contribute their bytes. Host sources
+/// contribute the path PLUS per-file size+mtime, so editing a fixture in
+/// place changes the hash without re-reading content (full content hashing
+/// stays rejected — it would re-read the whole tree on every start). The
+/// directory walk mirrors the tar walk (docker/Tar.cpp): file symlinks are
+/// followed, directory symlinks are recorded but not descended, other entry
+/// kinds are skipped, and entries are sorted (iteration order is unspecified).
+void append_source_canonical(std::string& canonical, const CopyToContainer& s) {
+    canonical += "\n" + s.target() + "\n" + std::to_string(s.mode()) + "\n";
+    if (!s.is_file() && !s.is_dir()) {
+        canonical += s.bytes();
+        return;
+    }
+
+    canonical += s.host_path().string();
+    std::error_code ec;
+    if (!std::filesystem::is_directory(s.host_path(), ec)) {
+        canonical += file_meta(s.host_path());
+        return;
+    }
+
+    std::vector<std::string> entries;
+    std::filesystem::recursive_directory_iterator it(s.host_path(), ec);
+    bool walk_failed = static_cast<bool>(ec);
+    while (!walk_failed && it != std::filesystem::recursive_directory_iterator{}) {
+        // u8string keeps names byte-stable regardless of the host code page
+        // (same reasoning as the tar walk).
+        const std::u8string rel8 = it->path().lexically_relative(s.host_path()).generic_u8string();
+        const std::string rel(rel8.begin(), rel8.end());
+        std::error_code type_ec;
+        if (it->is_directory(type_ec)) {
+            entries.push_back(rel + "/"); // presence matters: empty dirs are copied
+        } else if (it->is_regular_file(type_ec)) {
+            entries.push_back(rel + file_meta(it->path()));
+        }
+        // Checked HERE (not at the loop top): a failed increment may also land
+        // the iterator on end, which would skip a top-of-loop check and lose
+        // the marker.
+        it.increment(ec);
+        if (ec) {
+            walk_failed = true;
+        }
+    }
+    if (walk_failed) {
+        canonical += "|walk-failed"; // the copy raises the real error later
+    }
+    std::sort(entries.begin(), entries.end());
+    for (const std::string& entry : entries) {
+        canonical += "\n" + entry;
+    }
+}
+
+} // namespace
 
 Container Runner::run(DockerClient& client, const ContainerRequest& request) {
     // Local copy of the create spec: the session/reuse labels layered on below
@@ -120,13 +197,12 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
     const bool use_reuse = request.reuse && detail::reuse_enabled();
     if (use_reuse) {
         // Canonical config for the hash: the create body WITHOUT any reuse/session
-        // labels, plus the copy-to descriptors (so copied content participates).
+        // labels, plus the copy-to descriptors (target, mode, and the content
+        // identity — bytes verbatim; host paths with per-file size+mtime for
+        // freshness, see append_source_canonical).
         std::string canonical = docker::build_create_body(spec).dump();
         for (const CopyToContainer& s : request.copy_to_sources) {
-            // Host-path sources (file or dir) contribute their path, byte
-            // sources their content.
-            canonical += "\n" + s.target() + "\n" +
-                         (s.is_file() || s.is_dir() ? s.host_path().string() : s.bytes());
+            append_source_canonical(canonical, s);
         }
         const std::string hash = detail::reuse_hash(canonical);
 

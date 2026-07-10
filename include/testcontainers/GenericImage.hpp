@@ -320,11 +320,13 @@ public:
     /// `start()` behaves exactly like a normal (reaped, auto-removed) container.
     ///
     /// Matching is CONFIG-based, not content-based: the reuse hash covers the
-    /// create body and the copy-to descriptors, but a host-path copy-to source
-    /// contributes its PATH only (byte sources contribute their content) —
-    /// editing a copied fixture file in place does NOT invalidate an existing
-    /// reused container. Remove the container (or change the path) to pick the
-    /// new content up.
+    /// create body and the copy-to descriptors. Byte sources contribute their
+    /// content; a host-path source contributes its path plus each file's SIZE
+    /// and MTIME — editing a copied fixture in place therefore invalidates the
+    /// match (a fresh container is created; the stale one lingers until pruned,
+    /// like any config change). Only an edit that keeps both size and mtime
+    /// (e.g. a deliberate timestamp reset) goes unnoticed; content is never
+    /// re-read for hashing.
     GenericImage& with_reuse(bool reuse = true) {
         request_.reuse = reuse;
         return *this;

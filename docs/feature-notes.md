@@ -105,9 +105,14 @@ filters always go to the ENVIRONMENT daemon's reaper, where compose runs.
 
 **Reuse** (`with_reuse`) — adopts an already-running container matching a stable FNV-1a
 reuse-hash label (`org.testcontainers.reuse.hash`, over the create body + copy-to
-descriptors); gated on `TESTCONTAINERS_REUSE_ENABLE` / `testcontainers.reuse.enable`, degrading
-to a normal container otherwise. Host-FILE copy sources hash the PATH, not the bytes — a
-changed file at the same path still reuses. Reused containers are never auto-removed or reaped:
+descriptors: target, mode, bytes verbatim for byte sources, path + per-file size+mtime for
+host sources — an in-place fixture edit changes the hash without content re-reads; the dir
+walk mirrors the tar walk and is sorted). Gated on `TESTCONTAINERS_REUSE_ENABLE` /
+`testcontainers.reuse.enable`, degrading to a normal container otherwise. The canonical
+changed when freshness metadata was added (2026-07-10): reuse containers created by earlier
+versions WITH copy-to sources hash differently and are not adopted — prune them (copy-free
+reuse configs hash identically and are still adopted). Reused containers are never
+auto-removed or reaped:
 prune externally (label sweep on the reuse-hash label). `Container::keep()` flips a normal
 handle into the same persistent state at runtime (no removal, no stopping hooks on drop;
 `keep(false)` re-arms removal so a debug flag forwards in one call);
