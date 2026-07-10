@@ -13,6 +13,7 @@
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
+#include "testcontainers/TtySize.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -36,6 +37,8 @@
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
 //   Exec.LargeStdinEchoRoundTrip - an 8 MiB stdin round-trips through `cat` byte-identically: possible only because the stdin write is INTERLEAVED with the output read (sequential feeding wedged on daemon-side backpressure in well under 1 MiB); skipped on TLS.
 //   Exec.StdinToEarlyExitingCommandStillReportsExit - a command that exits without reading its multi-megabyte stdin ends as a NORMAL exec (exit code delivered, no exception): the daemon's hijack teardown with unconsumed stdin must read as a clean stream end; skipped on TLS.
+//   Exec.ConsoleSizeAppliesToTtyExec - ExecOptions.console_size sets the tty exec's pseudo-TTY dimensions from the first byte: `stty size` reports the requested (asymmetric) rows x columns.
+//   Exec.ResizeExecAppliesMidRun - on_started delivers the exec id before any output is read; resize_exec from the callback lands while the command polls its own tty size, which then reports the resized dimensions (deadline-bounded; no stdin — tty + piped stdin is the combination even the docker CLI refuses).
 //   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
 //   Exec.PrivilegedExecExpandsCapabilities - ExecOptions.privileged grants the exec process a strict superset of the unprivileged exec's effective capabilities.
 //   Exec.DetachedRunsInBackground - detach=true returns a default ExecResult (empty output, exit 0) and the command really runs: its marker file appears when polled.
@@ -268,6 +271,53 @@ TEST_F(Exec, StdinToEarlyExitingCommandStillReportsExit) {
 
     EXPECT_EQ(res.exit_code, 7);
     EXPECT_TRUE(res.stdout_data.empty());
+}
+
+TEST_F(Exec, ConsoleSizeAppliesToTtyExec) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // The asymmetric 33x123 cannot be a platform default (80x24 and friends),
+    // so the match proves ConsoleSize reached the pseudo-TTY — the daemon
+    // silently drops unknown create-body fields, and a tty exec without the
+    // field gets an arbitrary default size.
+    ExecOptions opts;
+    opts.tty = true;
+    opts.console_size = TtySize{33, 123};
+    const ExecResult res = c.exec({"stty", "size"}, opts);
+
+    EXPECT_EQ(res.exit_code, 0);
+    EXPECT_NE(res.stdout_data.find("33 123"), std::string::npos)
+        << "stdout was: " << res.stdout_data;
+}
+
+TEST_F(Exec, ResizeExecAppliesMidRun) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // No stdin gate: tty + piped stdin is the combination even the docker CLI
+    // refuses (closing stdin tears the whole pty session down and the output
+    // is lost). Instead the command POLLS its own tty size until the resize —
+    // issued from on_started, i.e. before any output was read — lands, then
+    // prints it; the deadline overload bounds a resize that never arrives.
+    DockerClient client = DockerClient::from_environment();
+    ExecOptions opts;
+    opts.tty = true;
+    opts.console_size = TtySize{24, 80}; // the known before-value the loop watches
+    opts.on_started = [&](const std::string& exec_id) {
+        client.resize_exec(exec_id, TtySize{44, 144});
+    };
+    std::string collected;
+    const ExecStreamResult res = c.exec(
+        {"sh", "-c", "while [ \"$(stty size)\" = \"24 80\" ]; do sleep 0.1; done; stty size"}, opts,
+        [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return true;
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(30));
+
+    EXPECT_EQ(res.end, FollowEnd::StreamEnded);
+    ASSERT_TRUE(res.exit_code.has_value());
+    EXPECT_EQ(*res.exit_code, 0);
+    EXPECT_NE(collected.find("44 144"), std::string::npos) << "collected: " << collected;
 }
 
 TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {

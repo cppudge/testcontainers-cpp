@@ -152,12 +152,13 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `logs()` | ✅ | ✅ | ✅ ContainerConfig.*, Tty.LogsAreRawNotFramed | ✅ WindowsContainer.EchoExitsWithExpectedLogs, WindowsBuildImage.* |
 | `follow_logs()` | ✅ | ✅ | ✅ Tty.FollowLogsDeliversRaw | ❌ |
 | `exec(cmd)` | ✅ | ✅ | ✅ Exec.CapturesStdoutAndZeroExit | ✅ WindowsContainer.ExecRunsInRunningContainer |
-| `exec(cmd, opts)` | ✅ | ✅ | ✅ Exec.PassesEnv/UsesWorkingDir/RunsAsUser/TtyCapturesRawStdout/FeedsStdin/LargeStdinEchoRoundTrip | ✅ WindowsExec.* |
+| `exec(cmd, opts)` | ✅ | ✅ | ✅ Exec.PassesEnv/UsesWorkingDir/RunsAsUser/TtyCapturesRawStdout/FeedsStdin/LargeStdinEchoRoundTrip/ConsoleSizeAppliesToTtyExec/ResizeExecAppliesMidRun | ✅ WindowsExec.* |
 | `exec(cmd, opts, consumer)` | ✅ | ✅ | ✅ Exec.StreamsOutputIncrementally, Exec.StreamingStopsWhenConsumerReturnsFalse | ✅ WindowsExec.StreamsOutputIncrementally, WindowsExec.StreamingStopsWhenConsumerReturnsFalse |
 | `exec(cmd, opts, consumer, deadline)` | ✅ | ✅ | ✅ Exec.DeadlineBoundedStreamingReportsExpiry, Exec.DeadlineBoundedStreamingCompletesInTime | ✅ WindowsExec.DeadlineBoundedStreamingReportsExpiry |
 | `copy_to(source)` | ✅ | ✅ [b] | ✅ Copy.CopyIntoRunningContainer | ✅ WindowsCopy.CopyIntoRunningContainer |
 | `read_file(path)` | ✅ | ✅ [b] | ✅ Copy.ReadFileRoundTrip, Copy.LargeFileRoundTrip, Copy.ReadFileRejectsDirectory | ✅ WindowsCopy.ReadFileRoundTrip, WindowsCopy.LargeFileRoundTrip, WindowsCopy.ReadFileRejectsDirectory |
 | `copy_file_from(path, host)` | ✅ | ✅ [b] | ✅ Copy.CopyFileFromWritesHost | ✅ WindowsCopy.CopyFileFromWritesHost |
+| `resize_tty(size)` | ✅ | ✅ | ✅ Tty.ResizeTtyChangesWindowSize | ❌ (ConPTY resize untested; Linux path covers the client-side wire) |
 | `stop()` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop | ❌ |
 | `is_running()` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.* | ✅ WindowsContainer.ExecRunsInRunningContainer |
 | `keep(bool)` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop, Runner.KeepFalseRearmsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
@@ -360,6 +361,8 @@ Network / Volume) on Windows.
 | `logs(id, opts)` | ✅ | ✅ | ✅ DockerLogs.FetchesStdoutAndStderr | ❌ (Container.logs used instead) |
 | `follow_logs(id, opts, consumer)` | ✅ | ✅ | ✅ DockerLogs.FollowStreamsUntilExit, DockerLogs.FollowStopsEarly… | ❌ |
 | `exec(id, cmd[, opts[, consumer[, deadline]]])` | ✅ | ✅ | ✅ via Container (Exec.*) | ✅ via Container (WindowsExec.*) |
+| `resize_exec(exec_id, size)` | ✅ | ✅ | ✅ Exec.ResizeExecAppliesMidRun (+ unit ExecWire.ResizeExecPostsDimensions) | ❌ (same wire path; ConPTY resize untested) |
+| `resize_container_tty(id, size)` | ✅ | ✅ | ✅ via Container (Tty.ResizeTtyChangesWindowSize) + unit ExecWire.ResizeContainerPostsDimensions | ❌ |
 | `copy_to_container(id, source)` | ✅ | ✅ | ✅ via Container.copy_to (Copy.*) | ✅ via Container.copy_to (WindowsCopy.*) |
 | `copy_to_container(id, sources)` (batched) | ✅ | ✅ | ✅ Copy.BatchedCopyLandsAllSources (also the runner's copy-at-start path) | ✅ via with_copy_to at start (WindowsCopy.CopyAtStart*) |
 | `copy_from_container(id, path)` | ✅ | ✅ | ✅ via Container.read_file (Copy.*) | ✅ via Container.read_file (WindowsCopy.*) |

@@ -16,6 +16,7 @@
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/RestartPolicy.hpp"
+#include "testcontainers/TtySize.hpp"
 #include "testcontainers/Ulimit.hpp"
 
 // Tests in this file:
@@ -65,6 +66,7 @@
 //   ApiMapping.BuildExecCreateBodyWithOptions - env/working_dir/user/privileged/tty map to Env/WorkingDir/User/Privileged/Tty.
 //   ApiMapping.BuildExecCreateBodyStdinAttaches - a set stdin_data adds AttachStdin=true (and is absent otherwise).
 //   ApiMapping.BuildExecCreateBodyDetachAttachesNothing - detach=true omits every Attach* field (a detached exec streams nothing back), still emitting Cmd and Tty.
+//   ApiMapping.BuildExecCreateBodyConsoleSize - console_size emits ConsoleSize as the [height, width] array (rows first) and is omitted when unset.
 //   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseExecStatus - exec-inspect JSON parses Running + ExitCode; a running exec's null ExitCode reads as absent (never a type error), a finished one carries its code.
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
@@ -899,6 +901,20 @@ TEST(ApiMapping, BuildExecCreateBodyDetachAttachesNothing) {
     // Cmd / Tty are emitted as usual (`docker exec -d -t` is a legal combo).
     EXPECT_EQ(body["Cmd"], nlohmann::json({"sleep", "30"}));
     EXPECT_FALSE(body["Tty"].get<bool>());
+}
+
+TEST(ApiMapping, BuildExecCreateBodyConsoleSize) {
+    ExecOptions opts;
+    opts.tty = true;
+    opts.console_size = testcontainers::TtySize{33, 123};
+
+    const auto body = build_exec_create_body({"top"}, opts);
+    ASSERT_TRUE(body.contains("ConsoleSize"));
+    // Docker's wire order is [height, width] — rows FIRST; swapping them is
+    // invisible on square-ish defaults, so pin an asymmetric pair.
+    EXPECT_EQ(body["ConsoleSize"], nlohmann::json({33, 123}));
+
+    EXPECT_FALSE(build_exec_create_body({"top"}, ExecOptions{}).contains("ConsoleSize"));
 }
 
 TEST(ApiMapping, ParseExecExitCode) {

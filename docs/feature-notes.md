@@ -183,7 +183,11 @@ TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirro
 `CloseWrite` (flush, then a zero-length message — message-mode pipes only, which is what every
 real daemon serves; inside the pump the flush also pauses output reads while it blocks); TLS
 cannot half-close, so exec-with-stdin throws up front there (Go's `tls.Conn` cannot either —
-the docker CLI hangs where we throw).
+the docker CLI hangs where we throw). TTY sizing: `ExecOptions::console_size` sets a tty
+exec's initial rows x columns at create (`ConsoleSize`, API 1.42+ — older daemons silently
+ignore it), `ExecOptions::on_started` hands out the exec id at the first resize-valid moment
+(started, nothing moved yet), and `resize_exec` / `Container::resize_tty` drive
+`POST /exec/{id}/resize` / `POST /containers/{id}/resize` (SIGWINCH inside).
 
 **Copy to / from container** — `CopyToContainer` (host file, in-memory bytes, or a recursive
 host directory; `with_mode` applies to file entries) is PUT as a pax(restricted) tar — plain

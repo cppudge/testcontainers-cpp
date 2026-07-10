@@ -84,8 +84,9 @@ std::vector<ContainerSummary> parse_container_list(const std::string& body);
 /// captured — except with `opts.detach`, which attaches nothing at all (a
 /// detached exec streams nothing back; `docker exec -d` parity). Emits
 /// AttachStdin (only when `opts.stdin_data` is set and not detaching), Tty, Env
-/// (omitted when empty), WorkingDir / User (omitted when nullopt), and Privileged
-/// (omitted when false).
+/// (omitted when empty), WorkingDir / User (omitted when nullopt), Privileged
+/// (omitted when false), and ConsoleSize as [height, width] (omitted when
+/// nullopt).
 nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
                                       const ExecOptions& opts = {});
 

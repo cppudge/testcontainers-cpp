@@ -105,6 +105,8 @@ ExecStreamResult Container::exec(const std::vector<std::string>& cmd, const Exec
     return client_.exec(id_, cmd, opts, consumer, deadline);
 }
 
+void Container::resize_tty(TtySize size) const { client_.resize_container_tty(id_, size); }
+
 void Container::copy_to(const CopyToContainer& source) const {
     client_.copy_to_container(id_, source);
 }

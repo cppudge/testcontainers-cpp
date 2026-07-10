@@ -682,6 +682,10 @@ nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
     if (opts.privileged) {
         body["Privileged"] = true;
     }
+    if (opts.console_size) {
+        // Docker's wire order is [height, width] — rows first (API 1.42+).
+        body["ConsoleSize"] = {opts.console_size->height, opts.console_size->width};
+    }
     return body;
 }
 

@@ -16,6 +16,7 @@
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/RegistryAuth.hpp"
+#include "testcontainers/TtySize.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
@@ -383,6 +384,19 @@ public:
     ExecStreamResult exec(const std::string& id, const std::vector<std::string>& cmd,
                           const ExecOptions& opts, const LogConsumer& consumer,
                           std::chrono::steady_clock::time_point deadline);
+
+    /// `POST /exec/{exec_id}/resize` — resize a STARTED tty exec's pseudo-TTY
+    /// to `size` (the foreground command gets SIGWINCH and sees the new rows x
+    /// columns). `ExecOptions::on_started` delivers the exec id at exactly the
+    /// first moment this call is valid; the daemon rejects resizing an exec
+    /// that has not started (and one whose command already exited).
+    /// `ExecOptions::console_size` sets the INITIAL size without this call.
+    void resize_exec(const std::string& exec_id, TtySize size);
+
+    /// `POST /containers/{id}/resize` — resize the pseudo-TTY of a container
+    /// created with tty (the foreground process gets SIGWINCH). The daemon
+    /// rejects resizing a container without a TTY or one that is not running.
+    void resize_container_tty(const std::string& id, TtySize size);
 
     /// `PUT /containers/{id}/archive?path=/` — copy a host file, in-memory
     /// bytes, or a host directory tree into the container by extracting a tar

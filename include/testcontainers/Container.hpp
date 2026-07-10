@@ -11,6 +11,7 @@
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/Lifecycle.hpp"
+#include "testcontainers/TtySize.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
@@ -175,6 +176,13 @@ public:
     ExecStreamResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
                           const LogConsumer& consumer,
                           std::chrono::steady_clock::time_point deadline) const;
+
+    /// Resize this container's pseudo-TTY to `size` (rows x columns) — for
+    /// containers created with a TTY; the foreground process gets SIGWINCH
+    /// and sees the new dimensions. Resizing a TTY-less or stopped container
+    /// throws DockerError. (An exec's own TTY is sized independently:
+    /// ExecOptions::console_size / DockerClient::resize_exec.)
+    void resize_tty(TtySize size) const;
 
     /// Copy a host file, in-memory bytes, or a host directory tree into this
     /// already-running container (`PUT /containers/{id}/archive`). For a

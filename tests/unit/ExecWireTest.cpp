@@ -26,6 +26,10 @@
 //   ExecWire.DeadlineOverloadNoExitCodeWhileRunning - after an early consumer stop with the command still running, the inspect's null ExitCode reads as "no exit code" (never a parse error or a fake 0) and the result says ConsumerStopped.
 //   ExecWire.DeadlineOverloadWithStdinPumps - stdin + deadline on the upgraded stream rides the interleaved pump end to end: the output demuxes to the consumer, the server absorbs the stdin, and the result carries StreamEnded plus the inspect's exit code.
 //   ExecWire.StreamingConsumerStopReadsExitZeroWhileRunning - the plain streaming overload keeps its historical contract through the shared-impl rewire: a still-running command after an early stop reads as exit code 0.
+//   ExecWire.ResizeExecPostsDimensions - resize_exec POSTs /exec/{id}/resize with h= and w= carrying rows and columns respectively.
+//   ExecWire.ResizeContainerPostsDimensions - resize_container_tty POSTs /containers/{id}/resize with the same h/w query.
+//   ExecWire.OnStartedDeliversExecIdBeforeOutput - on_started fires with the exec id after the start header and BEFORE the first output chunk reaches the consumer.
+//   ExecWire.DetachedStartInvokesOnStarted - a detached exec still reports its id through on_started (fire-and-forget with a handle to resize).
 
 namespace {
 
@@ -325,4 +329,77 @@ TEST(ExecWire, StreamingConsumerStopReadsExitZeroWhileRunning) {
 
     EXPECT_EQ(res.exit_code, 0);
     EXPECT_TRUE(res.stdout_data.empty());
+}
+
+TEST(ExecWire, ResizeExecPostsDimensions) {
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {ping_ok()},
+        {http_response(200, "OK", "")},
+    });
+    DockerClient client = fast_client(server);
+
+    client.resize_exec("e1", {44, 144});
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 2u); // ping, resize
+    // h= carries the rows, w= the columns — swapped dimensions look fine on
+    // square-ish sizes, so pin an asymmetric pair.
+    EXPECT_TRUE(contains(requests[1], "POST /exec/e1/resize?h=44&w=144")) << requests[1];
+}
+
+TEST(ExecWire, ResizeContainerPostsDimensions) {
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {ping_ok()},
+        {http_response(200, "OK", "")},
+    });
+    DockerClient client = fast_client(server);
+
+    client.resize_container_tty("abc", {44, 144});
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_TRUE(contains(requests[1], "POST /containers/abc/resize?h=44&w=144")) << requests[1];
+}
+
+TEST(ExecWire, OnStartedDeliversExecIdBeforeOutput) {
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {upgraded_with(frame(1, "out"))},
+        {ping_ok()},
+        {exec_created()},
+        {exec_inspected()},
+    });
+    DockerClient client = fast_client(server);
+
+    // on_started must deliver the id AFTER the start header (the exec exists
+    // and runs — resize_exec is valid) and BEFORE any output is consumed.
+    std::vector<std::string> order;
+    ExecOptions opts;
+    opts.on_started = [&](const std::string& exec_id) { order.emplace_back("started:" + exec_id); };
+    const ExecResult res =
+        client.exec("abc", {"echo", "out"}, opts, [&](LogSource, std::string_view) {
+            order.emplace_back("chunk");
+            return true;
+        });
+
+    EXPECT_EQ(res.exit_code, 0);
+    ASSERT_GE(order.size(), 2u);
+    EXPECT_EQ(order[0], "started:e1");
+    EXPECT_EQ(order[1], "chunk");
+}
+
+TEST(ExecWire, DetachedStartInvokesOnStarted) {
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", "")},
+    });
+    DockerClient client = fast_client(server);
+
+    std::string started_id;
+    ExecOptions opts;
+    opts.detach = true;
+    opts.on_started = [&](const std::string& exec_id) { started_id = exec_id; };
+    (void)client.exec("abc", {"sleep", "30"}, opts);
+
+    EXPECT_EQ(started_id, "e1");
 }

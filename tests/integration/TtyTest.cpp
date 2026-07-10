@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <string>
 #include <string_view>
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/GenericImage.hpp"
+#include "testcontainers/TtySize.hpp"
 #include "testcontainers/WaitFor.hpp"
+#include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
 #include "EngineGuard.hpp"
@@ -14,6 +17,7 @@
 //   Tty.LogsAreRawNotFramed - a Tty=true container's logs() returns the raw/unframed stream (stdout contains the text, stderr empty, no stray multiplex header).
 //   Tty.LogWaitWorksOnTtyContainer - wait_for::log succeeds on a Tty=true container, proving the log-wait reads the raw stream instead of garbled multiplex bytes.
 //   Tty.FollowLogsDeliversRaw - follow_logs on a Tty=true container delivers raw chunks (as Stdout) containing the expected text.
+//   Tty.ResizeTtyChangesWindowSize - resize_tty() reaches the container's pseudo-TTY: a loop printing `stty size` starts reporting the new rows x columns.
 
 using namespace testcontainers;
 
@@ -81,4 +85,36 @@ TEST_F(Tty, FollowLogsDeliversRaw) {
         LogOptions{});
 
     EXPECT_NE(collected.find("follow-tty"), std::string::npos) << "collected: " << collected;
+}
+
+TEST_F(Tty, ResizeTtyChangesWindowSize) {
+    // The loop prints the pseudo-TTY's size a few times a second; after
+    // resize_tty the kernel delivers SIGWINCH and subsequent `stty size`
+    // calls report the new dimensions. The bracketed marker makes the match
+    // exact, and the asymmetric 44x144 cannot be a platform default.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_tty()
+                      .with_cmd({"sh", "-c",
+                                 "while true; do echo \"size=[$(stty size)]\"; "
+                                 "sleep 0.2; done"})
+                      .start();
+
+    c.resize_tty(TtySize{44, 144});
+
+    // Follow the raw TTY log stream (deadline-bounded) until the new size
+    // shows up; a resize that never lands ends the follow at the deadline
+    // with the marker missing.
+    DockerClient client = DockerClient::from_environment();
+    LogOptions opts;
+    opts.tty = true;
+    std::string collected;
+    (void)client.follow_logs(
+        c.id(), opts,
+        [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return collected.find("size=[44 144]") == std::string::npos; // stop once seen
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(30));
+
+    EXPECT_NE(collected.find("size=[44 144]"), std::string::npos) << "collected: " << collected;
 }

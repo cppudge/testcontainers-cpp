@@ -975,6 +975,9 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
                                                 docker::build_exec_create_body(cmd, opts).dump());
         exec_start_detached(*this, exec_id, versioned("/exec/" + exec_id + "/start"), opts);
+        if (opts.on_started) {
+            opts.on_started(exec_id);
+        }
         // The command is still running — return the defaults (empty output,
         // exit_code 0) instead of inspecting a not-yet-exited exec.
         return ExecResult{};
@@ -1004,6 +1007,11 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     parser.body_limit(boost::none);
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
                    /*accept_upgraded=*/true);
+    // The exec is now started and the stream established: the first moment a
+    // resize_exec is valid, and before any stdin/output moves.
+    if (opts.on_started) {
+        opts.on_started(exec_id);
+    }
     std::string body;
     if (opts.stdin_data && parser.get().result_int() == 101) {
         // Stdin on the upgraded stream: the write is INTERLEAVED with the
@@ -1135,6 +1143,11 @@ DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::str
 
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
                    /*accept_upgraded=*/true);
+    // The exec is now started and the stream established: the first moment a
+    // resize_exec is valid, and before any stdin/output moves.
+    if (opts.on_started) {
+        opts.on_started(exec_id);
+    }
     FollowEnd end = FollowEnd::DeadlineExpired; // when already past the deadline
     if (opts.stdin_data && parser.get().result_int() == 101) {
         if (deadline) {
@@ -1190,6 +1203,24 @@ DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::str
         out.exit_code = status.exit_code;
     }
     return out;
+}
+
+void DockerClient::resize_exec(const std::string& exec_id, TtySize size) {
+    const Response res =
+        request("POST", versioned("/exec/" + exec_id + "/resize?h=" + std::to_string(size.height) +
+                                  "&w=" + std::to_string(size.width)));
+    if (!res.ok()) {
+        throw_status_error("exec resize " + exec_id, res, exec_id);
+    }
+}
+
+void DockerClient::resize_container_tty(const std::string& id, TtySize size) {
+    const Response res =
+        request("POST", versioned("/containers/" + id + "/resize?h=" + std::to_string(size.height) +
+                                  "&w=" + std::to_string(size.width)));
+    if (!res.ok()) {
+        throw_status_error("container tty resize " + id, res, id);
+    }
 }
 
 void DockerClient::copy_to_container(const std::string& id, const CopyToContainer& source) {
