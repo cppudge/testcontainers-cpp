@@ -81,6 +81,22 @@ public:
     /// calls against a different daemon are no-ops (labels applied, no reaping).
     void ensure_started(DockerClient& client);
 
+    /// Register an ADDITIONAL reap filter (`label=<key>=<value>`) with the
+    /// session's Ryuk — for resources testcontainers cannot label itself (the
+    /// compose CLI creates the project's containers/networks/volumes, which all
+    /// carry `com.docker.compose.project=<project>`). Boots the reaper on the
+    /// environment daemon first when needed; idempotent per (key, value). A
+    /// no-op when Ryuk is disabled or was skipped (Windows engine). Throws
+    /// DockerError when Ryuk does not acknowledge the filter — callers fail
+    /// loudly rather than run without crash-safe reaping.
+    void register_filter(const std::string& key, const std::string& value);
+
+    /// The filter lines this session's Ryuk has acknowledged, in registration
+    /// order (the session filter first); empty when the reaper is disabled or
+    /// skipped. A snapshot — exposed so integration tests can assert a filter
+    /// really reached Ryuk.
+    std::vector<std::string> registered_filters();
+
 private:
     Reaper();
     ~Reaper();

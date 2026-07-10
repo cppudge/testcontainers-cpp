@@ -90,6 +90,11 @@ public:
     DockerComposeContainer&& with_exposed_service(std::string service, ContainerPort port) &&;
 
     /// Override the compose project name (default: "tc" + random hex).
+    ///
+    /// The project is registered with the Ryuk reaper at start(): EVERYTHING
+    /// carrying this `com.docker.compose.project` label — containers, project
+    /// networks and volumes — is removed shortly after the test process exits.
+    /// Do not reuse the name of a compose stack that must outlive the tests.
     DockerComposeContainer& with_project_name(std::string name) &;
     DockerComposeContainer&& with_project_name(std::string name) &&;
 

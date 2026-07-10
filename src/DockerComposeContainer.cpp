@@ -1,6 +1,7 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
 #include "RandomHex.hpp"
+#include "Reaper.hpp"
 #include "compose/ComposeClients.hpp"
 #include "compose/ComposeCommand.hpp"
 #include "docker/Ports.hpp"
@@ -375,6 +376,15 @@ void DockerComposeContainer::start() {
     }
     stack->remove_volumes = remove_volumes_;
     stack->remove_images = remove_images_;
+
+    // Crash-safe reaping: the compose CLI creates the project's containers /
+    // networks / volumes, so they carry compose's project label rather than
+    // our session label — hand Ryuk an extra filter matching the project.
+    // Registered BEFORE `up` so a crash mid-up is swept too; after a clean
+    // stop() the filter simply matches nothing. No-op when Ryuk is disabled
+    // (or skipped on a Windows-containers daemon); idempotent per project, so
+    // a restart re-registers nothing.
+    detail::Reaper::instance().register_filter(kComposeProjectLabel, project_);
 
     // 2) Build and run the compose `up` command.
     compose::ComposeUpCommand up;

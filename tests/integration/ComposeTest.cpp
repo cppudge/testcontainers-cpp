@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
+#include "Reaper.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/DockerComposeContainer.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -17,6 +20,7 @@
 //   Compose.ContainerisedClientBringsUpRedis - the CONTAINERISED client (long-lived docker:26.1-cli + exec) brings up redis (pulling docker:26.1-cli on first run), PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.RestartKeepsProjectAlive - start() on an already-started handle tears the OLD run down first, so the fresh containers survive (the shared project label makes teardown-after-up remove the new run's containers).
+//   Compose.ProjectFilterRegisteredWithReaper - start() hands the session's Ryuk an extra `label=com.docker.compose.project=<project>` filter (crash-safe reaping of the stack), exactly once across a restart.
 
 using namespace testcontainers;
 
@@ -133,6 +137,34 @@ TEST_F(Compose, RestartKeepsProjectAlive) {
     const auto leftovers = client.list_containers(
         {{"label", "com.docker.compose.project=" + compose.project_name()}}, /*all*/ true);
     EXPECT_TRUE(leftovers.empty());
+}
+
+TEST_F(Compose, ProjectFilterRegisteredWithReaper) {
+    if (detail::ryuk_disabled()) {
+        GTEST_SKIP(); // no reaper to register with
+    }
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP(); // host `docker compose` CLI is not available
+    }
+    DockerComposeContainer compose =
+        DockerComposeContainer::from_yaml(kRedisYaml).with_exposed_service("redis", tcp(6379));
+    ASSERT_NO_THROW(compose.start());
+
+    // The filter line must have been ACKed by the REAL Ryuk (register_filter
+    // throws into start() otherwise), and recorded once.
+    const std::string expected =
+        detail::ryuk_filter_line("com.docker.compose.project", compose.project_name());
+    const auto count_registered = [&expected] {
+        const std::vector<std::string> filters = detail::Reaper::instance().registered_filters();
+        return std::count(filters.begin(), filters.end(), expected);
+    };
+    EXPECT_EQ(count_registered(), 1);
+
+    // A restart shares the project name — the filter must not be re-sent.
+    ASSERT_NO_THROW(compose.start());
+    EXPECT_EQ(count_registered(), 1);
+
+    ASSERT_NO_THROW(compose.stop());
 }
 
 TEST_F(Compose, AutoClientBringsUpRedis) {

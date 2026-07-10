@@ -7,8 +7,8 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day — see
 [feature-notes.md](feature-notes.md) and the git history): lifecycle — reuse freshness
-(size+mtime in the hash), a per-daemon reaper map, compose reaping via the
-`com.docker.compose.project` label filter. (Session labels on built images: landed.)
+(size+mtime in the hash) and a per-daemon reaper map. (Landed already: session labels on
+built images, compose reaping via the `com.docker.compose.project` filter.)
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
@@ -105,9 +105,8 @@ Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day
   external-prune story reuse containers have (label sweep).
 - **Volumes** — no `list_volumes` / prune / anonymous-volume management; `populate` spins up a
   real helper container per call (no batching).
-- **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, a
-  socat ambassador for UNPUBLISHED ports, and Ryuk-reaping of compose containers (they carry no
-  session label) are all unsupported.
+- **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, and a
+  socat ambassador for UNPUBLISHED ports are all unsupported.
 - **Windows containers** — `Volume::populate` cannot seed a Windows volume — the
   daemon extracts archives into the container LAYER, bypassing mounts (`docker cp` shares the
   blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.

@@ -92,7 +92,9 @@ started hook aborts start() and cleans up; stopping fires once on teardown — n
 persistent (reuse) handle — and its exceptions are swallowed.
 
 **Reaper (Ryuk)** — containers, networks, named volumes, and built images carry the session
-label. Pinned to `testcontainers/ryuk:0.11.0`, skipped on the Windows engine and via
+label; compose stacks are covered by an extra per-project filter registered over the same
+control connection (each line ACKed). Pinned to `testcontainers/ryuk:0.11.0`, skipped on the
+Windows engine and via
 `TESTCONTAINERS_RYUK_DISABLED`. Process-global: it binds to the FIRST daemon it starts against;
 `run(client, request)` boots it on that client's daemon, but later runs against a different
 daemon in the same process get labels and no crash-safe reaping (see TODO).
@@ -284,8 +286,10 @@ an explicit per-child environment block, so compose env never touches the parent
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running
 project lives in an internal `ActiveStack` whose destructor IS the teardown (compose `down` +
 label sweep), so moves/destruction need no hand-written member lists and a failed `start()`
-(including a partial `up`) cleans up after itself. Compose containers carry no session label
-(not Ryuk-reaped).
+(including a partial `up`) cleans up after itself. Crash-safe reaping: `start()` registers an
+extra `com.docker.compose.project=<project>` filter with the session's Ryuk before `up` (the
+compose CLI's resources carry that label, not ours), so a crashed process's stack — containers,
+project networks/volumes — is swept; with Ryuk disabled only the in-process teardown applies.
 
 **Windows containers** — engine-mode detection (`server_os()` /
 `is_windows_engine()`, cached process-wide), free-form `with_platform`, Ryuk skipped on the

@@ -22,6 +22,7 @@
 #include <array>
 #include <chrono>
 #include <istream>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -110,6 +111,7 @@ struct Reaper::Impl {
     asio::io_context io;
     tcp::socket socket{io};
     std::string container_id;
+    std::vector<std::string> filters; ///< lines Ryuk has ACKed, registration order
 };
 
 Reaper::Reaper() = default;
@@ -265,8 +267,83 @@ void Reaper::start_locked(DockerClient& client) {
 
     // Hold the socket open for the rest of the process — when the process dies,
     // the OS closes it and Ryuk reaps everything tagged with our session id.
+    impl->filters.push_back(line);
     impl_ = std::move(impl);
     started_ = true;
+}
+
+void Reaper::register_filter(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ryuk_disabled()) {
+        return;
+    }
+    if (!started_) {
+        DockerClient client = DockerClient::from_environment();
+        start_locked(client);
+    }
+    if (!impl_) {
+        return; // reaper skipped (Windows-containers engine): nobody to tell
+    }
+
+    const std::string line = ryuk_filter_line(key, value);
+    if (std::find(impl_->filters.begin(), impl_->filters.end(), line) != impl_->filters.end()) {
+        return; // already ACKed (e.g. a restart of the same compose project)
+    }
+
+    // One write + one ACK on the ESTABLISHED control connection. Unlike the
+    // bootstrap handshake there is nothing to retry against: Ryuk is up and
+    // ACKed the session filter on this very socket, so a failure here is a
+    // dead reaper — surface it rather than run without crash-safe reaping.
+    boost::system::error_code ec;
+    const std::optional<std::chrono::milliseconds> leg_budget{std::chrono::seconds(5)};
+    bool done = false;
+    asio::async_write(impl_->socket, asio::buffer(line),
+                      [&](const boost::system::error_code& op_ec, std::size_t) {
+                          done = true;
+                          ec = op_ec;
+                      });
+    run_pending(impl_->io, leg_budget, done, ec, [&] {
+        boost::system::error_code ignore;
+        impl_->socket.cancel(ignore);
+    });
+
+    std::string ack;
+    if (!ec) {
+        asio::streambuf buf;
+        done = false;
+        asio::async_read_until(impl_->socket, buf, '\n',
+                               [&](const boost::system::error_code& op_ec, std::size_t) {
+                                   done = true;
+                                   ec = op_ec;
+                               });
+        run_pending(impl_->io, leg_budget, done, ec, [&] {
+            boost::system::error_code ignore;
+            impl_->socket.cancel(ignore);
+        });
+        if (!ec) {
+            std::istream is(&buf);
+            std::getline(is, ack);
+        }
+    }
+    if (ec) {
+        throw DockerError("Failed to register the Ryuk filter for " + key + "=" + value + ": " +
+                          ec.message());
+    }
+    // Same contract as the session filter: anything but ACK means the filter
+    // is NOT registered (tolerating a trailing CR via the prefix check).
+    if (ack.rfind("ACK", 0) != 0) {
+        throw DockerError("Ryuk did not acknowledge the filter for " + key + "=" + value +
+                          " (got '" + ack + "')");
+    }
+    impl_->filters.push_back(line);
+}
+
+std::vector<std::string> Reaper::registered_filters() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!impl_) {
+        return {};
+    }
+    return impl_->filters;
 }
 
 } // namespace testcontainers::detail

@@ -239,6 +239,7 @@ row's Windows column is n/a for that reason.
 | `with_wait_timeout` | ✅ | n/a | ❌ | n/a |
 | `with_remove_volumes` / `with_remove_images` | ✅ | n/a | ❌ | n/a |
 | `start()` | ✅ | n/a | ✅ Compose.* (+ restart: RestartKeepsProjectAlive) | n/a |
+| `start()` Ryuk project filter | ✅ | n/a | ✅ Compose.ProjectFilterRegisteredWithReaper (registered once, ACKed by the real Ryuk) | n/a |
 | `stop()` | ✅ | n/a | ✅ Compose.* (+ label sweep assertion) | n/a |
 | `get_service_host` | ✅ | n/a | ✅ Compose.* | n/a |
 | `get_service_port` | ✅ | n/a | ✅ Compose.* | n/a |
