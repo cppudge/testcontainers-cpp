@@ -1,6 +1,7 @@
 # CI on every branch push: build + unit + integration on Linux (gcc) and
 # Windows (MSVC, Windows containers), a minimal-features Linux build
 # (TC_TLS=OFF + TC_HOST_PORT_FORWARDING=OFF — no OpenSSL/libssh2 anywhere),
+# the integration suite against a real mutual-TLS daemon (docker:dind),
 # plus the static/dynamic analysis gates — clang-format, clang-tidy, and an
 # ASan+UBSan test run. CodeQL lives in its own workflow (codeql.yml).
 #
@@ -150,6 +151,93 @@ jobs:
       - name: Integration tests
         timeout-minutes: 20
         run: ./build/ninja/bin/tc_integration_tests
+
+  # The integration suite against a REAL TLS daemon: docker:dind generates a
+  # CA + server/client certs (DOCKER_TLS_CERTDIR) and enforces --tlsverify,
+  # so this exercises mutual TLS end to end — server verification, the client
+  # certificate, pulls, exec streaming — the path the in-process echo-server
+  # tests cannot cover (it is where the never-presented-client-cert bug hid).
+  #
+  # Topology: dind stays on the default bridge (host networking would fight
+  # the runner daemon over docker0) and the suite talks to the dind container
+  # IP, aliased as "docker" in /etc/hosts — that name is always in the server
+  # cert's SANs (it is the container's hostname). Ports published by INNER
+  # containers (Ryuk's, Redis's) bind inside dind's netns, so they are
+  # reachable at that same IP — port waits and readiness pings just work.
+  tls-e2e:
+    name: Linux (TLS daemon, dind)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja + conan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          pipx install conan
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: .conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: conan-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake --preset ninja -DTC_WERROR=ON
+
+      - name: Build
+        run: cmake --build build/ninja
+
+      - name: Start a TLS dockerd (docker:dind)
+        run: |
+          mkdir -p "$PWD/dind-certs"
+          docker run -d --name dind --privileged --hostname docker \
+            -e DOCKER_TLS_CERTDIR=/certs \
+            -v "$PWD/dind-certs:/certs" \
+            docker:dind
+          echo "$(docker inspect -f '{{.NetworkSettings.IPAddress}}' dind) docker" | sudo tee -a /etc/hosts
+
+          # The generated materials appear once dockerd is up; the keys are
+          # root-owned 0600, so open the tree up for the test process.
+          ok=""
+          for _ in $(seq 1 45); do
+            if [ -f dind-certs/client/key.pem ]; then ok=1; break; fi
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "::error::dind never wrote client certs"; docker logs dind; exit 1; }
+          sudo chmod -R a+rX dind-certs
+
+          # Readiness over the real TLS endpoint. The docker CLI has no
+          # https:// DOCKER_HOST form — tcp:// + --tlsverify is its spelling.
+          ok=""
+          for _ in $(seq 1 30); do
+            if docker --host tcp://docker:2376 --tlsverify \
+                 --tlscacert dind-certs/client/ca.pem \
+                 --tlscert dind-certs/client/cert.pem \
+                 --tlskey dind-certs/client/key.pem version >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "::error::dind TLS endpoint never became ready"; docker logs dind; exit 1; }
+
+      # Compose is excluded: its tests drive the docker CLI, which cannot take
+      # an https:// DOCKER_HOST (compose coverage lives in the plain-transport
+      # jobs). Exec-stdin tests self-skip on TLS (no half-close) — and their
+      # TLS-only sibling (StdinThrowsOnNonHalfClosableTransport) runs ONLY
+      # here, so this job adds coverage the other jobs skip.
+      - name: Integration tests (mutual TLS)
+        timeout-minutes: 25
+        env:
+          DOCKER_HOST: https://docker:2376
+          DOCKER_TLS_VERIFY: '1'
+          DOCKER_CERT_PATH: ${{ github.workspace }}/dind-certs/client
+        run: ./build/ninja/bin/tc_integration_tests --gtest_filter='-Compose.*'
+
+      - name: dind daemon log (on failure)
+        if: failure()
+        run: docker logs dind 2>&1 | tail -100
 
   windows:
     name: Windows (MSVC, Release)

@@ -9,10 +9,17 @@ should know; the actionable leftovers live in [TODO.md](TODO.md).
 **Transports** (`src/docker/Transport.*`) — unix socket / Windows named pipe / TCP / TLS behind
 one `ITransport`; `connect()` picks by scheme. TLS materials resolve from `DOCKER_CERT_PATH`
 (falling back to `~/.docker` under `DOCKER_TLS_VERIFY`) via the pure `TlsConfig` helpers
-(unit-tested). End-to-end TLS against a real remote daemon is not CI-verified yet (see TODO).
-The TLS transport is a build option (CMake `TC_TLS` / conan `tls`, default ON) — the library's
-only direct OpenSSL use; with it off, `connect()` for an `https://` host throws a `DockerError`
-naming the option, and the pure `TlsConfig` helpers stay available.
+(unit-tested). Mutual TLS is verified end to end in CI against a real `--tlsverify` daemon
+(the `tls-e2e` docker:dind job; fixed 2026-07-10 — the SSL context used to be configured
+after the stream was created, so the client certificate was never presented and server
+verification silently stayed fail-open; the ordering is pinned by two in-process
+TlsTransportTest cases). The TLS transport is a build option (CMake `TC_TLS` / conan `tls`,
+default ON) — the library's only direct OpenSSL use; with it off, `connect()` for an
+`https://` host throws a `DockerError` naming the option, and the pure `TlsConfig` helpers
+stay available. Note the daemon-host spelling difference: this library takes
+`https://host:port` directly, while the docker CLI spells the same thing
+`tcp://host:port` + `DOCKER_TLS_VERIFY` (a `tcp://` → TLS upgrade is not implemented —
+see TODO's host-resolution entry).
 
 **I/O deadlines** (`docker::TransportTimeouts`) — `connect` budgets the whole establishment
 (resolve + connect + TLS handshake, default 10s); `io` deadlines each read/write (default 60s,

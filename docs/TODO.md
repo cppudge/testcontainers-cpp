@@ -5,10 +5,11 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 2 of the agreed batch order (2026-07-10; batch 1 — pull retry + credential-helper
-cache — landed the same day): CI/packaging + test gaps —
-- TLS end-to-end in CI (`docker:dind` with `DOCKER_TLS_CERTDIR` on the ubuntu runner —
-  the integration suite against a real TLS daemon)
+Batch 3 of the agreed batch order (2026-07-10; batches 1–2 landed the same day —
+pull retry + credential-helper cache; TC_BUILD_INTEGRATION_TESTS, clamped_wait_plan,
+release.yml, the tls-e2e dind job + the mutual-TLS fix it flushed out): streaming &
+memory — see the "Upload/download paths buffer whole payloads" entry below, plus the
+USTAR→pax and `.dockerignore` riders in the copy-to / build entries.
 
 (`test_package/` into the clang-tidy job's globs was considered and dropped — little
 profit for the extra build-graph plumbing; it stays a documented residual below.)
@@ -136,7 +137,10 @@ profit for the extra build-graph plumbing; it stays a documented residual below.
   the stopping hook (see public-api-test-coverage.md for the full matrix).
 - **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
   are not consumed, only the `Host` endpoint; only `docker.host` is read from
-  `~/.testcontainers.properties`. (`src/docker/HostResolve.hpp`)
+  `~/.testcontainers.properties`; a `tcp://` host does NOT upgrade to TLS under
+  `DOCKER_TLS_VERIFY` the way the docker CLI treats it — this library needs the explicit
+  `https://` spelling (bit the tls-e2e CI job: our env and the CLI's must differ).
+  (`src/docker/HostResolve.hpp`, `src/docker/DockerHost.cpp`)
 - **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
   time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
@@ -161,9 +165,6 @@ profit for the extra build-graph plumbing; it stays a documented residual below.
   feature-notes.md).
   Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,
   4–8 idle per endpoint, retry-once-only-on-unsent, streaming excluded.
-- **TLS end-to-end in CI** — the transport is implemented and the cert resolution unit-tested,
-  but `TlsTransportTest` needs a reachable remote TLS daemon (skipped otherwise), so the path
-  is unproven end to end.
 - **Ecosystem modules (Tier 4)** — prebuilt module wrappers (Postgres/MySQL/Kafka/…, the
   testcontainers-java "modules" layer) plus the two foundations they'd need first: an
   exec-based wait strategy and a `host()` override. The exploration doc lived in docs/05,
