@@ -31,6 +31,10 @@
 //   StreamRead.RawStreamTreatsBrokenPipeAsCleanEnd - a peer-closed NAMED PIPE ends the stream with broken_pipe (not eof) — that is the normal completion on the primary Windows transport, never an error.
 //   StreamRead.RawConsumerDemuxesLeftoverFirst - stream_raw_to_consumer demuxes frames split between the header-parse leftover and the transport reads.
 //   StreamRead.RawConsumerStopsWhenConsumerReturnsFalse - returning false stops the raw stream delivery early.
+//   StreamRead.RawConsumerReportsWhyDeliveryEnded - stream_raw_to_consumer returns StreamEnded on EOF and ConsumerStopped on an early stop.
+//   StreamRead.RawConsumerDeadlineArmsIoTimeoutPerRead - with a deadline, the raw-stream delivery re-arms the transport's io deadline with a positive remaining budget before every read.
+//   StreamRead.RawConsumerTimedOutReportsDeadlineExpired - a raw-stream read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
+//   StreamRead.RawConsumerExpiredDeadlineDeliversNothing - a deadline already in the past ends the raw delivery with DeadlineExpired before anything is delivered — the header-parse leftover included.
 //   StreamRead.ReportsWhyDeliveryEnded - stream_body_to_consumer returns StreamEnded on EOF and ConsumerStopped on an early stop.
 //   StreamRead.DeadlineArmsIoTimeoutPerRead - with a deadline, the transport's io deadline is re-armed with a positive remaining budget before every read.
 //   StreamRead.TimedOutReadReportsDeadlineExpired - a read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
@@ -262,6 +266,100 @@ TEST(StreamRead, RawConsumerStopsWhenConsumerReturnsFalse) {
 
     ASSERT_EQ(got.size(), 1u);
     EXPECT_EQ(got[0], "first");
+}
+
+TEST(StreamRead, RawConsumerReportsWhyDeliveryEnded) {
+    const std::string body = frame(1, "first") + frame(1, "second");
+    {
+        FakeTransport transport({body});
+        std::size_t delivered = 0;
+        EXPECT_EQ(docker::stream_raw_to_consumer(transport, "", /*tty*/ false,
+                                                 [&](LogSource, std::string_view) {
+                                                     ++delivered;
+                                                     return true;
+                                                 }),
+                  FollowEnd::StreamEnded);
+        EXPECT_EQ(delivered, 2u);
+    }
+    {
+        FakeTransport transport({body});
+        EXPECT_EQ(docker::stream_raw_to_consumer(transport, "", /*tty*/ false,
+                                                 [](LogSource, std::string_view) { return false; }),
+                  FollowEnd::ConsumerStopped);
+    }
+    {
+        // A consumer stop on the LEFTOVER (before any transport read) reports
+        // ConsumerStopped too, not a stream end.
+        FakeTransport transport({});
+        EXPECT_EQ(docker::stream_raw_to_consumer(transport, frame(1, "leftover"), /*tty*/ false,
+                                                 [](LogSource, std::string_view) { return false; }),
+                  FollowEnd::ConsumerStopped);
+    }
+}
+
+TEST(StreamRead, RawConsumerDeadlineArmsIoTimeoutPerRead) {
+    const std::string body = frame(1, "one") + frame(2, "two");
+    FakeTransport transport({body.substr(0, 10), body.substr(10)});
+    std::vector<std::pair<LogSource, std::string>> got;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    EXPECT_EQ(docker::stream_raw_to_consumer(
+                  transport, "", /*tty*/ false,
+                  [&](LogSource source, std::string_view data) {
+                      got.emplace_back(source, std::string(data));
+                      return true;
+                  },
+                  deadline),
+              FollowEnd::StreamEnded);
+    EXPECT_EQ(joined(got, LogSource::Stdout), "one");
+    EXPECT_EQ(joined(got, LogSource::Stderr), "two");
+
+    // Every read was preceded by a re-arm with the remaining (positive,
+    // deadline-bounded) budget — this is what bounds a silent stream.
+    ASSERT_FALSE(transport.io_timeouts_set.empty());
+    for (const auto& timeout : transport.io_timeouts_set) {
+        ASSERT_TRUE(timeout.has_value());
+        EXPECT_GT(*timeout, std::chrono::milliseconds::zero());
+        EXPECT_LE(*timeout, std::chrono::minutes(5));
+    }
+}
+
+TEST(StreamRead, RawConsumerTimedOutReportsDeadlineExpired) {
+    // The re-armed io deadline firing surfaces as asio timed_out from the
+    // transport read; delivery must end with DeadlineExpired, keeping the
+    // chunks that made it.
+    FailingTransport transport({frame(1, "partial")}, boost::asio::error::timed_out);
+    std::vector<std::pair<LogSource, std::string>> got;
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    EXPECT_EQ(docker::stream_raw_to_consumer(
+                  transport, "", /*tty*/ false,
+                  [&](LogSource source, std::string_view data) {
+                      got.emplace_back(source, std::string(data));
+                      return true;
+                  },
+                  deadline),
+              FollowEnd::DeadlineExpired);
+    EXPECT_EQ(joined(got, LogSource::Stdout), "partial");
+}
+
+TEST(StreamRead, RawConsumerExpiredDeadlineDeliversNothing) {
+    FakeTransport transport({frame(1, "never read")});
+
+    const auto deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    bool delivered = false;
+    const FollowEnd end = docker::stream_raw_to_consumer(
+        transport, frame(1, "leftover"),
+        /*tty*/ false,
+        [&](LogSource, std::string_view) {
+            delivered = true;
+            return true;
+        },
+        deadline);
+
+    EXPECT_EQ(end, FollowEnd::DeadlineExpired);
+    EXPECT_FALSE(delivered);
+    EXPECT_TRUE(transport.io_timeouts_set.empty()); // ended before any re-arm
 }
 
 TEST(StreamRead, ReportsWhyDeliveryEnded) {

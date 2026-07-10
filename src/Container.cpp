@@ -1,5 +1,6 @@
 #include "testcontainers/Container.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -96,6 +97,12 @@ ExecResult Container::exec(const std::vector<std::string>& cmd, const ExecOption
 ExecResult Container::exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
                            const LogConsumer& consumer) const {
     return client_.exec(id_, cmd, opts, consumer);
+}
+
+ExecStreamResult Container::exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
+                                 const LogConsumer& consumer,
+                                 std::chrono::steady_clock::time_point deadline) const {
+    return client_.exec(id_, cmd, opts, consumer, deadline);
 }
 
 void Container::copy_to(const CopyToContainer& source) const {

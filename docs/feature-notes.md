@@ -25,7 +25,8 @@ see TODO's host-resolution entry).
 (resolve + connect + TLS handshake, default 10s); `io` deadlines each read/write (default 60s,
 `nullopt` disables). Expiry throws `TransportTimeoutError` and the connection is discarded.
 Long-poll endpoints widen the io deadline (`stop` past its grace period, `build` to 10 min);
-the streaming call sites (`follow_logs`, exec attach) disable it after the response header.
+the streaming call sites (`follow_logs`, exec attach) disable it after the response header —
+except their deadline-bounded overloads, which re-arm it per read from the remaining budget.
 Implementation constraints worth knowing: cancelling a multi-endpoint `asio::async_connect`
 does NOT abort it — deadline expiry must `close()` the socket, not `cancel()` it; and
 `resolver.cancel()` cannot interrupt an in-flight getaddrinfo, so the connect budget is soft
@@ -152,7 +153,16 @@ cooperative stop via the consumer — run it on your own thread). TTY containers
 pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 
 **Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data / detach)
-plus a streaming overload (`exec(cmd, opts, consumer)`). `detach` is fire-and-forget
+plus a streaming overload (`exec(cmd, opts, consumer)`) and its deadline-bounded variant
+(`exec(cmd, opts, consumer, deadline)` → `ExecStreamResult`): the stdin writes and the wait
+for each next output chunk are bounded by the absolute deadline (the named-pipe half-close
+flush in the stdin EOF below is the one step no deadline can bound), and the result says WHY
+delivery ended (`FollowEnd`) plus the exit code — present only when the command had finished,
+because closing the attach stream does not kill it (a command cut off by the deadline keeps
+running in the container; nothing in the Engine API kills an exec). An expiry while
+connecting / creating / starting (or a deadline cutting a stalled stdin write short) surfaces
+as `TransportTimeoutError` instead — `DeadlineExpired` is reported once output could flow.
+`detach` is fire-and-forget
 (`docker exec -d`): create + start as two plain round-trips (nothing attached, no
 upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, exit_code 0 —
 the command is still running, and a command that fails inside the container surfaces no

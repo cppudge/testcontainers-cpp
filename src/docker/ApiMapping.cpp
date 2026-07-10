@@ -695,15 +695,23 @@ std::string expect_string_field(const std::string& body, const char* field,
     }
 }
 
-std::int64_t parse_exec_exit_code(const std::string& body) {
-    return guard_parse("exec inspect", body, [&]() -> std::int64_t {
+ExecStatus parse_exec_status(const std::string& body) {
+    return guard_parse("exec inspect", body, [&]() -> ExecStatus {
         const nlohmann::json json = nlohmann::json::parse(body);
+        ExecStatus status;
+        status.running = json.value("Running", false);
+        // ExitCode is a moby pointer type: null while the command runs (a
+        // value() lookup would throw on present-but-null), an integer after.
         if (const auto code = json.find("ExitCode");
             code != json.end() && code->is_number_integer()) {
-            return code->get<std::int64_t>();
+            status.exit_code = code->get<std::int64_t>();
         }
-        return 0;
+        return status;
     });
+}
+
+std::int64_t parse_exec_exit_code(const std::string& body) {
+    return parse_exec_status(body).exit_code.value_or(0);
 }
 
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image) {

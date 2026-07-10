@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -163,6 +164,17 @@ public:
     /// DockerClient::exec.
     ExecResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
                     const LogConsumer& consumer) const;
+
+    /// Deadline-bounded streaming variant: like the consumer overload, but
+    /// feeding stdin and the wait for each next output chunk are bounded by
+    /// the absolute `deadline` — when it passes, delivery stops with
+    /// FollowEnd::DeadlineExpired instead of blocking until the command
+    /// finishes. The command is NOT killed by that: it keeps running inside
+    /// the container, and the result's exit_code is present only when it had
+    /// actually finished. See DockerClient::exec.
+    ExecStreamResult exec(const std::vector<std::string>& cmd, const ExecOptions& opts,
+                          const LogConsumer& consumer,
+                          std::chrono::steady_clock::time_point deadline) const;
 
     /// Copy a host file, in-memory bytes, or a host directory tree into this
     /// already-running container (`PUT /containers/{id}/archive`). For a

@@ -31,6 +31,8 @@
 //   Exec.TtyCapturesRawStdout - tty=true returns raw output in stdout_data with stderr_data empty.
 //   Exec.StreamsOutputIncrementally - the streaming overload delivers chunks to the consumer and reports the exit code.
 //   Exec.StreamingStopsWhenConsumerReturnsFalse - returning false from the consumer stops the stream early.
+//   Exec.DeadlineBoundedStreamingReportsExpiry - a silent command outliving the deadline ends delivery with DeadlineExpired and no exit code (the command keeps running), long before the command's own runtime.
+//   Exec.DeadlineBoundedStreamingCompletesInTime - a command finishing before the deadline streams its output, reports StreamEnded, and carries its real exit code.
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
 //   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
 //   Exec.PrivilegedExecExpandsCapabilities - ExecOptions.privileged grants the exec process a strict superset of the unprivileged exec's effective capabilities.
@@ -43,6 +45,7 @@
 //   WindowsExec.TtyCapturesRawStdout - tty=true against a Windows container returns raw output in stdout_data with stderr_data empty (the daemon-side ConPTY teardown race is absorbed by a bounded retry).
 //   WindowsExec.StreamsOutputIncrementally - the streaming overload works against a Windows daemon.
 //   WindowsExec.StreamingStopsWhenConsumerReturnsFalse - returning false stops a multi-chunk Windows exec stream early without hanging.
+//   WindowsExec.DeadlineBoundedStreamingReportsExpiry - the deadline bounds a silent Windows exec stream too (the named-pipe transport's re-armed io deadline), reporting DeadlineExpired with no exit code.
 //   WindowsExec.DetachedRunsInBackground - the same fire-and-forget marker-file round-trip against a Windows daemon (marker under %USERPROFILE%: the C:\ root denies ContainerUser writes on ltsc2022 under process isolation, and %TEMP% ACLs deny reading the file back).
 //   WindowsExec.DetachedDoesNotWaitForCompletion - a detached ~60s ping loop returns within the 30s bound against a Windows daemon.
 //   WindowsExec.FeedsStdin - stdin_data is piped into `cmd /q`, which executes the scripted commands (Windows containers + the half-closable transports; skipped on TLS).
@@ -156,6 +159,44 @@ TEST_F(Exec, StreamingStopsWhenConsumerReturnsFalse) {
     // depending on how far the command got before we closed the stream); the key
     // assertion is that returning false stopped streaming without hanging.
     (void)res;
+}
+
+TEST_F(Exec, DeadlineBoundedStreamingReportsExpiry) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // `sleep 30` produces no output and outlives the 2s deadline many times
+    // over, so only the deadline can end delivery. The elapsed bound is
+    // generous for CI yet far below the command's 30s runtime — passing it
+    // proves the deadline (not the command finishing) did the terminating.
+    const auto before = std::chrono::steady_clock::now();
+    const ExecStreamResult res = c.exec(
+        {"sleep", "30"}, ExecOptions{}, [](LogSource, std::string_view) { return true; },
+        before + std::chrono::seconds(2));
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    EXPECT_EQ(res.end, FollowEnd::DeadlineExpired);
+    // Closing the attach stream does not kill the command: it is still
+    // running, so there is no exit code to report.
+    EXPECT_FALSE(res.exit_code.has_value());
+    EXPECT_LT(elapsed, std::chrono::seconds(15));
+}
+
+TEST_F(Exec, DeadlineBoundedStreamingCompletesInTime) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    std::string collected;
+    const ExecStreamResult res = c.exec(
+        {"sh", "-c", "echo in-time; exit 4"}, ExecOptions{},
+        [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return true;
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(60));
+
+    EXPECT_EQ(res.end, FollowEnd::StreamEnded);
+    ASSERT_TRUE(res.exit_code.has_value()) << "the command finished, so the code must be there";
+    EXPECT_EQ(*res.exit_code, 4);
+    EXPECT_NE(collected.find("in-time"), std::string::npos) << "collected: " << collected;
 }
 
 TEST_F(Exec, FeedsStdin) {
@@ -381,6 +422,25 @@ TEST_F(WindowsExec, StreamingStopsWhenConsumerReturnsFalse) {
     // depending on how far the command got before we closed the stream); the key
     // assertion is that returning false stopped streaming without hanging.
     (void)res;
+}
+
+TEST_F(WindowsExec, DeadlineBoundedStreamingReportsExpiry) {
+    Container c = start_keep_alive();
+
+    // `ping -n 60 >nul` stays silent for ~59s — only the deadline can end
+    // delivery. This exercises the re-armed io deadline on the Windows
+    // named-pipe transport (CI talks to dockerd's pipe directly). The elapsed
+    // bound leaves room for the slower Windows create/start round-trips while
+    // staying far below the command's runtime.
+    const auto before = std::chrono::steady_clock::now();
+    const ExecStreamResult res = c.exec(
+        {"cmd", "/c", "ping -n 60 127.0.0.1 >nul"}, ExecOptions{},
+        [](LogSource, std::string_view) { return true; }, before + std::chrono::seconds(2));
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    EXPECT_EQ(res.end, FollowEnd::DeadlineExpired);
+    EXPECT_FALSE(res.exit_code.has_value()); // still running: no exit code
+    EXPECT_LT(elapsed, std::chrono::seconds(30));
 }
 
 TEST_F(WindowsExec, DetachedRunsInBackground) {

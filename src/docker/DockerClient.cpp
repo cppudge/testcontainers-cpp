@@ -934,6 +934,28 @@ void feed_stdin(docker::ITransport& transport, docker::TransportStream& stream,
     transport.shutdown_send(); // signal end-of-input (EOF) to the container
 }
 
+/// Set up `transport`'s io deadline for the streaming phase of an exec (after
+/// the start-response header): without a caller deadline it is DISABLED —
+/// waiting indefinitely for the command's next chunk is the intended behavior
+/// — and with one it is armed with the remaining budget, bounding the stdin
+/// write (the read loops then re-arm per read). Returns false when the
+/// deadline has already passed — the caller reports DeadlineExpired without
+/// feeding stdin or reading output (the exec was started and keeps running).
+bool arm_streaming_deadline(docker::ITransport& transport,
+                            std::optional<std::chrono::steady_clock::time_point> deadline) {
+    if (!deadline) {
+        transport.set_io_timeout(std::nullopt);
+        return true;
+    }
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        *deadline - std::chrono::steady_clock::now());
+    if (remaining <= std::chrono::milliseconds::zero()) {
+        return false;
+    }
+    transport.set_io_timeout(remaining);
+    return true;
+}
+
 } // namespace
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd) {
@@ -1036,6 +1058,24 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
 ExecResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
                               const ExecOptions& opts, const LogConsumer& consumer) {
+    const ExecStreamResult res = exec_stream_impl(id, cmd, opts, consumer, std::nullopt);
+    ExecResult out;
+    // Contract preserved from before the deadline overload existed: a command
+    // still running after an early consumer stop reads as exit code 0.
+    out.exit_code = res.exit_code.value_or(0);
+    return out;
+}
+
+ExecStreamResult DockerClient::exec(const std::string& id, const std::vector<std::string>& cmd,
+                                    const ExecOptions& opts, const LogConsumer& consumer,
+                                    std::chrono::steady_clock::time_point deadline) {
+    return exec_stream_impl(id, cmd, opts, consumer, deadline);
+}
+
+ExecStreamResult
+DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::string>& cmd,
+                               const ExecOptions& opts, const LogConsumer& consumer,
+                               std::optional<std::chrono::steady_clock::time_point> deadline) {
     if (opts.detach) {
         throw DockerError("exec: detach cannot be combined with an output consumer (a "
                           "detached exec attaches no streams, so no output would ever arrive)");
@@ -1056,39 +1096,50 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 
     // 4) Read the response incrementally, delivering chunks to consumer as they
     //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
-    //    deliver the raw bytes as a single stdout stream.
+    //    deliver the raw bytes as a single stdout stream. Stdin goes in only
+    //    AFTER the response header (see feed_stdin), bounded by the deadline's
+    //    remaining budget when one was given; the read loops re-arm that budget
+    //    per read, so the whole delivery is deadline-bounded too.
     boost::beast::flat_buffer buffer;
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
 
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
                    /*accept_upgraded=*/true);
-    // Stdin goes in only AFTER the response header (see feed_stdin).
-    feed_stdin(*transport, stream, exec_id, opts);
-    // Streaming exec output idles until the command writes the next chunk —
-    // waiting indefinitely is the intended behavior from here on.
-    transport->set_io_timeout(std::nullopt);
-    if (parser.get().result_int() == 101) {
-        // Upgraded (the normal path): raw stream, not an HTTP body (see the
-        // non-streaming overload).
-        const auto leftover = buffer.data();
-        docker::stream_raw_to_consumer(
-            *transport,
-            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()), opts.tty,
-            consumer);
-    } else {
-        docker::stream_body_to_consumer(*transport, stream, buffer, parser, opts.tty, consumer);
+    FollowEnd end = FollowEnd::DeadlineExpired; // when already past the deadline
+    if (arm_streaming_deadline(*transport, deadline)) {
+        feed_stdin(*transport, stream, exec_id, opts);
+        if (parser.get().result_int() == 101) {
+            // Upgraded (the normal path): raw stream, not an HTTP body (see the
+            // non-streaming overload).
+            const auto leftover = buffer.data();
+            end = docker::stream_raw_to_consumer(
+                *transport,
+                std::string_view(static_cast<const char*>(leftover.data()), leftover.size()),
+                opts.tty, consumer, deadline);
+        } else {
+            end = docker::stream_body_to_consumer(*transport, stream, buffer, parser, opts.tty,
+                                                  consumer, deadline);
+        }
     }
     transport->close();
 
-    // 5) Inspect the exec for the exit code; the output went to consumer, so
-    //    stdout_data / stderr_data are left empty.
+    // 5) Read back how the exec ended (on a fresh connection under the normal
+    //    io deadline — the caller's deadline does not bound this round-trip).
+    //    Closing the attach stream does not kill the command: after an early
+    //    stop (consumer / deadline) it usually KEEPS RUNNING, so the exit code
+    //    is reported only when the inspect says it actually finished. The
+    //    output went to consumer, so stdout_data / stderr_data have no analog.
     const Response inspect_res = request("GET", versioned("/exec/" + exec_id + "/json"));
     if (inspect_res.status_code != 200) {
         throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
     }
-    ExecResult out;
-    out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
+    ExecStreamResult out;
+    out.end = end;
+    if (const docker::ExecStatus status = docker::parse_exec_status(inspect_res.body);
+        !status.running) {
+        out.exit_code = status.exit_code;
+    }
     return out;
 }
 

@@ -89,7 +89,20 @@ std::vector<ContainerSummary> parse_container_list(const std::string& body);
 nlohmann::json build_exec_create_body(const std::vector<std::string>& cmd,
                                       const ExecOptions& opts = {});
 
-/// Parse the `ExitCode` (integer) from a `GET /exec/{id}/json` response body.
+/// The subset of `GET /exec/{id}/json` needed to interpret how an exec ended.
+struct ExecStatus {
+    bool running = false; ///< Running
+    /// ExitCode. Absent while the command runs (the daemon reports null) —
+    /// but older daemons report 0 instead, so any use of the code must be
+    /// gated on `running`, not on presence.
+    std::optional<std::int64_t> exit_code;
+};
+
+/// Parse `Running` + `ExitCode` from a `GET /exec/{id}/json` response body.
+ExecStatus parse_exec_status(const std::string& body);
+
+/// Parse the `ExitCode` (integer) from a `GET /exec/{id}/json` response body;
+/// a null / absent code (a still-running exec) reads as 0.
 std::int64_t parse_exec_exit_code(const std::string& body);
 
 /// Extract a top-level string `field` from a JSON response `body`, wrapping any

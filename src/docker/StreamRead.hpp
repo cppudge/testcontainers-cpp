@@ -143,24 +143,46 @@ inline std::string read_raw_stream(ITransport& transport, std::string_view lefto
 
 /// Streaming sibling of read_raw_stream: deliver a hijacked (101-upgraded)
 /// stream to `consumer` chunk by chunk (`leftover` first), demuxing unless
-/// `tty`. Returns when the stream ends, the daemon resets it, or `consumer`
-/// returns false — the caller closes the connection either way.
-inline void stream_raw_to_consumer(ITransport& transport, std::string_view leftover, bool tty,
-                                   const LogConsumer& consumer) {
+/// `tty`. Any read error — the stream ending, the daemon resetting it — ends
+/// delivery as StreamEnded (see read_raw_stream on why eof vs broken_pipe is
+/// transport-specific); the caller closes the connection in every case.
+///
+/// With a `deadline`, the transport's io deadline is re-armed with the
+/// remaining budget before every read (mirroring stream_body_to_consumer), so
+/// a silent stream is bounded and ends with DeadlineExpired; a deadline that
+/// has already passed ends delivery before anything is delivered — the
+/// leftover included.
+inline FollowEnd stream_raw_to_consumer(
+    ITransport& transport, std::string_view leftover, bool tty, const LogConsumer& consumer,
+    std::optional<std::chrono::steady_clock::time_point> deadline = std::nullopt) {
     LogDemuxer demuxer;
+    if (deadline && *deadline <= std::chrono::steady_clock::now()) {
+        return FollowEnd::DeadlineExpired;
+    }
     if (!leftover.empty() && !detail::deliver_chunk(demuxer, leftover, tty, consumer)) {
-        return;
+        return FollowEnd::ConsumerStopped;
     }
     std::array<char, 8192> buf{};
     boost::system::error_code ec;
     for (;;) {
+        if (deadline) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                *deadline - std::chrono::steady_clock::now());
+            if (remaining <= std::chrono::milliseconds::zero()) {
+                return FollowEnd::DeadlineExpired;
+            }
+            transport.set_io_timeout(remaining);
+        }
         const std::size_t n = transport.read_some(buf.data(), buf.size(), ec);
         if (n != 0 &&
             !detail::deliver_chunk(demuxer, std::string_view(buf.data(), n), tty, consumer)) {
-            return;
+            return FollowEnd::ConsumerStopped;
+        }
+        if (ec == boost::asio::error::timed_out && deadline) {
+            return FollowEnd::DeadlineExpired; // the re-armed io deadline fired
         }
         if (ec) {
-            return; // stream ended or reset — the caller closes either way
+            return FollowEnd::StreamEnded; // ended or reset — the caller closes either way
         }
     }
 }

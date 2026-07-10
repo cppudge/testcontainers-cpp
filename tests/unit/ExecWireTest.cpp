@@ -22,6 +22,9 @@
 //   ExecWire.DetachRejectsStdin - detach + stdin_data throws DockerError naming both options before any connection is opened (no abandoned exec instance).
 //   ExecWire.DetachRejectsConsumer - detach on the streaming overload throws DockerError naming the consumer before any connection is opened.
 //   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
+//   ExecWire.DeadlineOverloadReportsExitCodeWhenFinished - the deadline overload delivers the stream, reports StreamEnded, and carries the exit code the inspect returned for the finished command.
+//   ExecWire.DeadlineOverloadNoExitCodeWhileRunning - after an early consumer stop with the command still running, the inspect's null ExitCode reads as "no exit code" (never a parse error or a fake 0) and the result says ConsumerStopped.
+//   ExecWire.StreamingConsumerStopReadsExitZeroWhileRunning - the plain streaming overload keeps its historical contract through the shared-impl rewire: a still-running command after an early stop reads as exit code 0.
 
 namespace {
 
@@ -217,4 +220,79 @@ TEST(ExecWire, UpgradedStreamReadsRaw) {
     EXPECT_EQ(res.stdout_data, "out");
     EXPECT_EQ(res.stderr_data, "err");
     EXPECT_EQ(res.exit_code, 0);
+}
+
+namespace {
+
+/// A 101-upgraded exec-start reply carrying `body` as the raw stream.
+std::string upgraded_with(const std::string& body) {
+    return "HTTP/1.1 101 UPGRADED\r\n"
+           "Content-Type: application/vnd.docker.raw-stream\r\n"
+           "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n" +
+           body;
+}
+
+} // namespace
+
+TEST(ExecWire, DeadlineOverloadReportsExitCodeWhenFinished) {
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {upgraded_with(frame(1, "done"))},
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", R"({"Running":false,"ExitCode":3})")},
+    });
+    DockerClient client = fast_client(server);
+
+    std::string collected;
+    const testcontainers::ExecStreamResult res = client.exec(
+        "abc", {"sh", "-c", "exit 3"}, ExecOptions{},
+        [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return true;
+        },
+        std::chrono::steady_clock::now() + std::chrono::minutes(5));
+
+    EXPECT_EQ(res.end, testcontainers::FollowEnd::StreamEnded);
+    ASSERT_TRUE(res.exit_code.has_value());
+    EXPECT_EQ(*res.exit_code, 3);
+    EXPECT_EQ(collected, "done");
+}
+
+TEST(ExecWire, DeadlineOverloadNoExitCodeWhileRunning) {
+    // The consumer stops early and the exec inspect reports the command still
+    // running. ExitCode is null then (moby serializes a pointer type) — that
+    // must read as "no exit code yet", never as a parse error or a fake 0.
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {upgraded_with(frame(1, "first") + frame(1, "second"))},
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", R"({"Running":true,"ExitCode":null})")},
+    });
+    DockerClient client = fast_client(server);
+
+    const testcontainers::ExecStreamResult res = client.exec(
+        "abc", {"sh"}, ExecOptions{}, [](LogSource, std::string_view) { return false; },
+        std::chrono::steady_clock::now() + std::chrono::minutes(5));
+
+    EXPECT_EQ(res.end, testcontainers::FollowEnd::ConsumerStopped);
+    EXPECT_FALSE(res.exit_code.has_value());
+}
+
+TEST(ExecWire, StreamingConsumerStopReadsExitZeroWhileRunning) {
+    // The plain (no-deadline) streaming overload keeps its historical contract
+    // through the shared-impl rewire: a command still running after an early
+    // consumer stop reads as exit code 0 (and the null ExitCode never throws).
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {upgraded_with(frame(1, "first") + frame(1, "second"))},
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", R"({"Running":true,"ExitCode":null})")},
+    });
+    DockerClient client = fast_client(server);
+
+    const ExecResult res = client.exec("abc", {"sh"}, ExecOptions{},
+                                       [](LogSource, std::string_view) { return false; });
+
+    EXPECT_EQ(res.exit_code, 0);
+    EXPECT_TRUE(res.stdout_data.empty());
 }

@@ -46,8 +46,8 @@ the exec stdin write with the output read.
   `io_context` per probe (fine at 200ms polling; revisit if probe frequency ever increases).
   (`src/WaitStrategies.cpp`)
 - **follow_logs / streaming exec are blocking** — the consumer stops cooperatively (return
-  false on the next chunk) or, for follow_logs, via the deadline-bounded overload; streaming
-  exec has no deadline variant, and a background-thread RAII log handle with socket-level
+  false on the next chunk) or via the deadline-bounded overloads (follow_logs and, since
+  2026-07-11, streaming exec); a background-thread RAII log handle with socket-level
   cancellation is not provided. (`src/docker/DockerClient.cpp`)
 - **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec;
   stdin is written fully (then half-closed) BEFORE any output is read, so a command echoing a

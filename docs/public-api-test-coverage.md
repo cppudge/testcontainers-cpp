@@ -154,6 +154,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `exec(cmd)` | ✅ | ✅ | ✅ Exec.CapturesStdoutAndZeroExit | ✅ WindowsContainer.ExecRunsInRunningContainer |
 | `exec(cmd, opts)` | ✅ | ✅ | ✅ Exec.PassesEnv/UsesWorkingDir/RunsAsUser/TtyCapturesRawStdout/FeedsStdin | ✅ WindowsExec.* |
 | `exec(cmd, opts, consumer)` | ✅ | ✅ | ✅ Exec.StreamsOutputIncrementally, Exec.StreamingStopsWhenConsumerReturnsFalse | ✅ WindowsExec.StreamsOutputIncrementally, WindowsExec.StreamingStopsWhenConsumerReturnsFalse |
+| `exec(cmd, opts, consumer, deadline)` | ✅ | ✅ | ✅ Exec.DeadlineBoundedStreamingReportsExpiry, Exec.DeadlineBoundedStreamingCompletesInTime | ✅ WindowsExec.DeadlineBoundedStreamingReportsExpiry |
 | `copy_to(source)` | ✅ | ✅ [b] | ✅ Copy.CopyIntoRunningContainer | ✅ WindowsCopy.CopyIntoRunningContainer |
 | `read_file(path)` | ✅ | ✅ [b] | ✅ Copy.ReadFileRoundTrip, Copy.LargeFileRoundTrip, Copy.ReadFileRejectsDirectory | ✅ WindowsCopy.ReadFileRoundTrip, WindowsCopy.LargeFileRoundTrip, WindowsCopy.ReadFileRejectsDirectory |
 | `copy_file_from(path, host)` | ✅ | ✅ [b] | ✅ Copy.CopyFileFromWritesHost | ✅ WindowsCopy.CopyFileFromWritesHost |
@@ -358,7 +359,7 @@ Network / Volume) on Windows.
 | `remove_container(id, force, vols)` | ✅ | ✅ | ✅ RemoveGuard, Reuse cleanup | ❌ (indirect via RAII) |
 | `logs(id, opts)` | ✅ | ✅ | ✅ DockerLogs.FetchesStdoutAndStderr | ❌ (Container.logs used instead) |
 | `follow_logs(id, opts, consumer)` | ✅ | ✅ | ✅ DockerLogs.FollowStreamsUntilExit, DockerLogs.FollowStopsEarly… | ❌ |
-| `exec(id, cmd[, opts[, consumer]])` | ✅ | ✅ | ✅ via Container (Exec.*) | ✅ via Container (WindowsExec.*) |
+| `exec(id, cmd[, opts[, consumer[, deadline]]])` | ✅ | ✅ | ✅ via Container (Exec.*) | ✅ via Container (WindowsExec.*) |
 | `copy_to_container(id, source)` | ✅ | ✅ | ✅ via Container.copy_to (Copy.*) | ✅ via Container.copy_to (WindowsCopy.*) |
 | `copy_to_container(id, sources)` (batched) | ✅ | ✅ | ✅ Copy.BatchedCopyLandsAllSources (also the runner's copy-at-start path) | ✅ via with_copy_to at start (WindowsCopy.CopyAtStart*) |
 | `copy_from_container(id, path)` | ✅ | ✅ | ✅ via Container.read_file (Copy.*) | ✅ via Container.read_file (WindowsCopy.*) |

@@ -162,7 +162,9 @@ public:
     /// copy of the client carries its timeouts along). Endpoints known to be
     /// long-polling widen the io deadline internally (`stop` waits up to its
     /// grace period, `build` may have long silent steps); the streaming call
-    /// sites (`follow_logs`, exec attach reads) disable it regardless.
+    /// sites (`follow_logs`, exec attach reads) disable it regardless — or,
+    /// on their deadline-bounded overloads, re-arm it from the remaining
+    /// budget instead.
     void set_transport_timeouts(const docker::TransportTimeouts& timeouts) { timeouts_ = timeouts; }
     const docker::TransportTimeouts& transport_timeouts() const noexcept { return timeouts_; }
 
@@ -354,12 +356,32 @@ public:
     /// stream is demuxed and each chunk is reported with its `LogSource`; with
     /// `opts.tty == true` the raw stream is reported as `LogSource::Stdout`.
     ///
-    /// Returns an `ExecResult` whose `exit_code` is read from the exec inspect;
+    /// Returns an `ExecResult` whose `exit_code` is read from the exec inspect
+    /// (0 when the command was still running after an early consumer stop —
+    /// the deadline overload below reports that distinction);
     /// `stdout_data` / `stderr_data` are left empty (the output was delivered to
     /// `consumer`). `opts.detach` is rejected with a DockerError before any
     /// daemon interaction: a detached exec produces no output stream to deliver.
     ExecResult exec(const std::string& id, const std::vector<std::string>& cmd,
                     const ExecOptions& opts, const LogConsumer& consumer);
+
+    /// Deadline-bounded streaming exec: same incremental delivery, but feeding
+    /// stdin and the wait for each next output chunk are additionally bounded
+    /// by the absolute `deadline` — when it passes, the stream is closed and
+    /// the result says DeadlineExpired instead of blocking until the command
+    /// finishes. Stopping delivery does NOT kill the command: it keeps running
+    /// inside the container, so the result's `exit_code` is present only when
+    /// the exec inspect says the command had finished (virtually always the
+    /// case after FollowEnd::StreamEnded; after an early stop it is a race).
+    /// Deadline
+    /// mechanics match the follow_logs overload: connecting, the create/start
+    /// round-trips, and reading the response header run under the transport's
+    /// io deadline, so an expiry there surfaces as TransportTimeoutError (as
+    /// does a deadline cutting a stalled stdin write short), not as
+    /// DeadlineExpired. `opts.detach` is rejected like the overload above.
+    ExecStreamResult exec(const std::string& id, const std::vector<std::string>& cmd,
+                          const ExecOptions& opts, const LogConsumer& consumer,
+                          std::chrono::steady_clock::time_point deadline);
 
     /// `PUT /containers/{id}/archive?path=/` — copy a host file, in-memory
     /// bytes, or a host directory tree into the container by extracting a tar
@@ -502,6 +524,13 @@ private:
     FollowEnd follow_logs_impl(const std::string& id, const LogOptions& opts,
                                const LogConsumer& consumer,
                                std::optional<std::chrono::steady_clock::time_point> deadline);
+
+    /// Shared body of both streaming exec overloads; nullopt = no deadline
+    /// (deliver until the command finishes or the consumer declines).
+    ExecStreamResult
+    exec_stream_impl(const std::string& id, const std::vector<std::string>& cmd,
+                     const ExecOptions& opts, const LogConsumer& consumer,
+                     std::optional<std::chrono::steady_clock::time_point> deadline);
 
     /// The "/v1.NN" prefix every typed method pins its path with. Negotiated
     /// on first use — one unversioned `GET /_ping`, then
