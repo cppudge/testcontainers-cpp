@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace testcontainers {
 
@@ -368,13 +369,28 @@ void DockerClient::pull_image(const std::string& image, const std::optional<Regi
         headers.emplace_back("X-Registry-Auth", docker::encode_x_registry_auth(*cred));
     }
 
-    const Response res = request("POST", target, /*body*/ {}, headers);
-    if (res.status_code != 200) {
-        throw_status_error("pull_image('" + image + "')", res, image);
+    // A registry hiccup relayed by the daemon (its auth-token endpoint
+    // answering 5xx, a blip mid-handshake) surfaces as a 5xx response header —
+    // /images/create is idempotent, so those get a bounded retry. Everything
+    // else fails on the first try: 4xx are permanent, and an error embedded in
+    // the 200 progress stream is how most daemons report a nonexistent image
+    // (some relay it as a header 500 instead — the retry then costs a few
+    // extra seconds before the same failure).
+    std::chrono::milliseconds delay = pull_retry_.first_delay;
+    for (int attempt = 1;; ++attempt) {
+        const Response res = request("POST", target, /*body*/ {}, headers);
+        if (res.status_code == 200) {
+            // Docker streams progress as newline-delimited JSON and returns 200
+            // even on failure, embedding the error in the stream.
+            docker::throw_if_pull_error(res.body, image);
+            return;
+        }
+        if (attempt >= pull_retry_.attempts || res.status_code < 500 || res.status_code > 599) {
+            throw_status_error("pull_image('" + image + "')", res, image);
+        }
+        std::this_thread::sleep_for(delay);
+        delay *= 2;
     }
-    // Docker streams progress as newline-delimited JSON and returns 200 even on
-    // failure, embedding the error in the stream.
-    docker::throw_if_pull_error(res.body, image);
 }
 
 bool DockerClient::image_exists(const std::string& reference) {

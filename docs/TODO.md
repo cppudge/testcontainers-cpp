@@ -5,7 +5,14 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-- (empty — pick from Tech debt / Open below)
+Batch 2 of the agreed batch order (2026-07-10; batch 1 — pull retry + credential-helper
+cache — landed the same day): CI/packaging + test gaps —
+- TLS end-to-end in CI (`docker:dind` with `DOCKER_TLS_CERTDIR` on the ubuntu runner, so
+  `TlsTransportTest` stops self-skipping)
+- a `BUILD_INTEGRATION_TESTS` toggle (package builds compile the integration suite they
+  never run)
+- `test_package/` into the clang-tidy job's globs
+- extract a pure `clamped_wait_plan(now, value, deadline)` under unit test
 
 ## Tech debt
 - **CI analysis follow-ups** (from the 2026-07-05 review of the analysis gates) —
@@ -72,13 +79,6 @@ when it lands (adding a short note there if it needs one).
   per-endpoint cache lookup and the `GET /version`, so two threads can both issue an
   endpoint's first request (idempotent, harmless; the loser's emplace is a quiet no-op).
   (`src/docker/DockerClient.cpp`)
-- **`pull_image` has no retry on transient registry errors** — a Docker Hub blip surfaces
-  immediately as `DockerError: pull_image(...) failed: HTTP 500` (observed twice on 2026-07-09:
-  the daemon relayed a 500 and later a 502 from auth.docker.io's anonymous-token endpoint —
-  the only failures in ~250 local integration-suite loop iterations, hitting only the tests
-  that pull on every run). `POST /images/create` is idempotent, so a bounded retry with backoff on daemon
-  5xx (say 3 attempts) matches what testcontainers-java does and keeps permanent failures
-  (bad image name also comes back as 500 "not found") failing fast. (`src/docker/DockerClient.cpp`)
 - **Upload/download paths buffer whole payloads in memory** (2026-07-10 audit) — copy-to
   holds the file/tree bodies plus the finished tar plus the request-body copy (~2× the
   payload); the build context lives ~3× buffered for the whole build; copy-from /
@@ -100,9 +100,10 @@ when it lands (adding a short note there if it needs one).
   fixture file in place still adopts the stale reused container. Documented on
   `with_reuse`; hashing size+mtime per entry would be the cheap freshness fix (full
   content hashing collides with the buffering entry above). (`src/Runner.cpp`)
-- **Credential helpers** — output is not cached (the helper is re-invoked on every pull,
-  alongside the per-pull config re-read); no end-to-end private-registry integration test
-  against a real authenticated registry. (`src/docker/Auth.cpp`)
+- **Credential helpers** — the config file is still re-read on every pull (only the helper
+  subprocess outcome is cached, 5-min TTL since 2026-07-10); no end-to-end private-registry
+  integration test against a real authenticated registry (a `registry:2` + htpasswd fixture
+  seeded via the daemon's push would cover it). (`src/docker/Auth.cpp`)
 - **copy-to / copy-from** — USTAR caps entry path length (100/255 chars; pax would lift it);
   one tar + PUT per source (no batching); no directory-tree copy-FROM helper (use
   `extract_tar` on the raw bytes; copy-to has `CopyToContainer::host_dir`). `host_dir` does

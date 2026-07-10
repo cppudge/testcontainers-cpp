@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <optional>
 #include <string>
 
@@ -31,6 +32,10 @@
 //   Auth.ParseCredentialHelperOutputIdentityToken - a "<token>" username yields an identity token (no user/pass).
 //   Auth.ParseCredentialHelperOutputEmpty - empty/blank-credential helper output yields nullopt.
 //   Auth.ParseCredentialHelperOutputInvalidJson - malformed helper JSON yields nullopt rather than throwing.
+//   Auth.CredentialHelperCacheServesRepeatLookups - a second lookup for the same (helper, registry) within the TTL returns the cached credentials without re-running the fetch.
+//   Auth.CredentialHelperCacheCachesAbsence - a nullopt outcome ("no creds" — the anonymous-pull answer) is cached too, so the helper is not re-forked per pull.
+//   Auth.CredentialHelperCacheExpires - a zero TTL makes every entry stale on arrival, so each lookup fetches again.
+//   Auth.CredentialHelperCacheKeyIsHelperAndRegistry - lookups differing in registry or helper name fetch independently.
 //   Auth.EncodeXRegistryAuthBasic - encode_x_registry_auth base64-encodes JSON with username/password/serveraddress.
 //   Auth.EncodeXRegistryAuthIdentityToken - encode_x_registry_auth emits identitytoken/serveraddress (no user/pass) when a token is set.
 //   Auth.ApplyHubImagePrefixHubImage - a Docker Hub image gets the corporate-mirror prefix prepended.
@@ -43,9 +48,11 @@
 
 using testcontainers::RegistryAuth;
 using testcontainers::docker::apply_hub_image_prefix;
+using testcontainers::docker::auth_from_credential_helper_cached;
 using testcontainers::docker::auth_from_docker_config;
 using testcontainers::docker::base64_decode;
 using testcontainers::docker::base64_encode;
+using testcontainers::docker::clear_credential_helper_cache;
 using testcontainers::docker::encode_x_registry_auth;
 using testcontainers::docker::parse_credential_helper_output;
 using testcontainers::docker::resolve_registry;
@@ -254,6 +261,80 @@ TEST(Auth, ParseCredentialHelperOutputEmpty) {
 
 TEST(Auth, ParseCredentialHelperOutputInvalidJson) {
     EXPECT_FALSE(parse_credential_helper_output("not json {", "ghcr.io").has_value());
+}
+
+TEST(Auth, CredentialHelperCacheServesRepeatLookups) {
+    clear_credential_helper_cache();
+    int calls = 0;
+    const auto fetch = [&calls]() -> std::optional<RegistryAuth> {
+        ++calls;
+        RegistryAuth auth;
+        auth.username = "me";
+        auth.password = "pw";
+        auth.server = "ghcr.io";
+        return auth;
+    };
+
+    const auto first =
+        auth_from_credential_helper_cached("helper", "ghcr.io", fetch, std::chrono::hours(1));
+    const auto second =
+        auth_from_credential_helper_cached("helper", "ghcr.io", fetch, std::chrono::hours(1));
+    EXPECT_EQ(calls, 1);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->username, "me");
+    EXPECT_EQ(second->password, "pw");
+    clear_credential_helper_cache();
+}
+
+TEST(Auth, CredentialHelperCacheCachesAbsence) {
+    // "No credentials" is the common answer (Docker Desktop routes EVERY
+    // registry through credsStore) — it must not re-fork the helper either.
+    clear_credential_helper_cache();
+    int calls = 0;
+    const auto fetch = [&calls]() -> std::optional<RegistryAuth> {
+        ++calls;
+        return std::nullopt;
+    };
+
+    EXPECT_FALSE(auth_from_credential_helper_cached("desktop", "index.docker.io", fetch,
+                                                    std::chrono::hours(1))
+                     .has_value());
+    EXPECT_FALSE(auth_from_credential_helper_cached("desktop", "index.docker.io", fetch,
+                                                    std::chrono::hours(1))
+                     .has_value());
+    EXPECT_EQ(calls, 1);
+    clear_credential_helper_cache();
+}
+
+TEST(Auth, CredentialHelperCacheExpires) {
+    clear_credential_helper_cache();
+    int calls = 0;
+    const auto fetch = [&calls]() -> std::optional<RegistryAuth> {
+        ++calls;
+        return std::nullopt;
+    };
+
+    // A zero TTL makes every entry stale on arrival: both lookups fetch.
+    auth_from_credential_helper_cached("helper", "ghcr.io", fetch, std::chrono::milliseconds(0));
+    auth_from_credential_helper_cached("helper", "ghcr.io", fetch, std::chrono::milliseconds(0));
+    EXPECT_EQ(calls, 2);
+    clear_credential_helper_cache();
+}
+
+TEST(Auth, CredentialHelperCacheKeyIsHelperAndRegistry) {
+    clear_credential_helper_cache();
+    int calls = 0;
+    const auto fetch = [&calls]() -> std::optional<RegistryAuth> {
+        ++calls;
+        return std::nullopt;
+    };
+
+    auth_from_credential_helper_cached("helper", "ghcr.io", fetch, std::chrono::hours(1));
+    auth_from_credential_helper_cached("helper", "quay.io", fetch, std::chrono::hours(1));
+    auth_from_credential_helper_cached("other-helper", "ghcr.io", fetch, std::chrono::hours(1));
+    EXPECT_EQ(calls, 3);
+    clear_credential_helper_cache();
 }
 
 TEST(Auth, EncodeXRegistryAuthBasic) {

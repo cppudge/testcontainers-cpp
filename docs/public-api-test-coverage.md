@@ -325,6 +325,7 @@ Network / Volume) on Windows.
 | `Session` (keep-alive reuse) | ✅ | ✅ | ✅ implicit (wait-strategy polling) | ❌ |
 | `host()` | ✅ | ✅ | ✅ RedisMvp, Exec (scheme) | ❌ |
 | `set/transport_timeouts` | ✅ | ✅ | ❌ (unit-tested) | ❌ |
+| `set/pull_retry` | ✅ | ✅ | ❌ (unit-tested: PullRetryTest) | ❌ |
 | `request(method, target, …)` | ✅ | ✅ | ✅ ReaperTest, NetworkTest (raw inspect) | ✅ WindowsEngine `/version`, WindowsNetworks raw inspect |
 | `ping()` | ✅ | ✅ | ✅ EngineGuard (every suite's SetUp) | ✅ EngineGuard |
 | `server_os()` | ✅ | ✅ | ✅ WindowsEngine tag resolution | ✅ WindowsEngine (implicitly, via is_windows_engine) |

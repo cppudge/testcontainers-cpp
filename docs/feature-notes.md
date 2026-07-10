@@ -224,11 +224,21 @@ mounts the volume — tear down in reverse-declaration order.
 default). Applied at the `GenericImage` layer only — not for builds, compose, or raw
 `DockerClient` calls.
 
+**Pull retry** (2026-07-10) — `pull_image` retries an HTTP 5xx reply to `POST /images/create`
+(the daemon relaying transient registry trouble, e.g. its auth-token endpoint answering
+500/502) up to 3 total tries with a 1s-then-2s backoff; tune or disable via
+`DockerClient::set_pull_retry`. Deliberately narrow: 4xx and in-stream pull errors (how most
+daemons report a nonexistent image) fail on the first try, and transport timeouts are never
+retried. Caveat: some daemons relay a bad image name as a header 500 too — those pay the
+backoff (~3s) before failing.
+
 **Registry auth** — explicit `with_registry_auth` or auto-resolved from the Docker config
 (`DOCKER_AUTH_CONFIG` → `$DOCKER_CONFIG/config.json` → `~/.docker/config.json`), including
 credential helpers (`credsStore` / `credHelpers`, shelling out to
-`docker-credential-<helper> get`; plaintext `auths` take precedence). Helper output is not
-cached — re-invoked on every pull.
+`docker-credential-<helper> get`; plaintext `auths` take precedence). Helper outcomes —
+including "no credentials", the answer for every anonymous pull under Docker Desktop's
+`credsStore` — are cached process-wide per (helper, registry) for 5 minutes (2026-07-10);
+the config file itself is still re-read per pull.
 
 ## Compose & Windows
 

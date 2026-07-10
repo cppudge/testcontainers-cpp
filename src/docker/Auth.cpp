@@ -1,9 +1,13 @@
 #include "docker/Auth.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
+#include <mutex>
 #include <string>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -32,6 +36,29 @@ std::array<std::uint8_t, 256> make_decode_table() {
 // for it inside config.json's "auths" map.
 constexpr const char* kDockerHub = "index.docker.io";
 constexpr const char* kDockerHubAuthKey = "https://index.docker.io/v1/";
+
+// How long a credential-helper outcome is served from the cache. Short enough
+// that the shortest-lived helper tokens in the wild (gcloud's hour, ECR's 12h)
+// never expire while cached; long enough to spare a pull-heavy suite hundreds
+// of helper subprocesses.
+constexpr std::chrono::minutes kCredentialHelperCacheTtl{5};
+
+/// One cached helper outcome — the credentials (or the cached absence of any)
+/// plus when they were fetched.
+struct CredentialCacheEntry {
+    std::optional<RegistryAuth> auth;
+    std::chrono::steady_clock::time_point fetched_at;
+};
+
+struct CredentialCache {
+    std::mutex mutex;
+    std::map<std::pair<std::string, std::string>, CredentialCacheEntry> entries;
+};
+
+CredentialCache& credential_cache() {
+    static CredentialCache cache;
+    return cache;
+}
 
 } // namespace
 
@@ -250,6 +277,36 @@ std::optional<RegistryAuth> parse_credential_helper_output(const std::string& he
     return auth;
 }
 
+std::optional<RegistryAuth>
+auth_from_credential_helper_cached(const std::string& helper, const std::string& registry,
+                                   const std::function<std::optional<RegistryAuth>()>& fetch,
+                                   std::chrono::milliseconds ttl) {
+    CredentialCache& cache = credential_cache();
+    const std::pair<std::string, std::string> key{helper, registry};
+    {
+        const std::lock_guard<std::mutex> lock(cache.mutex);
+        const auto it = cache.entries.find(key);
+        if (it != cache.entries.end() &&
+            std::chrono::steady_clock::now() - it->second.fetched_at < ttl) {
+            return it->second.auth;
+        }
+    }
+
+    // The mutex is NOT held across the fetch (a subprocess in production).
+    std::optional<RegistryAuth> auth = fetch();
+
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.entries.insert_or_assign(key,
+                                   CredentialCacheEntry{auth, std::chrono::steady_clock::now()});
+    return auth;
+}
+
+void clear_credential_helper_cache() {
+    CredentialCache& cache = credential_cache();
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.entries.clear();
+}
+
 std::optional<RegistryAuth> auth_from_credential_helper(const std::string& helper,
                                                         const std::string& registry) {
     // The server URL written to the helper's stdin: Docker Hub uses the legacy
@@ -309,7 +366,13 @@ std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image) {
         return plain; // a plaintext "auths" entry wins
     }
     if (auto helper = select_credential_helper(config, registry)) {
-        return auth_from_credential_helper(*helper, registry);
+        // One helper subprocess per (helper, registry) per TTL window —
+        // without the cache every single pull forks the helper, and with
+        // Docker Desktop (credsStore for ALL registries) that includes plain
+        // anonymous public pulls.
+        return auth_from_credential_helper_cached(
+            *helper, registry, [&] { return auth_from_credential_helper(*helper, registry); },
+            kCredentialHelperCacheTtl);
     }
     return std::nullopt;
 }

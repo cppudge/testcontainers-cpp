@@ -83,6 +83,14 @@ public:
         bool owns_; ///< nested sessions: only the outermost one tears down
     };
 
+    /// Bounded-retry policy for `pull_image` (see `set_pull_retry`).
+    struct PullRetry {
+        /// Total tries for one pull (>= 1; 1 disables retrying).
+        int attempts = 3;
+        /// Sleep before the first retry, doubled for each retry after that.
+        std::chrono::milliseconds first_delay{1000};
+    };
+
     // The session connection is per-instance state: neither copies nor moves
     // transfer it (a moved-into instance would be stuck in reuse mode with no
     // Session guard to end it, and two instances writing into one socket
@@ -90,11 +98,13 @@ public:
     // state, so its guard still tears it down. The negotiated API version DOES
     // carry over — it belongs to the daemon, not to the connection.
     DockerClient(const DockerClient& other)
-        : host_(other.host_), timeouts_(other.timeouts_), api_prefix_(other.api_prefix_) {}
+        : host_(other.host_), timeouts_(other.timeouts_), pull_retry_(other.pull_retry_),
+          api_prefix_(other.api_prefix_) {}
     DockerClient& operator=(const DockerClient& other) {
         if (this != &other) {
             host_ = other.host_;
             timeouts_ = other.timeouts_;
+            pull_retry_ = other.pull_retry_;
             api_prefix_ = other.api_prefix_;
             session_enabled_ = false;
             session_transport_.reset();
@@ -106,7 +116,7 @@ public:
     // alone would leave it engaged with an empty string — silently unpinned
     // instead of renegotiating on its next typed call.
     DockerClient(DockerClient&& other) noexcept
-        : host_(std::move(other.host_)), timeouts_(other.timeouts_),
+        : host_(std::move(other.host_)), timeouts_(other.timeouts_), pull_retry_(other.pull_retry_),
           api_prefix_(std::move(other.api_prefix_)) {
         other.api_prefix_.reset();
     }
@@ -114,6 +124,7 @@ public:
         if (this != &other) {
             host_ = std::move(other.host_);
             timeouts_ = other.timeouts_;
+            pull_retry_ = other.pull_retry_;
             api_prefix_ = std::move(other.api_prefix_);
             other.api_prefix_.reset();
             session_enabled_ = false;
@@ -135,6 +146,21 @@ public:
     /// sites (`follow_logs`, exec attach reads) disable it regardless.
     void set_transport_timeouts(const docker::TransportTimeouts& timeouts) { timeouts_ = timeouts; }
     const docker::TransportTimeouts& transport_timeouts() const noexcept { return timeouts_; }
+
+    /// Retry policy for `pull_image`: an HTTP 5xx reply to
+    /// `POST /images/create` is retried up to `attempts` total tries with a
+    /// doubling backoff — that status is how the daemon relays transient
+    /// registry trouble (an auth-token endpoint blip, a 502 mid-handshake).
+    /// Anything else fails on the first try: 4xx are permanent, an error
+    /// embedded in the 200 progress stream is how daemons report a
+    /// nonexistent image, and a transport deadline expiry
+    /// (TransportTimeoutError) is never retried. `attempts` below 1 counts
+    /// as 1. A copy of the client carries the policy along.
+    void set_pull_retry(const PullRetry& retry) {
+        pull_retry_ = retry;
+        pull_retry_.attempts = retry.attempts < 1 ? 1 : retry.attempts;
+    }
+    const PullRetry& pull_retry() const noexcept { return pull_retry_; }
 
     /// Perform an HTTP request against the daemon and return the full response.
     /// `target` is the path, sent VERBATIM (e.g. "/_ping",
@@ -166,6 +192,9 @@ public:
     /// When `auth` is provided it is sent verbatim as `X-Registry-Auth`;
     /// otherwise credentials are auto-resolved from the Docker config for the
     /// image's registry. A public pull (no credentials found) is unaffected.
+    /// Transient daemon/registry 5xx replies are retried per the `pull_retry()`
+    /// policy (3 tries with a 1s-then-2s backoff by default — see
+    /// `set_pull_retry` for what is and is not retried).
     void pull_image(const std::string& image,
                     const std::optional<RegistryAuth>& auth = std::nullopt);
 
@@ -389,6 +418,7 @@ private:
 
     DockerHost host_;
     docker::TransportTimeouts timeouts_;
+    PullRetry pull_retry_;
     std::optional<std::string> api_prefix_; ///< negotiated "/v1.NN" ("" = none)
     bool session_enabled_ = false;          ///< a Session is active on this instance
     std::shared_ptr<docker::ITransport> session_transport_; ///< kept-alive connection
