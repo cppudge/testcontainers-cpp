@@ -9,6 +9,8 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/RestartPolicy.hpp"
+#include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
 
@@ -30,7 +32,8 @@
 //   ContainerConfig.CpuPidsCpusetLimitsVisibleInside - with_cpu_limit / with_pids_limit / with_cpuset_cpus land in the container's cgroup cpu, pids, and cpuset files.
 //   ContainerConfig.SysctlAppliedInside - a with_sysctl value reads back from /proc/sys inside the container, distinct from Docker's own default.
 //   ContainerConfig.DnsConfigWrittenToResolvConf - with_dns_server / with_dns_search / with_dns_option are written into the container's /etc/resolv.conf on the default bridge.
-//   ContainerConfig.DeviceMappedInside - with_device maps a daemon-host device node to a (renamed) path inside the container.
+//   ContainerConfig.DeviceMappedInside - with_device maps a daemon-host device node to a (renamed) path inside the container, and inspect() echoes the mapping.
+//   ContainerConfig.TypedHostConfigEchoedByInspect - every typed HostConfig setter (memory, shm, cpu, cpuset, pids, restart policy, dns triple, sysctl) reads back verbatim from inspect().host_config.
 
 using namespace testcontainers;
 
@@ -166,8 +169,9 @@ TEST_F(ContainerConfig, BindMountReadOnly) {
 }
 
 TEST_F(ContainerConfig, MemoryAndShmLimitsVisibleInside) {
-    // The daemon's inspect does not echo Memory/ShmSize back, so assert from
-    // INSIDE: the cgroup memory limit (v2 path, v1 fallback) and /dev/shm size.
+    // Inspect echoes these knobs back (TypedHostConfigEchoedByInspect pins
+    // that); HERE assert the kernel-level EFFECT from inside the container:
+    // the cgroup memory limit (v2 path, v1 fallback) and /dev/shm size.
     Container c = GenericImage("alpine", "3.20")
                       .with_memory_limit(256LL * 1024 * 1024)
                       .with_shm_size(128LL * 1024 * 1024)
@@ -285,6 +289,52 @@ TEST_F(ContainerConfig, DeviceMappedInside) {
         << "stdout was: " << logs.stdout_data;
     EXPECT_EQ(logs.stdout_data.find("device-missing"), std::string::npos)
         << "stdout was: " << logs.stdout_data;
+
+    // The Devices mapping is also echoed back by inspect, permissions included.
+    const HostConfigInspect hc = c->inspect().host_config;
+    ASSERT_EQ(hc.devices.size(), 1u);
+    EXPECT_EQ(hc.devices[0].path_on_host, "/dev/fuse");
+    EXPECT_EQ(hc.devices[0].path_in_container, "/dev/tc-fuse");
+    EXPECT_EQ(hc.devices[0].cgroup_permissions, "rwm");
+}
+
+TEST_F(ContainerConfig, TypedHostConfigEchoedByInspect) {
+    // The daemon-side proof for the one knob with no in-container fingerprint
+    // (restart policy) and the read-back contract for the rest: every typed
+    // HostConfig setter must come back verbatim in inspect().host_config.
+    // HostConfig is static config, so inspecting the exited container is fine.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_memory_limit(256LL * 1024 * 1024)
+                      .with_shm_size(128LL * 1024 * 1024)
+                      .with_cpu_limit(0.5)
+                      .with_cpuset_cpus("0")
+                      .with_pids_limit(64)
+                      .with_restart_policy(RestartPolicy::on_failure(3))
+                      .with_dns_server("192.0.2.53")
+                      .with_dns_search("svc.test.internal")
+                      .with_dns_option("ndots:2")
+                      .with_sysctl("net.ipv4.ip_unprivileged_port_start", "1000")
+                      .with_cmd({"true"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const HostConfigInspect hc = c.inspect().host_config;
+    EXPECT_EQ(hc.memory_bytes, 256LL * 1024 * 1024);
+    EXPECT_EQ(hc.shm_size_bytes, 128LL * 1024 * 1024);
+    EXPECT_EQ(hc.nano_cpus, 500000000); // 0.5 CPUs
+    EXPECT_EQ(hc.cpuset_cpus, "0");
+    ASSERT_TRUE(hc.pids_limit.has_value());
+    EXPECT_EQ(*hc.pids_limit, 64);
+    EXPECT_EQ(hc.restart_policy.name, "on-failure");
+    EXPECT_EQ(hc.restart_policy.maximum_retry_count, 3);
+    ASSERT_EQ(hc.dns_servers.size(), 1u);
+    EXPECT_EQ(hc.dns_servers[0], "192.0.2.53");
+    ASSERT_EQ(hc.dns_search.size(), 1u);
+    EXPECT_EQ(hc.dns_search[0], "svc.test.internal");
+    ASSERT_EQ(hc.dns_options.size(), 1u);
+    EXPECT_EQ(hc.dns_options[0], "ndots:2");
+    ASSERT_EQ(hc.sysctls.count("net.ipv4.ip_unprivileged_port_start"), 1u);
+    EXPECT_EQ(hc.sysctls.at("net.ipv4.ip_unprivileged_port_start"), "1000");
 }
 
 TEST_F(ContainerConfig, CapAddDropReflectedInBounding) {

@@ -79,7 +79,7 @@ suite.
 | `with_cpu_limit` | ✅ | ✅ | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | ❌ |
 | `with_cpuset_cpus` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | n/a |
 | `with_pids_limit` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | n/a |
-| `with_restart_policy` | ✅ | ✅ | ❌ (create-body unit-tested; inspect echo planned) | ❌ |
+| `with_restart_policy` | ✅ | ✅ | ✅ ContainerConfig.TypedHostConfigEchoedByInspect | ❌ |
 | `with_dns_server` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
 | `with_dns_search` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
 | `with_dns_option` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
@@ -147,7 +147,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `get_host_port_ipv4` | ✅ | ✅ | ✅ PortGetters.Ipv4AndDefaultAgree | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
 | `get_host_port_ipv6` | ? (daemon-dependent) | ? | ✅ PortGetters.Ipv4AndDefaultAgree (tolerant: resolves or throws) | ❌ |
 | `first_mapped_port` | ✅ | ✅ | ✅ PortGetters.FirstMappedPicksExposedOrder | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
-| `inspect()` | ✅ | ✅ | ✅ PortGetters.InspectAndRaw | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort (`inspect().ports`) |
+| `inspect()` | ✅ | ✅ | ✅ PortGetters.InspectAndRaw, ContainerConfig.TypedHostConfigEchoedByInspect (`host_config` echo) | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort (`inspect().ports`) |
 | `inspect_raw()` | ✅ | ✅ | ✅ PortGetters.InspectAndRaw | ❌ [a] |
 | `logs()` | ✅ | ✅ | ✅ ContainerConfig.*, Tty.LogsAreRawNotFramed | ✅ WindowsContainer.EchoExitsWithExpectedLogs, WindowsBuildImage.* |
 | `follow_logs()` | ✅ | ✅ | ✅ Tty.FollowLogsDeliversRaw | ❌ |

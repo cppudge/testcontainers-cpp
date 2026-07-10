@@ -159,6 +159,27 @@ struct ContainerSummary {
     std::map<std::string, std::string> labels; ///< container labels
 };
 
+/// The `HostConfig` subset echoed back by `GET /containers/{id}/json` — the
+/// typed create-side knobs, readable back so tests can assert a limit landed.
+/// Values are the daemon's echo verbatim: an unset knob reads as Docker's
+/// zero state (0 / "" / empty; note ShmSize echoes the daemon's 64 MiB
+/// default and RestartPolicy.Name echoes "no" on modern daemons).
+struct HostConfigInspect {
+    std::int64_t memory_bytes = 0;   ///< Memory; 0 = unlimited
+    std::int64_t shm_size_bytes = 0; ///< ShmSize; the daemon's 64 MiB default when unset
+    std::int64_t nano_cpus = 0;      ///< NanoCpus; 0 = no CPU limit
+    std::string cpuset_cpus;         ///< CpusetCpus; "" = not pinned
+    /// PidsLimit; absent when the daemon reports null (no limit; some daemon
+    /// versions report 0 instead — both mean "no limit set").
+    std::optional<std::int64_t> pids_limit;
+    RestartPolicy restart_policy;               ///< RestartPolicy (Name "" or "no" = none)
+    std::vector<std::string> dns_servers;       ///< Dns (null -> empty)
+    std::vector<std::string> dns_search;        ///< DnsSearch (null -> empty)
+    std::vector<std::string> dns_options;       ///< DnsOptions (null -> empty)
+    std::map<std::string, std::string> sysctls; ///< Sysctls (null -> empty)
+    std::vector<Device> devices;                ///< Devices (null -> empty)
+};
+
 /// The subset of `GET /containers/{id}/json` we currently care about.
 struct ContainerInspect {
     std::string id;
@@ -172,6 +193,8 @@ struct ContainerInspect {
     std::optional<std::string> health_status;
     /// "6379/tcp" -> published host bindings (from NetworkSettings.Ports).
     std::map<std::string, std::vector<PortBinding>> ports;
+    /// The typed HostConfig knobs, echoed back (zero state when absent).
+    HostConfigInspect host_config;
 };
 
 } // namespace testcontainers

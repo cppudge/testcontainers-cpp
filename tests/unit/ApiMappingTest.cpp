@@ -71,6 +71,8 @@
 //   ApiMapping.ParseInspectHealthStatus - inspect JSON with State.Health.Status fills health_status.
 //   ApiMapping.ParseInspectNoHealthStatus - inspect JSON without State.Health yields a nullopt health_status.
 //   ApiMapping.ParseInspectMalformedHostPort - a non-numeric, out-of-range, or trailing-garbage HostPort drops that binding (valid siblings survive) instead of throwing or surviving as port 0.
+//   ApiMapping.ParseInspectHostConfigEcho - inspect JSON's HostConfig echo parses into host_config: memory/shm/nano-cpus/cpuset, pids limit, restart policy, dns triple, sysctls, and devices.
+//   ApiMapping.ParseInspectHostConfigAbsentAndNulls - a missing HostConfig object, null members, and a null PidsLimit parse into the zero state (0 / "" / empty / nullopt) instead of throwing.
 //   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
 //   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
@@ -989,6 +991,74 @@ TEST(ApiMapping, ParseInspectMalformedHostPort) {
     ASSERT_EQ(info.ports.at("6379/tcp").size(), 1u); // only the valid IPv6 binding
     EXPECT_EQ(info.ports.at("6379/tcp")[0].host_ip, "::");
     EXPECT_EQ(info.ports.at("6379/tcp")[0].host_port, 32769);
+}
+
+TEST(ApiMapping, ParseInspectHostConfigEcho) {
+    const std::string body = R"({
+        "Id": "abc123",
+        "State": {"Status": "running", "Running": true},
+        "HostConfig": {
+            "Memory": 268435456,
+            "ShmSize": 134217728,
+            "NanoCpus": 500000000,
+            "CpusetCpus": "0-2,7",
+            "PidsLimit": 64,
+            "RestartPolicy": {"Name": "on-failure", "MaximumRetryCount": 3},
+            "Dns": ["192.0.2.53"],
+            "DnsSearch": ["svc.test.internal"],
+            "DnsOptions": ["ndots:2"],
+            "Sysctls": {"net.ipv4.ip_unprivileged_port_start": "1000"},
+            "Devices": [{"PathOnHost": "/dev/fuse",
+                         "PathInContainer": "/dev/tc-fuse",
+                         "CgroupPermissions": "rw"}]
+        }
+    })";
+
+    const auto info = parse_inspect(body);
+    const HostConfigInspect& hc = info.host_config;
+    EXPECT_EQ(hc.memory_bytes, 268435456);
+    EXPECT_EQ(hc.shm_size_bytes, 134217728);
+    EXPECT_EQ(hc.nano_cpus, 500000000);
+    EXPECT_EQ(hc.cpuset_cpus, "0-2,7");
+    ASSERT_TRUE(hc.pids_limit.has_value());
+    EXPECT_EQ(*hc.pids_limit, 64);
+    EXPECT_EQ(hc.restart_policy.name, "on-failure");
+    EXPECT_EQ(hc.restart_policy.maximum_retry_count, 3);
+    EXPECT_EQ(hc.dns_servers, std::vector<std::string>{"192.0.2.53"});
+    EXPECT_EQ(hc.dns_search, std::vector<std::string>{"svc.test.internal"});
+    EXPECT_EQ(hc.dns_options, std::vector<std::string>{"ndots:2"});
+    EXPECT_EQ(hc.sysctls.at("net.ipv4.ip_unprivileged_port_start"), "1000");
+    ASSERT_EQ(hc.devices.size(), 1u);
+    EXPECT_EQ(hc.devices[0].path_on_host, "/dev/fuse");
+    EXPECT_EQ(hc.devices[0].path_in_container, "/dev/tc-fuse");
+    EXPECT_EQ(hc.devices[0].cgroup_permissions, "rw");
+}
+
+TEST(ApiMapping, ParseInspectHostConfigAbsentAndNulls) {
+    // No HostConfig at all: the zero state, nothing throws.
+    const auto bare = parse_inspect(R"({"Id": "abc", "State": {"Running": true}})");
+    EXPECT_EQ(bare.host_config.memory_bytes, 0);
+    EXPECT_EQ(bare.host_config.nano_cpus, 0);
+    EXPECT_EQ(bare.host_config.cpuset_cpus, "");
+    EXPECT_FALSE(bare.host_config.pids_limit.has_value());
+    EXPECT_EQ(bare.host_config.restart_policy.name, "");
+    EXPECT_TRUE(bare.host_config.dns_servers.empty());
+    EXPECT_TRUE(bare.host_config.sysctls.empty());
+    EXPECT_TRUE(bare.host_config.devices.empty());
+
+    // Null members (a daemon reports "no pids limit" as null; empty Sysctls /
+    // Devices arrive as null too): still the zero state, never a type error.
+    const auto nulls = parse_inspect(R"({
+        "Id": "abc",
+        "HostConfig": {"PidsLimit": null, "RestartPolicy": null, "Dns": null,
+                       "Sysctls": null, "Devices": null}
+    })");
+    EXPECT_FALSE(nulls.host_config.pids_limit.has_value());
+    EXPECT_EQ(nulls.host_config.restart_policy.name, "");
+    EXPECT_EQ(nulls.host_config.restart_policy.maximum_retry_count, 0);
+    EXPECT_TRUE(nulls.host_config.dns_servers.empty());
+    EXPECT_TRUE(nulls.host_config.sysctls.empty());
+    EXPECT_TRUE(nulls.host_config.devices.empty());
 }
 
 TEST(ApiMapping, ParseContainerList) {

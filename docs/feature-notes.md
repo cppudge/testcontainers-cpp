@@ -221,8 +221,18 @@ caller-controlled. `forcerm=1` is always sent — without it the legacy builder 
 step's intermediate container, which carries no labels and leaks past Ryuk.
 
 **HostConfig** — typed setters for memory / shm_size / ulimits / cap_add / cap_drop /
-extra_hosts; everything else through `with_create_body_patch` (an RFC-7386 deep-merge applied
-AFTER the typed fields, so it overrides them; nest HostConfig fields under `"HostConfig"`).
+extra_hosts / cpu limit (`with_cpu_limit(double)` → NanoCpus, `docker run --cpus` parity;
+CpuShares/CpuQuota/CpuPeriod stay untyped — NanoCpus subsumes them) / cpuset / pids limit /
+restart policy (`RestartPolicy` factories; the daemon rejects one combined with auto-remove,
+a nonzero retry count is only valid with on-failure, and Ryuk still force-removes at process
+exit — `always` does not outlive the session) / dns servers+search+options / sysctls
+(namespaced only; Linux) / devices (`Device`; Linux path semantics — Windows devices use
+class GUIDs); everything else through `with_create_body_patch` (an RFC-7386 deep-merge
+applied AFTER the typed fields, so it overrides them; nest HostConfig fields under
+`"HostConfig"`). `ContainerInspect::host_config` echoes the typed knobs back (the daemon's
+zero state when unset: 0 / "" / empty; PidsLimit null and 0 both mean "no limit"), so tests
+assert a landed limit without parsing `inspect_raw()`. Unset fields emit nothing into the
+create body, so reuse hashes of configs predating these setters are unaffected.
 
 **Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / one
 IPAM subnet+gateway pair / driver options / labels); `GenericImage::with_network` takes the

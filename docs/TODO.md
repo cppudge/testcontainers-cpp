@@ -5,10 +5,10 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 5 of the agreed batch order (2026-07-10; batches 1–4 landed — see
-[feature-notes.md](feature-notes.md) and the git history): typed HostConfig — cpu limits,
-restart policy, dns, sysctls, devices, pids-limit setters + surfacing those fields in
-`ContainerInspect` (CreateContainerSpec stays a Docker-typed DTO).
+Batch 6 of the agreed batch order (2026-07-10; batches 1–5 landed — see
+[feature-notes.md](feature-notes.md) and the git history): exec/logs ergonomics —
+deadline-bounded streaming exec, TTY resize (`POST /exec/{id}/resize`), and interleaving
+the exec stdin write with the output read.
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
@@ -85,9 +85,6 @@ restart policy, dns, sysctls, devices, pids-limit setters + surfacing those fiel
   unless `TESTCONTAINERS_RYUK_DISABLED` (process-wide) turns the reaper off. No secrets / ssh /
   cache-from / squash / platform-on-build. Rare `.dockerignore` matcher divergences from moby
   are documented in `DockerIgnore.hpp`.
-- **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
-  still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
-  surface Memory/CpuQuota/etc., so those can't be asserted via inspect.
 - **Networks** — IPAM supports a single Subnet/Gateway pair on CREATE (no multiple
   pools / IPRange / aux addresses; `NetworkInspect` does read multiple pools back); no
   process-wide dedup and no cross-run reuse (each `create()` makes a new network; `keep()`

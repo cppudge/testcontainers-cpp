@@ -578,6 +578,40 @@ static ContainerInspect parse_inspect_unguarded(const std::string& body) {
         }
     }
 
+    if (const auto host = json.find("HostConfig"); host != json.end() && host->is_object()) {
+        HostConfigInspect& hc = info.host_config;
+        hc.memory_bytes = host->value("Memory", std::int64_t{0});
+        hc.shm_size_bytes = host->value("ShmSize", std::int64_t{0});
+        hc.nano_cpus = host->value("NanoCpus", std::int64_t{0});
+        hc.cpuset_cpus = host->value("CpusetCpus", std::string{});
+        // Docker reports "no pids limit" as null on newer daemons and 0 on
+        // older ones; only a real number lands in the optional (a surfaced 0
+        // still means "no limit set", per the struct doc).
+        if (const auto pids = host->find("PidsLimit");
+            pids != host->end() && pids->is_number_integer()) {
+            hc.pids_limit = pids->get<std::int64_t>();
+        }
+        if (const auto policy = host->find("RestartPolicy");
+            policy != host->end() && policy->is_object()) {
+            hc.restart_policy.name = policy->value("Name", std::string{});
+            hc.restart_policy.maximum_retry_count = policy->value("MaximumRetryCount", 0);
+        }
+        hc.dns_servers = read_string_array(*host, "Dns");
+        hc.dns_search = read_string_array(*host, "DnsSearch");
+        hc.dns_options = read_string_array(*host, "DnsOptions");
+        hc.sysctls = read_string_map(*host, "Sysctls");
+        if (const auto devices = host->find("Devices");
+            devices != host->end() && devices->is_array()) {
+            for (const auto& entry : *devices) {
+                Device device;
+                device.path_on_host = entry.value("PathOnHost", std::string{});
+                device.path_in_container = entry.value("PathInContainer", std::string{});
+                device.cgroup_permissions = entry.value("CgroupPermissions", std::string{});
+                hc.devices.push_back(std::move(device));
+            }
+        }
+    }
+
     return info;
 }
 
