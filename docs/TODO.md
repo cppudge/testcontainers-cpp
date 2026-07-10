@@ -5,10 +5,29 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 6 of the agreed batch order (2026-07-10; batches 1–5 landed — see
-[feature-notes.md](feature-notes.md) and the git history): exec/logs ergonomics —
-deadline-bounded streaming exec, TTY resize (`POST /exec/{id}/resize`), and interleaving
-the exec stdin write with the output read.
+Batch 7 of the agreed batch order (2026-07-10; batches 1–6 landed — see
+[feature-notes.md](feature-notes.md) and the git history): networks & volumes —
+`Network::Builder::with_reuse` (find-by-name + hash-label before creating), IPAM
+multi-pool support on create, `list_volumes` / volume prune; optionally a Windows
+volume-seeding helper.
+
+Analysis results awaiting a go (2026-07-11, from the exec-API and duplication reviews):
+- **exec internal unification** — reimplement the buffered exec on top of
+  `exec_stream_impl` (~−70 lines; the prologue already forked once). Precondition: decide
+  the stream-reset semantics first — the streaming side currently maps every read-end to
+  StreamEnded, and the empirical daemon behavior (RST after an exec exits with unconsumed
+  stdin is BENIGN; the inspect settles the outcome) argues for "reset tolerated, inspect
+  decides" on both paths rather than strict throwing.
+- **duplication sweep** (~300–350 lines, no behavior risk beyond two message-text checks):
+  a `json_object_from(pairs)` helper for 8 identical map→JSON loops in ApiMapping; merge
+  the 3 loopback-fixture copies in tests/unit (the accept-wake teardown trick now lives in
+  4 places) + a shared named-pipe test server; extract the Ryuk write-line+read-ACK
+  exchange; reuse `tcp_probe` for the compose port wait (also fixes its unbounded
+  synchronous connect); align the three directory walks (build-context walk is unsorted —
+  nondeterministic context tars — and leaks raw filesystem_error); compose's `&`/`&&`
+  builder pairs → single unqualified setters (GenericImage convention); assorted
+  single-file dedups (Container host-port triplet, query-builder lambda, parse-or-nullopt
+  JSON prologue, extract_tar RAII, write-all loop).
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
