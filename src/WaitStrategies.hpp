@@ -42,6 +42,25 @@ private:
     std::size_t count_ = 0;
 };
 
+/// The sleep plan for a `wait_for::Duration` under the shared readiness
+/// deadline: sleep until `wake` (the requested duration clamped to the
+/// deadline); `times_out` says the requested duration did not fit the
+/// remaining budget, i.e. the caller must throw StartupTimeoutError after
+/// the (clamped) sleep. A duration ending EXACTLY on the deadline still
+/// fits — the budget is spent, not overspent. Pure — exposed for unit
+/// testing.
+struct ClampedWaitPlan {
+    std::chrono::steady_clock::time_point wake;
+    bool times_out = false;
+};
+
+inline ClampedWaitPlan clamped_wait_plan(std::chrono::steady_clock::time_point now,
+                                         std::chrono::milliseconds value,
+                                         std::chrono::steady_clock::time_point deadline) {
+    const std::chrono::steady_clock::time_point wake = now + value;
+    return {wake < deadline ? wake : deadline, wake > deadline};
+}
+
 /// Run each readiness condition in `waits` in order, under a single shared
 /// deadline (`timeout` from the moment this is called). Throws
 /// StartupTimeoutError if the deadline passes before a condition is met (and

@@ -440,10 +440,12 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                 } else if constexpr (std::is_same_v<T, wait_for::LogMessage>) {
                     wait_for_log(client, id, cond, deadline, tty);
                 } else if constexpr (std::is_same_v<T, wait_for::Duration>) {
-                    // Clamp the sleep to the shared deadline.
-                    const Clock::time_point wake = Clock::now() + cond.value;
-                    std::this_thread::sleep_until(wake < deadline ? wake : deadline);
-                    if (Clock::now() >= deadline && wake > deadline) {
+                    // Sleep clamped to the shared deadline; the plan logic is
+                    // pure and unit-tested (clamped_wait_plan).
+                    const ClampedWaitPlan plan =
+                        clamped_wait_plan(Clock::now(), cond.value, deadline);
+                    std::this_thread::sleep_until(plan.wake);
+                    if (plan.times_out) {
                         throw StartupTimeoutError(
                             "Timed out during wait_for::Duration for container " + id, id);
                     }

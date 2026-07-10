@@ -22,6 +22,11 @@
 //   WaitFor.ListeningPortFactory - wait_for::listening_port builds a Port with the given port (and a default poll interval).
 //   WaitFor.Copyable - a WaitFor (and a vector of them) can be copied.
 //   WaitFor.VisitDispatches - std::visit dispatches to the active alternative.
+//   WaitFor.ClampedPlanFitsBudget - a duration ending before the deadline wakes at now+value with no timeout.
+//   WaitFor.ClampedPlanOverrunsBudget - a duration past the deadline clamps the wake to the deadline and flags the timeout.
+//   WaitFor.ClampedPlanExactFitIsNotTimeout - ending exactly ON the deadline spends the budget without overspending it (no throw).
+//   WaitFor.ClampedPlanExpiredDeadline - a deadline already in the past wakes immediately (wake in the past) and flags the timeout.
+//   WaitFor.ClampedPlanZeroDuration - a zero-length wait wakes at once and is within budget.
 //   WaitFor.CountOccurrencesBasics - count_occurrences counts disjoint matches, including at the ends, and 0 for no match.
 //   WaitFor.CountOccurrencesNonOverlapping - overlapping candidates count once per consumed match ("aaaa"/"aa" -> 2).
 //   WaitFor.CountOccurrencesEmptyNeedleIsZero - an empty needle yields 0 (never "instantly satisfied").
@@ -143,6 +148,48 @@ TEST(WaitFor, VisitDispatches) {
     EXPECT_EQ(describe(wait_for::None{}), "none");
     EXPECT_EQ(describe(wait_for::log("x")), "log");
     EXPECT_EQ(describe(wait_for::seconds(1)), "duration");
+}
+
+TEST(WaitFor, ClampedPlanFitsBudget) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now + std::chrono::milliseconds(500);
+    const detail::ClampedWaitPlan plan =
+        detail::clamped_wait_plan(now, std::chrono::milliseconds(200), deadline);
+    EXPECT_EQ(plan.wake, now + std::chrono::milliseconds(200));
+    EXPECT_FALSE(plan.times_out);
+}
+
+TEST(WaitFor, ClampedPlanOverrunsBudget) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now + std::chrono::milliseconds(200);
+    const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds(500), deadline);
+    EXPECT_EQ(plan.wake, deadline); // the sleep is clamped: never past the deadline
+    EXPECT_TRUE(plan.times_out);
+}
+
+TEST(WaitFor, ClampedPlanExactFitIsNotTimeout) {
+    // Ending exactly ON the deadline spends the budget without overspending it.
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now + std::chrono::milliseconds(200);
+    const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds(200), deadline);
+    EXPECT_EQ(plan.wake, deadline);
+    EXPECT_FALSE(plan.times_out);
+}
+
+TEST(WaitFor, ClampedPlanExpiredDeadline) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now - std::chrono::milliseconds(1);
+    const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds(100), deadline);
+    EXPECT_EQ(plan.wake, deadline); // in the past — sleep_until returns at once
+    EXPECT_TRUE(plan.times_out);
+}
+
+TEST(WaitFor, ClampedPlanZeroDuration) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now + std::chrono::milliseconds(200);
+    const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds(0), deadline);
+    EXPECT_EQ(plan.wake, now);
+    EXPECT_FALSE(plan.times_out);
 }
 
 TEST(WaitFor, CountOccurrencesBasics) {

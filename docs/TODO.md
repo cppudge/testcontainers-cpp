@@ -7,7 +7,6 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 2 of the agreed batch order (2026-07-10; batch 1 — pull retry + credential-helper
 cache — landed the same day): CI/packaging + test gaps —
-- extract a pure `clamped_wait_plan(now, value, deadline)` under unit test
 - a `release.yml` on `v*` tags: version-tag guard, `conan create` from the tagged tree,
   tag-tarball sha256 (the CCI conandata pin), draft GitHub Release
 - TLS end-to-end in CI (`docker:dind` with `DOCKER_TLS_CERTDIR` on the ubuntu runner —
@@ -143,9 +142,7 @@ profit for the extra build-graph plumbing; it stays a documented residual below.
 - **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
   time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
-- **Test gaps** — the WaitStrategies duration-clamp-to-deadline branch is only exercised via
-  the integration `WaitStrategiesTest` (extract a pure `clamped_wait_plan(now, value, deadline)`
-  if it ever regresses). `Runner.ReuseAdoptsRunningMatch` /
+- **Test gaps** — `Runner.ReuseAdoptsRunningMatch` /
   `Runner.ReuseCreateBodyCarriesHashNotSessionLabel` script exactly as many canned connections
   as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
   (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
