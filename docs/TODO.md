@@ -7,8 +7,9 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day — see
 [feature-notes.md](feature-notes.md) and the git history): lifecycle — reuse freshness
-(size+mtime in the hash) and a per-daemon reaper map. (Landed already: session labels on
-built images, compose reaping via the `com.docker.compose.project` filter.)
+(size+mtime in the hash) is the remaining item. (Landed already: session labels on built
+images, compose reaping via the `com.docker.compose.project` filter, per-daemon
+Reaper/HostPortForwarder maps.)
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
@@ -38,12 +39,11 @@ built images, compose reaping via the `com.docker.compose.project` filter.)
   extraction could in principle stay silent longer — widen like `build` if it ever bites).
   `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded).
   (`src/docker/Transport.*`, `src/WaitStrategies.cpp`)
-- **Ryuk gaps** — no graceful in-process reaper shutdown (relies on process-exit closing the
-  socket); the process-global reaper binds to the FIRST daemon it starts against — a second
-  daemon used later in the same process gets labels but no crash-safe reaping (a per-daemon
-  reaper map would be the full fix). A real Windows Ryuk (named-pipe mount + Windows reaper
-  image) is unexplored — the feasibility notes lived in docs/04, removed at v0.1.0 (git
-  history). (`src/Reaper.*`)
+- **Ryuk gaps** — no graceful in-process reaper shutdown (relies on process-exit closing each
+  control socket); daemons are keyed by endpoint URL, so two URL spellings of the same daemon
+  (`tcp://localhost` vs `tcp://127.0.0.1`) boot two harmless reapers. A real Windows Ryuk
+  (named-pipe mount + Windows reaper image) is unexplored — the feasibility notes lived in
+  docs/04, removed at v0.1.0 (git history). (`src/Reaper.*`)
 - **Wait-probe connection cost** — port/http wait probes open a fresh TCP connection +
   `io_context` per probe (fine at 200ms polling; revisit if probe frequency ever increases).
   (`src/WaitStrategies.cpp`)
@@ -127,8 +127,7 @@ built images, compose reaping via the `com.docker.compose.project` filter.)
   as the happy path sends, so a regression that ADDS a drop-time DELETE would hang unaccepted
   (and be swallowed) instead of failing the request-count assert — add a spare `removed()`
   tripwire entry, the pattern `Runner.KeepSkipsRemovalOnDrop` uses.
-- **Host access residuals** — the sidecar/tunnel singleton binds to the FIRST daemon used
-  (same shape as the Ryuk residual); remote forwards are never cancelled once added; the
+- **Host access residuals** — remote forwards are never cancelled once added; the
   tunnel pump wakes every 100ms even when idle (fine for test traffic).
   (`src/HostPortForwarding.cpp`)
 - **msvc-preset configure noise** — non-fatal `IMPORTED_LOCATION ... _DEBUG ... Release`

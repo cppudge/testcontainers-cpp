@@ -9,6 +9,7 @@
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
+#include "testcontainers/docker/DockerHost.hpp"
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/error.hpp>
@@ -106,7 +107,8 @@ RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove) {
     return ep;
 }
 
-/// Holds the io_context + persistent control socket for the process lifetime.
+/// Holds one daemon's io_context + persistent control socket for the process
+/// lifetime.
 struct Reaper::Impl {
     asio::io_context io;
     tcp::socket socket{io};
@@ -124,30 +126,43 @@ Reaper& Reaper::instance() {
 
 void Reaper::ensure_started() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (started_ || ryuk_disabled()) {
+    if (ryuk_disabled()) {
         return;
     }
+    // Construction is I/O-free (the endpoint resolves from env/files; the API
+    // ping is lazy), so the already-booted fast path costs no daemon traffic.
     DockerClient client = DockerClient::from_environment();
-    start_locked(client);
+    daemon_locked(client);
 }
 
 void Reaper::ensure_started(DockerClient& client) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (started_ || ryuk_disabled()) {
+    if (ryuk_disabled()) {
         return;
     }
-    start_locked(client);
+    daemon_locked(client);
 }
 
-void Reaper::start_locked(DockerClient& client) {
+Reaper::Impl* Reaper::daemon_locked(DockerClient& client) {
+    const std::string endpoint = client.host().to_string();
+    const auto it = daemons_.find(endpoint);
+    if (it != daemons_.end()) {
+        return it->second.get();
+    }
+    // Boot first, insert after: a thrown bootstrap leaves no entry behind, so
+    // the next call against this daemon retries instead of assuming a reaper.
+    std::unique_ptr<Impl> impl = boot_daemon_locked(client);
+    return daemons_.emplace(endpoint, std::move(impl)).first->second.get();
+}
+
+std::unique_ptr<Reaper::Impl> Reaper::boot_daemon_locked(DockerClient& client) {
     // No Linux Ryuk image can run on a Windows-containers engine, so we skip the
     // reaper entirely there (matching testcontainers-dotnet). The managed-by /
     // session-id labels still get applied to user containers — harmless, just
     // unused. Consequence: there is NO crash-safe reaping on the Windows engine;
     // cleanup relies on each container's RAII removal (and AutoRemove on exit).
     if (client.is_windows_engine()) {
-        started_ = true;
-        return;
+        return nullptr;
     }
 
     const RyukEndpoint ep = start_ryuk(client, /*auto_remove*/ true);
@@ -268,8 +283,7 @@ void Reaper::start_locked(DockerClient& client) {
     // Hold the socket open for the rest of the process — when the process dies,
     // the OS closes it and Ryuk reaps everything tagged with our session id.
     impl->filters.push_back(line);
-    impl_ = std::move(impl);
-    started_ = true;
+    return impl;
 }
 
 void Reaper::register_filter(const std::string& key, const std::string& value) {
@@ -277,16 +291,16 @@ void Reaper::register_filter(const std::string& key, const std::string& value) {
     if (ryuk_disabled()) {
         return;
     }
-    if (!started_) {
-        DockerClient client = DockerClient::from_environment();
-        start_locked(client);
-    }
-    if (!impl_) {
+    // Compose (the only producer of extra filters) always runs against the
+    // environment daemon, so the filter goes to THAT daemon's reaper.
+    DockerClient client = DockerClient::from_environment();
+    Impl* impl = daemon_locked(client);
+    if (impl == nullptr) {
         return; // reaper skipped (Windows-containers engine): nobody to tell
     }
 
     const std::string line = ryuk_filter_line(key, value);
-    if (std::find(impl_->filters.begin(), impl_->filters.end(), line) != impl_->filters.end()) {
+    if (std::find(impl->filters.begin(), impl->filters.end(), line) != impl->filters.end()) {
         return; // already ACKed (e.g. a restart of the same compose project)
     }
 
@@ -297,28 +311,28 @@ void Reaper::register_filter(const std::string& key, const std::string& value) {
     boost::system::error_code ec;
     const std::optional<std::chrono::milliseconds> leg_budget{std::chrono::seconds(5)};
     bool done = false;
-    asio::async_write(impl_->socket, asio::buffer(line),
+    asio::async_write(impl->socket, asio::buffer(line),
                       [&](const boost::system::error_code& op_ec, std::size_t) {
                           done = true;
                           ec = op_ec;
                       });
-    run_pending(impl_->io, leg_budget, done, ec, [&] {
+    run_pending(impl->io, leg_budget, done, ec, [&] {
         boost::system::error_code ignore;
-        impl_->socket.cancel(ignore);
+        impl->socket.cancel(ignore);
     });
 
     std::string ack;
     if (!ec) {
         asio::streambuf buf;
         done = false;
-        asio::async_read_until(impl_->socket, buf, '\n',
+        asio::async_read_until(impl->socket, buf, '\n',
                                [&](const boost::system::error_code& op_ec, std::size_t) {
                                    done = true;
                                    ec = op_ec;
                                });
-        run_pending(impl_->io, leg_budget, done, ec, [&] {
+        run_pending(impl->io, leg_budget, done, ec, [&] {
             boost::system::error_code ignore;
-            impl_->socket.cancel(ignore);
+            impl->socket.cancel(ignore);
         });
         if (!ec) {
             std::istream is(&buf);
@@ -335,15 +349,17 @@ void Reaper::register_filter(const std::string& key, const std::string& value) {
         throw DockerError("Ryuk did not acknowledge the filter for " + key + "=" + value +
                           " (got '" + ack + "')");
     }
-    impl_->filters.push_back(line);
+    impl->filters.push_back(line);
 }
 
 std::vector<std::string> Reaper::registered_filters() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!impl_) {
+    // Read-only: report the ENVIRONMENT daemon's lines without booting it.
+    const auto it = daemons_.find(DockerHost::resolve().to_string());
+    if (it == daemons_.end() || it->second == nullptr) {
         return {};
     }
-    return impl_->filters;
+    return it->second->filters;
 }
 
 } // namespace testcontainers::detail

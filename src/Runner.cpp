@@ -168,17 +168,19 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
 
 Container run(const ContainerRequest& request) {
     // Make sure the crash-safety reaper is up before we create anything it should
-    // reap (no-op if Ryuk is disabled).
-    detail::Reaper::instance().ensure_started();
-
+    // reap (no-op if Ryuk is disabled). The run's own client doubles as the
+    // reaper's daemon reference — one environment resolve for both.
     DockerClient client = DockerClient::from_environment();
+    detail::Reaper::instance().ensure_started(client);
     return detail::Runner::run(client, request);
 }
 
 Container run(DockerClient client, const ContainerRequest& request) {
     // Boot the reaper on the daemon the CALLER chose, not the environment one —
     // otherwise a remote-endpoint run would start Ryuk locally (or fail with no
-    // local daemon) and the remote containers would never be watched.
+    // local daemon) and the remote containers would never be watched. Each
+    // daemon gets its own reaper (keyed by endpoint), so mixing this with
+    // environment-daemon runs in one process watches both.
     detail::Reaper::instance().ensure_started(client);
     return detail::Runner::run(client, request);
 }

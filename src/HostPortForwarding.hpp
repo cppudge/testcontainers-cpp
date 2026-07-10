@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -14,7 +16,7 @@ namespace testcontainers::detail {
 /// host (see `GenericImage::with_exposed_host_port`).
 inline constexpr const char* kHostAccessAlias = "host.testcontainers.internal";
 
-/// The process-global host-port-exposure machinery.
+/// The host-port-exposure machinery (one registry per process).
 ///
 /// Containers cannot in general reach the machine the tests run on (the
 /// daemon may be remote, and `host-gateway` support varies by engine), so the
@@ -25,8 +27,9 @@ inline constexpr const char* kHostAccessAlias = "host.testcontainers.internal";
 /// `<sidecar>:port` travels back through the SSH connection and is delivered
 /// to `127.0.0.1:port` in the test process's network namespace.
 ///
-/// One sidecar + one SSH session serve the whole process; `wire()` is called
-/// by the start orchestration for every request carrying host-access ports.
+/// One sidecar + one SSH session serve each DAEMON (keyed by endpoint URL,
+/// like the Reaper); `wire()` is called by the start orchestration for every
+/// request carrying host-access ports.
 class HostPortForwarder {
 public:
     static HostPortForwarder& instance();
@@ -37,7 +40,7 @@ public:
     /// Make `ports` on the test-process host reachable from the container
     /// `spec` describes, and point `kHostAccessAlias` at the sidecar by
     /// appending an ExtraHosts entry to `spec`. Starts the sidecar and the
-    /// SSH tunnel on first use (on `client`'s daemon); ensures a remote
+    /// SSH tunnel on the first use of `client`'s daemon; ensures a remote
     /// forward exists per port; joins the sidecar to `spec`'s user-defined
     /// network when it has one. Thread-safe. Throws DockerError on a
     /// Windows-containers daemon, an unsupported network mode ("host",
@@ -47,11 +50,12 @@ public:
     void wire(DockerClient& client, CreateContainerSpec& spec,
               const std::vector<std::uint16_t>& ports);
 
-    /// Detach the sidecar from `network` (name or id) if `wire()` joined it —
-    /// otherwise removing the network would fail with "active endpoints".
-    /// Called by Network teardown; best-effort and never throws. If another
-    /// live container still uses host access on that network, its alias stops
-    /// resolving — but removing the network would have broken it anyway.
+    /// Detach `client`'s daemon's sidecar from `network` (name or id) if
+    /// `wire()` joined it — otherwise removing the network would fail with
+    /// "active endpoints". Called by Network teardown; best-effort and never
+    /// throws. If another live container still uses host access on that
+    /// network, its alias stops resolving — but removing the network would
+    /// have broken it anyway.
     void release_network(DockerClient& client, const std::string& network) noexcept;
 
 private:
@@ -63,7 +67,9 @@ private:
     /// Start the sshd sidecar + SSH tunnel on `client`'s daemon.
     std::unique_ptr<State> make_state(DockerClient& client);
     std::mutex mutex_;
-    std::unique_ptr<State> state_; ///< created on first wire(); guarded by mutex_
+    /// Endpoint URL -> that daemon's sidecar+tunnel; entries created on first
+    /// wire() against the daemon. Guarded by mutex_.
+    std::map<std::string, std::unique_ptr<State>> states_;
 };
 
 } // namespace testcontainers::detail

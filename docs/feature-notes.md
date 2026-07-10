@@ -95,9 +95,13 @@ persistent (reuse) handle — and its exceptions are swallowed.
 label; compose stacks are covered by an extra per-project filter registered over the same
 control connection (each line ACKed). Pinned to `testcontainers/ryuk:0.11.0`, skipped on the
 Windows engine and via
-`TESTCONTAINERS_RYUK_DISABLED`. Process-global: it binds to the FIRST daemon it starts against;
-`run(client, request)` boots it on that client's daemon, but later runs against a different
-daemon in the same process get labels and no crash-safe reaping (see TODO).
+`TESTCONTAINERS_RYUK_DISABLED`. Per-daemon: reapers are keyed by endpoint URL, so
+`run(client, request)` against a second daemon boots a second Ryuk there and every daemon's
+resources are crash-swept (two URL spellings of one daemon — e.g. `tcp://localhost` vs
+`tcp://127.0.0.1` — count as two endpoints and get two harmless reapers). A daemon where Ryuk
+CANNOT start now fails that run loudly (the fail-loud reaper contract; disable the reaper to
+opt out) — it is no longer silently unwatched. Compose project
+filters always go to the ENVIRONMENT daemon's reaper, where compose runs.
 
 **Reuse** (`with_reuse`) — adopts an already-running container matching a stable FNV-1a
 reuse-hash label (`org.testcontainers.reuse.hash`, over the create body + copy-to
@@ -231,9 +235,9 @@ process-wide dedup — every `create()` makes a brand-new network.
 
 **Host access (`with_exposed_host_port`)** — services listening on the test host become
 reachable from containers at `host.testcontainers.internal:<port>` through the standard
-Testcontainers `testcontainers/sshd` sidecar: one per process (started on first use,
-session-labeled for Ryuk, removed on clean exit), one SSH session (libssh2) carrying a remote
-forward per exposed port; connections arriving at the sidecar are pumped back to
+Testcontainers `testcontainers/sshd` sidecar: one per daemon (started on the daemon's first
+use, session-labeled for Ryuk, removed on clean exit), each with one SSH session (libssh2)
+carrying a remote forward per exposed port; connections arriving at the sidecar are pumped back to
 `127.0.0.1:<port>` in the test process, so it works wherever the daemon runs (Desktop VM,
 remote engine). Supported on the default bridge and user-defined networks (the sidecar joins a
 user network on demand; `Network` teardown detaches it again); requires a Linux-containers
@@ -241,8 +245,7 @@ daemon; network modes "host" / "none" / "container:..." are rejected. The whole 
 build option (CMake `TC_HOST_PORT_FORWARDING` / conan `host_port_forwarding`, default ON) — it
 is what pulls in libssh2 (and, together with `TC_TLS`, OpenSSL: libssh2's crypto backend);
 with it off, `start()` of a request carrying host-access ports throws a `DockerError` naming
-the option. Residuals: the
-sidecar/tunnel singleton binds to the FIRST daemon used (same residual as the reaper); remote
+the option. Residuals: remote
 forwards are never cancelled once added; the sidecar's root password travels in the create
 body's env (readable via inspect — by someone who already has daemon access; Java parity).
 

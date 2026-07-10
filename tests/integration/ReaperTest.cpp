@@ -23,7 +23,8 @@
 #include "EngineGuard.hpp"
 
 // Tests in this file (integration; require a Docker daemon):
-//   Reaper.AppliesLabelsAndStartsRyuk - a container started via GenericImage carries the managed-by and session-id labels and the global reaper came up.
+//   Reaper.AppliesLabelsAndStartsRyuk - a container started via GenericImage carries the managed-by and session-id labels and the session reaper came up.
+//   Reaper.SameEndpointBootsNoSecondRyuk - the reaper registry keys daemons by endpoint URL: ensure_started with a fresh client for the already-served environment endpoint boots no second Ryuk.
 //   Reaper.RyukReapsOnDisconnect - a dedicated Ryuk reaps a labelled (never-started) container once the control TCP connection is closed.
 
 using namespace testcontainers;
@@ -87,6 +88,42 @@ TEST_F(Reaper, AppliesLabelsAndStartsRyuk) {
         }
     }
     EXPECT_TRUE(found_ryuk) << "no running testcontainers/ryuk container found";
+}
+
+TEST_F(Reaper, SameEndpointBootsNoSecondRyuk) {
+    // Bring the environment daemon's reaper up (idempotent if an earlier test
+    // already did), then count the running Ryuk sidecars. The exact-count
+    // assertion below assumes nothing ELSE starts/stops Ryuks on this daemon
+    // meanwhile — one integration binary at a time, gtest running serially.
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "30"}).start();
+
+    DockerClient client = DockerClient::from_environment();
+    const auto ryuk_count = [&client] {
+        const Response list = client.request("GET", "/containers/json");
+        if (!list.ok()) {
+            throw DockerError("container list failed: HTTP " + std::to_string(list.status_code));
+        }
+        int count = 0;
+        for (const auto& entry : nlohmann::json::parse(list.body)) {
+            if (entry.value("Image", std::string{}).find("testcontainers/ryuk") !=
+                std::string::npos) {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    const int before = ryuk_count();
+    if (detail::ryuk_disabled()) {
+        EXPECT_EQ(before, 0);
+        GTEST_SKIP(); // nothing to dedup against
+    }
+    ASSERT_GE(before, 1);
+
+    // A caller-supplied client for the SAME endpoint must reuse that entry.
+    DockerClient another = DockerClient::from_environment();
+    detail::Reaper::instance().ensure_started(another);
+    EXPECT_EQ(ryuk_count(), before);
 }
 
 TEST_F(Reaper, RyukReapsOnDisconnect) {

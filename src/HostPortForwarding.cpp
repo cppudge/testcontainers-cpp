@@ -523,18 +523,22 @@ HostPortForwarder::~HostPortForwarder() = default;
 void HostPortForwarder::release_network(DockerClient& client, const std::string& network) noexcept {
     try {
         std::lock_guard<std::mutex> lk(mutex_);
-        if (!state_) {
+        // The network lives on `client`'s daemon, so only that daemon's
+        // sidecar can be attached to it.
+        const auto it = states_.find(client.host().to_string());
+        if (it == states_.end() || it->second == nullptr) {
             return;
         }
+        State& state = *it->second;
         // wire() records networks by NAME; the caller may pass a name or id.
         std::string name = network;
-        if (state_->connected_networks.count(name) == 0) {
+        if (state.connected_networks.count(name) == 0) {
             name = resolve_network_name(client, network);
         }
-        if (state_->connected_networks.erase(name) == 0) {
+        if (state.connected_networks.erase(name) == 0) {
             return;
         }
-        client.disconnect_network(network, state_->sidecar_id);
+        client.disconnect_network(network, state.sidecar_id);
     } catch (...) {
         // Best-effort teardown aid; the network removal that follows reports
         // its own failure if this did not help.
@@ -557,19 +561,23 @@ void HostPortForwarder::wire(DockerClient& client, CreateContainerSpec& spec,
         }
     }
 
+    // One sidecar+tunnel per daemon: the container being wired starts on
+    // `client`'s daemon, so the alias must point at a sidecar THERE.
+    std::unique_ptr<State>& state = states_[client.host().to_string()];
+
     // A dead tunnel (daemon restarted, sidecar killed, …) is not recoverable
-    // in place — drop the whole state and start a fresh sidecar.
-    if (state_ && state_->tunnel->dead()) {
-        state_.reset();
+    // in place — drop the daemon's state and start a fresh sidecar.
+    if (state && state->tunnel->dead()) {
+        state.reset();
     }
-    if (!state_) {
-        state_ = make_state(client);
+    if (!state) {
+        state = make_state(client);
     }
 
     for (const std::uint16_t port : ports) {
-        if (state_->forwarded.count(port) == 0) {
-            state_->tunnel->add_forward(port);
-            state_->forwarded.insert(port);
+        if (state->forwarded.count(port) == 0) {
+            state->tunnel->add_forward(port);
+            state->forwarded.insert(port);
         }
     }
 
@@ -578,9 +586,9 @@ void HostPortForwarder::wire(DockerClient& client, CreateContainerSpec& spec,
     std::string ip;
     if (spec.network && *spec.network != "bridge") {
         const std::string name = resolve_network_name(client, *spec.network);
-        if (state_->connected_networks.count(name) == 0) {
+        if (state->connected_networks.count(name) == 0) {
             try {
-                client.connect_network(*spec.network, state_->sidecar_id);
+                client.connect_network(*spec.network, state->sidecar_id);
             } catch (const DockerError& e) {
                 // Racing another connect (compose, a parallel test) is fine —
                 // being on the network is all that matters.
@@ -588,11 +596,11 @@ void HostPortForwarder::wire(DockerClient& client, CreateContainerSpec& spec,
                     throw;
                 }
             }
-            state_->connected_networks.insert(name);
+            state->connected_networks.insert(name);
         }
-        ip = ip_on_network(client, state_->sidecar_id, name, /*fallback_first*/ false);
+        ip = ip_on_network(client, state->sidecar_id, name, /*fallback_first*/ false);
     } else {
-        ip = state_->bridge_ip;
+        ip = state->bridge_ip;
     }
     spec.extra_hosts.push_back(std::string(kHostAccessAlias) + ":" + ip);
 }

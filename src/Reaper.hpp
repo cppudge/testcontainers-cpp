@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -47,17 +48,20 @@ struct RyukEndpoint {
 /// for the port to accept connections (the caller's connect-retry does that).
 ///
 /// `auto_remove` sets HostConfig.AutoRemove so Docker deletes the Ryuk container
-/// once it exits (after reaping). The process-global reaper passes true so it
+/// once it exits (after reaping). The per-daemon reaper passes true so it
 /// leaves no stopped shell behind; callers that remove Ryuk themselves pass false.
 RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove = false);
 
-/// The process-global resource reaper.
+/// The per-daemon resource-reaper registry (one instance per process).
 ///
-/// On first `ensure_started()` (unless Ryuk is disabled) it starts a single Ryuk
-/// sidecar, opens a persistent TCP connection to it, and registers the session
-/// filter `label=org.testcontainers.session-id=<id>`. The connection is held
-/// open for the whole process; when the process dies the OS closes it and Ryuk
-/// (after its reconnection timeout) reaps everything carrying the session label.
+/// The first `ensure_started()` against a daemon (unless Ryuk is disabled)
+/// starts a Ryuk sidecar THERE, opens a persistent TCP connection to it, and
+/// registers the session filter `label=org.testcontainers.session-id=<id>`.
+/// Daemons are keyed by their endpoint URL (`DockerHost::to_string()`): clients
+/// for the same endpoint share one reaper, and each further daemon used in the
+/// process gets its own. Every connection is held open for the whole process;
+/// when the process dies the OS closes them and each daemon's Ryuk (after its
+/// reconnection timeout) reaps everything there carrying the session label.
 class Reaper {
 public:
     static Reaper& instance();
@@ -65,51 +69,61 @@ public:
     Reaper(const Reaper&) = delete;
     Reaper& operator=(const Reaper&) = delete;
 
-    /// Idempotent. No-op when Ryuk is disabled OR when the daemon is in
-    /// Windows-containers mode (the Linux Ryuk image cannot run there, so there
-    /// is no crash-safe reaping on Windows — matching testcontainers-dotnet).
-    /// Otherwise starts Ryuk and opens the persistent control connection exactly
-    /// once. Throws DockerError on failure (so callers fail loudly rather than
-    /// silently leaking). This overload targets the environment daemon
-    /// (DockerClient::from_environment()).
+    /// Idempotent per daemon. No-op when Ryuk is disabled OR when the daemon is
+    /// in Windows-containers mode (the Linux Ryuk image cannot run there, so
+    /// there is no crash-safe reaping on Windows — matching
+    /// testcontainers-dotnet). Otherwise starts that daemon's Ryuk and opens
+    /// its persistent control connection exactly once. Throws DockerError on
+    /// failure (so callers fail loudly rather than silently leaking) — a failed
+    /// boot is retried on the next call. This overload targets the environment
+    /// daemon (DockerClient::from_environment()).
     void ensure_started();
 
-    /// As above, but starts Ryuk on the daemon `client` points at — used by
-    /// `run(DockerClient, ...)` so a caller-supplied endpoint gets its reaper on
-    /// THAT daemon, not the environment one. Singleton residual: the process-
-    /// global reaper binds to the FIRST daemon it is started against; later
-    /// calls against a different daemon are no-ops (labels applied, no reaping).
+    /// As above, but for the daemon `client` points at — used by
+    /// `run(DockerClient, ...)` so a caller-supplied endpoint gets its reaper
+    /// on THAT daemon, not the environment one.
     void ensure_started(DockerClient& client);
 
     /// Register an ADDITIONAL reap filter (`label=<key>=<value>`) with the
-    /// session's Ryuk — for resources testcontainers cannot label itself (the
-    /// compose CLI creates the project's containers/networks/volumes, which all
-    /// carry `com.docker.compose.project=<project>`). Boots the reaper on the
-    /// environment daemon first when needed; idempotent per (key, value). A
-    /// no-op when Ryuk is disabled or was skipped (Windows engine). Throws
-    /// DockerError when Ryuk does not acknowledge the filter — callers fail
-    /// loudly rather than run without crash-safe reaping.
+    /// ENVIRONMENT daemon's Ryuk — for resources testcontainers cannot label
+    /// itself (the compose CLI creates the project's containers/networks/
+    /// volumes, which all carry `com.docker.compose.project=<project>`; compose
+    /// always runs against the environment daemon). Boots that reaper first
+    /// when needed; idempotent per (key, value). A no-op when Ryuk is disabled
+    /// or was skipped (Windows engine). Throws DockerError when Ryuk does not
+    /// acknowledge the filter — callers fail loudly rather than run without
+    /// crash-safe reaping.
     void register_filter(const std::string& key, const std::string& value);
 
-    /// The filter lines this session's Ryuk has acknowledged, in registration
-    /// order (the session filter first); empty when the reaper is disabled or
-    /// skipped. A snapshot — exposed so integration tests can assert a filter
-    /// really reached Ryuk.
+    /// The filter lines the ENVIRONMENT daemon's Ryuk has acknowledged, in
+    /// registration order (the session filter first); empty when that reaper is
+    /// disabled, skipped, or not yet started. A snapshot — exposed so tests can
+    /// assert a filter really reached Ryuk.
     std::vector<std::string> registered_filters();
 
 private:
     Reaper();
     ~Reaper();
 
-    /// The actual bootstrap (Ryuk start + filter registration + ACK) against
-    /// `client`'s daemon. Assumes `mutex_` is held and `started_` is false;
-    /// sets `started_` on success (including the skip paths).
-    void start_locked(DockerClient& client);
-
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+
+    /// Find-or-boot the entry for `client`'s daemon. Assumes `mutex_` is held.
+    /// First sight runs the bootstrap (Ryuk start + session filter + ACK) and
+    /// records the entry; a null entry means "handled, but skipped" (Windows
+    /// engine). Throws on a failed bootstrap WITHOUT recording anything, so the
+    /// next call retries.
+    Impl* daemon_locked(DockerClient& client);
+
+    /// The actual bootstrap against `client`'s daemon. Assumes `mutex_` is
+    /// held. Returns the connected per-daemon state, or null for the
+    /// Windows-engine skip.
+    std::unique_ptr<Impl> boot_daemon_locked(DockerClient& client);
+
     std::mutex mutex_;
-    bool started_ = false;
+    /// Endpoint URL -> reaper state (null = skipped). Entries live for the
+    /// whole process; their destructor closes the control sockets, which is
+    /// what lets each Ryuk reap after the process dies.
+    std::map<std::string, std::unique_ptr<Impl>> daemons_;
 };
 
 } // namespace testcontainers::detail
