@@ -57,10 +57,9 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
             }
 
             // Copy files/data in after create, before start (the create→copy→start
-            // order).
-            for (const CopyToContainer& source : request.copy_to_sources) {
-                client.copy_to_container(id, source);
-            }
+            // order). One batched PUT carries the whole copy set (an empty set
+            // skips the round-trip).
+            client.copy_to_container(id, request.copy_to_sources);
 
             // starting hooks: after copy-to, immediately before start.
             for (const LifecycleHook& hook : request.starting_hooks) {

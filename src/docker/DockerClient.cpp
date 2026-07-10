@@ -120,6 +120,99 @@ inline std::string read_error_body(docker::TransportStream& stream,
     throw_status_error(context, res.status_code, res.body, resource_id);
 }
 
+/// Throw for a failed body write of a streamed (chunked) upload. The daemon
+/// may have REJECTED the upload and closed its receive side while blocks were
+/// still going out — the write error (broken pipe / reset) is then just the
+/// symptom — so first try to read its response off the connection: an error
+/// status is the better diagnosis and is thrown as the typed status error.
+/// Only when no failing response can be read does the transport error (with
+/// a deadline expiry mapped to TransportTimeoutError) surface. Closes
+/// `transport` either way. Best-effort by nature: a TCP reset can destroy
+/// the buffered response, and a broken Windows named pipe delivers no
+/// buffered bytes at all — the transport error is the fallback diagnosis.
+[[noreturn]] void throw_upload_error(docker::ITransport& transport, docker::TransportStream& stream,
+                                     const std::string& context, const std::string& resource_id,
+                                     const boost::system::error_code& write_ec) {
+    // A deadline expiry means a WEDGED peer, not a rejecting one: no early
+    // response is coming, and the speculative read would burn a second full
+    // io budget before failing the same way.
+    if (write_ec == boost::asio::error::timed_out) {
+        transport.close();
+        docker::throw_transport_error(
+            context + " failed to send request body: " + write_ec.message(), write_ec);
+    }
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::string_body> parser;
+    parser.body_limit(8192); // diagnostics only — the error JSON is small
+    boost::system::error_code ec;
+    http::read(stream, buffer, parser, ec);
+    const bool have_status = parser.is_header_done();
+    const int status = have_status ? static_cast<int>(parser.get().result_int()) : 0;
+    const std::string body = have_status ? parser.get().body() : std::string{};
+    transport.close();
+    if (have_status && (status < 200 || status > 299)) {
+        throw_status_error(context, status, body, resource_id);
+    }
+    docker::throw_transport_error(context + " failed to send request body: " + write_ec.message(),
+                                  write_ec);
+}
+
+/// Send `req` with `Transfer-Encoding: chunked`, writing the header and then
+/// streaming the body blocks `producer` pushes into the sink (each block goes
+/// out as one HTTP chunk; returning from `producer` sends the terminating
+/// chunk). On a write failure the daemon's early error response wins over the
+/// raw transport error (see throw_upload_error); a producer exception closes
+/// the transport and propagates unchanged. On success the connection is left
+/// ready for the response read.
+void write_chunked_request(docker::ITransport& transport, docker::TransportStream& stream,
+                           http::request<http::buffer_body>& req,
+                           const docker::BodyProducer& producer, const std::string& context,
+                           const std::string& resource_id) {
+    req.chunked(true);
+    http::request_serializer<http::buffer_body> serializer{req};
+
+    boost::system::error_code ec;
+    http::write_header(stream, serializer, ec);
+    if (ec) {
+        transport.close();
+        docker::throw_transport_error(context + " failed to send request: " + ec.message(), ec);
+    }
+
+    const docker::ByteSink sink = [&](const char* data, std::size_t size) {
+        if (size == 0) {
+            return; // a zero-length chunk would read as the body terminator
+        }
+        req.body().data = const_cast<char*>(data); // Beast only reads from it
+        req.body().size = size;
+        req.body().more = true;
+        http::write(stream, serializer, ec);
+        if (ec == http::error::need_buffer) {
+            ec = {}; // the serializer consumed the block and wants the next
+        }
+        if (ec) {
+            throw_upload_error(transport, stream, context, resource_id, ec);
+        }
+    };
+    try {
+        producer(sink);
+    } catch (...) {
+        // The producer failed (a host file vanished, the wire died): the
+        // request body is unfinished, so the connection can carry nothing
+        // else. close() is idempotent — a sink abort already closed it.
+        transport.close();
+        throw;
+    }
+
+    // End of body: the serializer emits the terminating chunk.
+    req.body().data = nullptr;
+    req.body().size = 0;
+    req.body().more = false;
+    http::write(stream, serializer, ec);
+    if (ec) {
+        throw_upload_error(transport, stream, context, resource_id, ec);
+    }
+}
+
 /// Read the response header off a hijacked/streaming connection and require
 /// HTTP 200 (or, with `accept_upgraded`, the 101 a connection-upgrade request
 /// is answered with): on a read error, an immediate EOF, or a failing status
@@ -978,19 +1071,56 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
 }
 
 void DockerClient::copy_to_container(const std::string& id, const CopyToContainer& source) {
-    const std::string tar = docker::build_tar(source);
-    // Always extract at the root with relative entry names (build_tar normalizes
-    // the target — leading '/' stripped, Windows drive prefixes dropped). A
-    // single-file source needs its parent directory to already exist; a
-    // directory source ships its own directory entries.
+    copy_to_archive(id, "copy_to_container(" + id + ", '" + source.target() + "')",
+                    [&source](const docker::ByteSink& sink) { docker::stream_tar(source, sink); });
+}
+
+void DockerClient::copy_to_container(const std::string& id,
+                                     const std::vector<CopyToContainer>& sources) {
+    if (sources.empty()) {
+        return; // nothing to copy: skip the round-trip (and the version ping)
+    }
+    copy_to_archive(
+        id, "copy_to_container(" + id + ", " + std::to_string(sources.size()) + " sources)",
+        [&sources](const docker::ByteSink& sink) { docker::stream_tar(sources, sink); });
+}
+
+void DockerClient::copy_to_archive(const std::string& id, const std::string& context,
+                                   const docker::BodyProducer& producer) {
+    // Always extract at the root with relative entry names (stream_tar
+    // normalizes each target — leading '/' stripped, Windows drive prefixes
+    // dropped). A single-file source needs its parent directory to already
+    // exist; a directory source ships its own directory entries. The version
+    // pin may trigger the one-time negotiation round-trip; resolve it before
+    // connecting the upload transport.
     const std::string target =
         versioned("/containers/" + id + "/archive?path=/&noOverwriteDirNonDir=false");
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/x-tar"}};
 
-    const Response res = request("PUT", target, tar, headers);
-    if (res.status_code != 200) {
-        throw_status_error("copy_to_container(" + id + ", '" + source.target() + "')", res, id);
+    auto transport = docker::connect(host_, timeouts_);
+    docker::TransportStream stream{*transport};
+
+    auto req = make_request<http::buffer_body>(http::verb::put, target, host_);
+    req.set(http::field::content_type, "application/x-tar");
+    write_chunked_request(*transport, stream, req, producer, context, id);
+
+    // The reply is small: an empty 200 or an error JSON.
+    boost::system::error_code ec;
+    boost::beast::flat_buffer buffer;
+    http::response_parser<http::string_body> parser;
+    parser.body_limit(boost::none);
+    http::read(stream, buffer, parser, ec);
+    if (ec == http::error::end_of_stream && !parser.is_done()) {
+        transport->close();
+        throw DockerError(context + " failed: connection closed before the response completed");
+    }
+    if (ec && ec != http::error::end_of_stream) {
+        transport->close();
+        docker::throw_transport_error(context + " failed to read response: " + ec.message(), ec);
+    }
+    transport->close();
+    if (parser.get().result_int() != 200) {
+        throw_status_error(context, static_cast<int>(parser.get().result_int()),
+                           parser.get().body(), id);
     }
 }
 

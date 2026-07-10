@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -18,6 +19,19 @@
 #include "testcontainers/docker/DockerHost.hpp"
 
 namespace tcunit {
+
+/// Script-entry marker: reply with the rest of the entry right after the
+/// request HEAD arrives and close WITHOUT draining the body — models a daemon
+/// that rejects a streamed upload mid-body (an empty payload after the marker
+/// models one that just drops the connection). Closing with unread request
+/// bytes pending makes the OS send RST, so whether the client sees the
+/// response or a reset is a real-world race the test must tolerate.
+inline constexpr std::string_view kRespondAfterHead = "RESPOND-AFTER-HEAD\n";
+
+/// Wrap `response` (may be "") as a respond-after-head script entry.
+inline std::string respond_after_head(const std::string& response) {
+    return std::string(kRespondAfterHead) + response;
+}
 
 /// A loopback HTTP responder serving a canned script: one entry per accepted
 /// CONNECTION, each entry a list of responses served back-to-back on that
@@ -149,6 +163,21 @@ private:
                 break; // client closed / gave up on this connection
             }
             const std::string head = request.substr(0, head_end + 4);
+            if (response.rfind(kRespondAfterHead, 0) == 0) {
+                // Reply immediately after the head and close with the body
+                // deliberately unread (see kRespondAfterHead). Only the head
+                // is recorded — the body never fully arrives.
+                {
+                    const std::lock_guard<std::mutex> lock(mutex_);
+                    requests_.push_back(head);
+                    requests_by_connection_[index].push_back(head);
+                }
+                const std::string payload(response.substr(kRespondAfterHead.size()));
+                if (!payload.empty()) {
+                    asio::write(socket, asio::buffer(payload), ec);
+                }
+                break;
+            }
             std::string recorded;
             if (is_chunked(head)) {
                 // A chunked body (the client's streaming uploads): drain and

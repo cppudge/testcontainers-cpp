@@ -12,10 +12,10 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
-#include <iterator>
 #include <memory>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -25,7 +25,7 @@ namespace {
 
 /// One sink call per block keeps the wire writes coarse without buffering
 /// much; also the read granularity for lazy file bodies.
-constexpr std::size_t kTarBlockSize = 64 * 1024;
+constexpr std::size_t kTarBlockSize = std::size_t{64} * 1024;
 
 /// Client data for the libarchive write callback: the destination sink plus
 /// the first exception it threw. libarchive is C — an exception must not
@@ -313,10 +313,21 @@ void stream_tar(const CopyToContainer& source, const TarSink& sink) {
 
 void stream_tar(const std::vector<CopyToContainer>& sources, const TarSink& sink) {
     std::vector<PendingEntry> entries;
+    std::unordered_set<std::string> seen_dirs;
     for (const CopyToContainer& source : sources) {
-        std::vector<PendingEntry> part = collect_entries(source);
-        entries.insert(entries.end(), std::make_move_iterator(part.begin()),
-                       std::make_move_iterator(part.end()));
+        for (PendingEntry& e : collect_entries(source)) {
+            // Directory sources sharing a target prefix would each emit the
+            // full chain ("opt/" twice); one directory entry is enough.
+            // First-wins by name is safe because every directory entry is
+            // identical today (0755, empty body) — revisit the key if
+            // directory metadata ever becomes configurable. File entries are
+            // NOT deduplicated: a later source legitimately overwrites an
+            // earlier target (extraction is last-wins).
+            if (e.is_dir && !seen_dirs.insert(e.name).second) {
+                continue;
+            }
+            entries.push_back(std::move(e));
+        }
     }
     write_tar_stream(entries, "copy_to_container", sink);
 }

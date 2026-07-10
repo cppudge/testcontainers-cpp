@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,7 +24,20 @@ namespace testcontainers {
 
 namespace docker {
 class ITransport;
-}
+
+/// Receives successive blocks of a streamed body (up to ~64 KiB each). Used
+/// on both directions: an upload producer writes blocks into one, a download
+/// call delivers response blocks through one. An exception thrown from the
+/// sink aborts the transfer and propagates to the caller unchanged.
+using ByteSink = std::function<void(const char* data, std::size_t size)>;
+
+/// Writes a request body incrementally: called once per request with the sink
+/// to push blocks into; returning ends the body. Each block goes onto the
+/// wire as one HTTP chunk (the request is sent with
+/// `Transfer-Encoding: chunked`, so the total size never needs to be known
+/// up front). An exception aborts the request and propagates unchanged.
+using BodyProducer = std::function<void(const ByteSink& sink)>;
+} // namespace docker
 
 /// An HTTP response from the Docker Engine API.
 struct Response {
@@ -325,9 +340,19 @@ public:
     /// at the root. Entry names are the target normalized (leading '/'
     /// stripped; a Windows drive-rooted target like "C:\x" becomes "x"). A
     /// single-file source needs its parent directory to already exist in the
-    /// container; a directory source creates the target chain itself. Throws
-    /// DockerError on failure (non-200, or the host source cannot be read).
+    /// container; a directory source creates the target chain itself. The tar
+    /// is produced and uploaded in blocks (a chunked request body): host files
+    /// are read as they go out, so the payload is never held in memory whole.
+    /// Throws DockerError on failure (non-200, or the host source cannot be
+    /// read).
     void copy_to_container(const std::string& id, const CopyToContainer& source);
+
+    /// Batched copy: ONE `PUT /containers/{id}/archive` whose tar carries the
+    /// entries of all `sources` in order (later sources win on a target
+    /// collision, exactly as consecutive single copies would). One round-trip
+    /// and one archive regardless of the source count; an empty vector is a
+    /// no-op. Streams like the single-source overload; throws like it too.
+    void copy_to_container(const std::string& id, const std::vector<CopyToContainer>& sources);
 
     /// `GET /containers/{id}/archive?path=<container_path>` — fetch the tar archive
     /// of the file or directory at `container_path`. Returns the raw tar bytes
@@ -392,6 +417,12 @@ private:
     request_with_io_timeout(std::string_view method, std::string_view target, std::string_view body,
                             const std::vector<std::pair<std::string, std::string>>& headers,
                             std::optional<std::chrono::milliseconds> io_timeout);
+
+    /// Shared body of both copy_to_container overloads: stream the tar
+    /// produced by `producer` as a chunked `PUT /containers/{id}/archive`
+    /// upload and require a 200 reply. `context` prefixes error messages.
+    void copy_to_archive(const std::string& id, const std::string& context,
+                         const docker::BodyProducer& producer);
 
     /// Drop the session state, gracefully closing the cached connection (on
     /// TLS that is the close_notify exchange; plain destruction would cut it

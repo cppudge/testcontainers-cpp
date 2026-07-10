@@ -26,6 +26,8 @@
 //   Copy.CopyIntoRunningContainer - Container::copy_to writes a file into an already-running container.
 //   Copy.ReadFileRoundTrip - copy_to then read_file returns the exact bytes that were copied in.
 //   Copy.LargeFileRoundTrip - a >1 MiB file copied in is read back byte-exact, proving the lifted response body limit.
+//   Copy.LargeHostFileStreams - a 5 MiB HOST FILE rides the lazy block-streamed upload path and reads back byte-exact.
+//   Copy.BatchedCopyLandsAllSources - the batched copy_to_container overload lands every source in one PUT.
 //   Copy.CopyFileFromWritesHost - copy_file_from writes the container file's contents to a host path.
 //   Copy.ReadFileRejectsDirectory - read_file on a directory throws DockerError (not a single regular file).
 //   Copy.ModeAppliedToCopiedFile - CopyToContainer::with_mode(0755) lands as the file's permission bits (stat -c %a -> 755).
@@ -117,6 +119,39 @@ TEST_F(Copy, LargeFileRoundTrip) {
     const std::string read_back = c.read_file("/tmp/big.bin");
     ASSERT_EQ(read_back.size(), big.size());
     EXPECT_EQ(read_back, big);
+}
+
+TEST_F(Copy, LargeHostFileStreams) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // A 5 MiB host file: the upload reads it in 64 KiB blocks as the chunks
+    // go out (the lazy path — distinct from the in-memory `content` source).
+    std::string big;
+    big.reserve(std::size_t{5} * 1024 * 1024);
+    for (std::size_t i = 0; big.size() < std::size_t{5} * 1024 * 1024; ++i) {
+        big += "streamed host file payload line " + std::to_string(i) + "\n";
+    }
+    const tcit::TempFile file(big, "tc_copybig_");
+
+    c.copy_to(CopyToContainer::host_file(file.string(), "/tmp/big-host.bin"));
+
+    const std::string read_back = c.read_file("/tmp/big-host.bin");
+    ASSERT_EQ(read_back.size(), big.size());
+    EXPECT_EQ(read_back, big);
+}
+
+TEST_F(Copy, BatchedCopyLandsAllSources) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    const tcit::TempFile file("batched-host-file", "tc_copybatch_");
+    const std::vector<CopyToContainer> sources = {
+        CopyToContainer::content("batched-bytes", "/tmp/batch-a.txt"),
+        CopyToContainer::host_file(file.string(), "/tmp/batch-b.txt"),
+    };
+    DockerClient::from_environment().copy_to_container(c.id(), sources);
+
+    EXPECT_EQ(c.read_file("/tmp/batch-a.txt"), "batched-bytes");
+    EXPECT_EQ(c.read_file("/tmp/batch-b.txt"), "batched-host-file");
 }
 
 TEST_F(Copy, CopyFileFromWritesHost) {

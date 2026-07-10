@@ -40,6 +40,7 @@
 //   Tar.SinkExceptionPropagates - an exception thrown by the sink at trailer-flush time surfaces from stream_tar with its type and message intact.
 //   Tar.SinkExceptionPropagatesMidStream - a sink that throws mid-body (large file) also surfaces unchanged.
 //   Tar.BatchedSourcesShareOneArchive - the vector stream_tar overload packs every source's entries into one archive in order.
+//   Tar.BatchedSourcesDedupSharedDirChains - directory sources sharing a target prefix emit the shared chain's directory entries once (files are never deduplicated).
 //   Tar.ContextTarLazyFileEntry - a TarFile with `path` set streams the host file's bytes (the inline body is ignored).
 //   Tar.ContextTarMissingLazyFileThrows - a TarFile whose `path` does not exist throws DockerError.
 //   Tar.ZeroByteLazyFileEntry - a zero-byte host file round-trips as an empty regular-file entry (the exact-EOF edge of the changed-size check).
@@ -394,6 +395,32 @@ TEST(Tar, BatchedSourcesShareOneArchive) {
     EXPECT_EQ(entries[1].name, "b/two.txt");
     EXPECT_EQ(entries[1].body, "file-body");
     EXPECT_EQ(entries[1].mode & 0777, 0600);
+}
+
+TEST(Tar, BatchedSourcesDedupSharedDirChains) {
+    const TempTree tree_a;
+    const TempTree tree_b;
+    const std::vector<CopyToContainer> sources = {
+        CopyToContainer::host_dir(tree_a.path(), "/opt/a"),
+        CopyToContainer::host_dir(tree_b.path(), "/opt/b"),
+    };
+
+    std::string tar;
+    stream_tar(sources, [&tar](const char* data, std::size_t size) { tar.append(data, size); });
+
+    // The shared "opt/" chain appears exactly once; each source keeps its own
+    // subtree entries.
+    std::size_t opt_count = 0;
+    std::size_t a_root = 0;
+    std::size_t b_root = 0;
+    for (const TarEntry& e : extract_tar(tar)) {
+        opt_count += (e.name == "opt/") ? 1 : 0;
+        a_root += (e.name == "opt/a/") ? 1 : 0;
+        b_root += (e.name == "opt/b/") ? 1 : 0;
+    }
+    EXPECT_EQ(opt_count, 1u);
+    EXPECT_EQ(a_root, 1u);
+    EXPECT_EQ(b_root, 1u);
 }
 
 TEST(Tar, ContextTarLazyFileEntry) {

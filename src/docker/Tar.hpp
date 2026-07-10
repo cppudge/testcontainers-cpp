@@ -82,8 +82,10 @@ struct TarFile {
     /// When set, the entry's bytes come from this host file, read in blocks at
     /// stream time instead of being preloaded (the descriptor stays cheap no
     /// matter the file size). The file must exist and keep its size until the
-    /// stream completes. Set exactly one of `body` / `path`.
-    std::filesystem::path path;
+    /// stream completes. Set exactly one of `body` / `path`. The "redundant"
+    /// explicit default keeps 2/3-field aggregate initialization free of
+    /// gcc's -Wmissing-field-initializers.
+    std::filesystem::path path{}; // NOLINT(readability-redundant-member-init)
 };
 
 /// Stream a tar archive holding all `files` as regular-file entries (names used
