@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -44,17 +45,25 @@
 //   Tar.ContextTarLazyFileEntry - a TarFile with `path` set streams the host file's bytes (the inline body is ignored).
 //   Tar.ContextTarMissingLazyFileThrows - a TarFile whose `path` does not exist throws DockerError.
 //   Tar.ZeroByteLazyFileEntry - a zero-byte host file round-trips as an empty regular-file entry (the exact-EOF edge of the changed-size check).
+//   Tar.ExtractToDirRoundTrip - extract_tar_to_dir pulls a streamed archive block by block and materializes files, nested directories, and (POSIX) permission bits under dest.
+//   Tar.ExtractToDirRejectsTraversal - a "../evil" entry throws DockerError and writes nothing outside dest.
+//   Tar.ExtractToDirRejectsAbsolute - an absolute "/abs" entry (hand-built archive) throws DockerError.
+//   Tar.ExtractToDirDriveComponent - a "data/C:/evil" entry cannot escape onto another drive: on Windows it throws, on POSIX the colon is an ordinary character and the file stays inside dest.
+//   Tar.ExtractToDirSkipsSymlinks - a symlink entry is skipped by policy while surrounding regular files extract.
+//   Tar.ExtractToDirSourceExceptionPropagates - an exception thrown by the pull source surfaces unchanged (type and message).
 
 using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
 using testcontainers::docker::build_context_tar;
 using testcontainers::docker::build_tar;
 using testcontainers::docker::extract_tar;
+using testcontainers::docker::extract_tar_to_dir;
 using testcontainers::docker::normalize_entry_name;
 using testcontainers::docker::stream_tar;
 using testcontainers::docker::strip_leading_slash;
 using testcontainers::docker::TarEntry;
 using testcontainers::docker::TarFile;
+using testcontainers::docker::TarSource;
 
 namespace {
 
@@ -456,6 +465,177 @@ TEST(Tar, ZeroByteLazyFileEntry) {
     EXPECT_EQ(entries.front().name, "tmp/empty");
     EXPECT_TRUE(entries.front().is_regular_file);
     EXPECT_EQ(entries.front().body, "");
+}
+
+namespace {
+
+/// A pull source reading sequentially from an in-memory tar string.
+TarSource source_from(const std::string& tar, std::size_t* pos) {
+    return [&tar, pos](char* data, std::size_t size) -> std::size_t {
+        const std::size_t n = tar.copy(data, size, *pos); // clamps at the tail
+        *pos += n;
+        return n;
+    };
+}
+
+/// A self-cleaning destination directory for extract_tar_to_dir tests.
+class DestDir {
+public:
+    DestDir() {
+        static std::atomic<unsigned> counter{0};
+        dir_ = std::filesystem::temp_directory_path() /
+               ("tc_tarextract_" + std::to_string(counter.fetch_add(1)));
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec); // a previous crashed run's leftovers
+    }
+    ~DestDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+    const std::filesystem::path& path() const { return dir_; }
+
+private:
+    std::filesystem::path dir_;
+};
+
+/// Read `path` fully (binary).
+std::string slurp(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+/// Hand-build a tar whose single entry keeps `name` VERBATIM (our writers
+/// normalize names, so hostile shapes need a raw writer). `symlink_target`
+/// non-empty makes it a symlink entry instead of a regular file.
+std::string raw_tar_entry(const std::string& name, const std::string& body,
+                          const std::string& symlink_target = {}) {
+    std::string out;
+    struct archive* a = archive_write_new();
+    archive_write_set_format_pax_restricted(a);
+    archive_write_open(
+        a, &out, nullptr,
+        [](struct archive*, void* dest, const void* buf, std::size_t len) -> la_ssize_t {
+            static_cast<std::string*>(dest)->append(static_cast<const char*>(buf), len);
+            return static_cast<la_ssize_t>(len);
+        },
+        nullptr);
+    struct archive_entry* entry = archive_entry_new();
+    archive_entry_set_pathname(entry, name.c_str());
+    if (!symlink_target.empty()) {
+        archive_entry_set_filetype(entry, AE_IFLNK);
+        archive_entry_set_symlink(entry, symlink_target.c_str());
+        archive_entry_set_size(entry, 0);
+    } else {
+        archive_entry_set_filetype(entry, AE_IFREG);
+        archive_entry_set_size(entry, static_cast<la_int64_t>(body.size()));
+    }
+    archive_entry_set_perm(entry, 0644);
+    archive_write_header(a, entry);
+    if (symlink_target.empty() && !body.empty()) {
+        archive_write_data(a, body.data(), body.size());
+    }
+    archive_entry_free(entry);
+    archive_write_close(a);
+    archive_write_free(a);
+    return out;
+}
+
+} // namespace
+
+TEST(Tar, ExtractToDirRoundTrip) {
+    const TempTree tree;
+    std::string tar;
+    stream_tar(CopyToContainer::host_dir(tree.path(), "/data").with_mode(0640),
+               [&tar](const char* data, std::size_t size) { tar.append(data, size); });
+
+    const DestDir dest;
+    std::size_t pos = 0;
+    extract_tar_to_dir(source_from(tar, &pos), dest.path());
+
+    EXPECT_EQ(slurp(dest.path() / "data" / "root.txt"), "root-body");
+    EXPECT_EQ(slurp(dest.path() / "data" / "sub" / "nested.txt"), "nested-body");
+    EXPECT_TRUE(std::filesystem::is_directory(dest.path() / "data" / "empty"));
+#if !defined(_WIN32)
+    // Permission bits are applied on POSIX (best-effort elsewhere).
+    const auto perms = std::filesystem::status(dest.path() / "data" / "root.txt").permissions();
+    EXPECT_EQ(static_cast<unsigned>(perms) & 0777u, 0640u);
+#endif
+}
+
+TEST(Tar, ExtractToDirRejectsTraversal) {
+    const std::string tar = build_context_tar({TarFile{"../evil.txt", "boom"}});
+    const DestDir dest;
+    std::size_t pos = 0;
+    EXPECT_THROW(extract_tar_to_dir(source_from(tar, &pos), dest.path()), DockerError);
+    EXPECT_FALSE(std::filesystem::exists(dest.path().parent_path() / "evil.txt"));
+}
+
+TEST(Tar, ExtractToDirRejectsAbsolute) {
+    const std::string tar = raw_tar_entry("/abs.txt", "boom");
+    const DestDir dest;
+    std::size_t pos = 0;
+    EXPECT_THROW(extract_tar_to_dir(source_from(tar, &pos), dest.path()), DockerError);
+}
+
+TEST(Tar, ExtractToDirDriveComponent) {
+    // An interior drive-letter component: std::filesystem's operator/= RESETS
+    // onto that drive on Windows when the letter differs from dest's,
+    // escaping dest — the extraction must refuse it there. On POSIX a colon
+    // is an ordinary filename character and the entry lands inside dest.
+    const DestDir dest;
+#if defined(_WIN32)
+    // A drive guaranteed to differ from dest's (same-letter "C:" components
+    // append harmlessly; the reset needs a mismatch).
+    const std::string other =
+        (dest.path().root_name() == std::filesystem::path("Z:")) ? "Y:" : "Z:";
+    {
+        const std::string tar = raw_tar_entry("data/" + other + "/evil.txt", "boom");
+        std::size_t pos = 0;
+        EXPECT_THROW(extract_tar_to_dir(source_from(tar, &pos), dest.path()), DockerError);
+    }
+    {
+        // An NTFS alternate-data-stream shaped component resets too ("a:" is
+        // a root-name).
+        const std::string tar = raw_tar_entry("data/" + other + "evil.txt", "boom");
+        std::size_t pos = 0;
+        EXPECT_THROW(extract_tar_to_dir(source_from(tar, &pos), dest.path()), DockerError);
+    }
+#else
+    const std::string tar = raw_tar_entry("data/C:/evil.txt", "boom");
+    std::size_t pos = 0;
+    extract_tar_to_dir(source_from(tar, &pos), dest.path());
+    EXPECT_EQ(slurp(dest.path() / "data" / "C:" / "evil.txt"), "boom");
+#endif
+}
+
+TEST(Tar, ExtractToDirSkipsSymlinks) {
+    // A symlink-only archive: the entry is skipped by policy (a written link
+    // could redirect later entries outside dest), nothing is created.
+    const std::string tar = raw_tar_entry("evil-link", "", /*symlink_target=*/"/etc");
+    const DestDir dest;
+    std::size_t pos = 0;
+    extract_tar_to_dir(source_from(tar, &pos), dest.path());
+    EXPECT_FALSE(std::filesystem::exists(dest.path() / "evil-link"));
+    EXPECT_TRUE(std::filesystem::is_directory(dest.path())); // dest itself was created
+
+    // A subsequent normal archive still extracts into the same dest.
+    const std::string normal = build_context_tar({TarFile{"kept.txt", "kept"}});
+    std::size_t pos2 = 0;
+    extract_tar_to_dir(source_from(normal, &pos2), dest.path());
+    EXPECT_EQ(slurp(dest.path() / "kept.txt"), "kept");
+}
+
+TEST(Tar, ExtractToDirSourceExceptionPropagates) {
+    const DestDir dest;
+    const TarSource boom = [](char*, std::size_t) -> std::size_t {
+        throw std::runtime_error("download died");
+    };
+    try {
+        extract_tar_to_dir(boom, dest.path());
+        FAIL() << "extract_tar_to_dir did not propagate the source exception";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "download died");
+    }
 }
 
 TEST(Tar, ContextTarTwoFiles) {

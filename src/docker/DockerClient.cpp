@@ -334,6 +334,12 @@ Response DockerClient::request_with_io_timeout(
         // whole body.
         http::response_parser<http::string_body> parser;
         parser.body_limit(boost::none);
+        if (method == "HEAD") {
+            // A HEAD reply advertises the body it would have sent (e.g. the
+            // archive size on /containers/{id}/archive) but never carries
+            // it: without skip the parser would wait for those bytes forever.
+            parser.skip(true);
+        }
         http::read(stream, buffer, parser, ec);
         if (ec == http::error::end_of_stream && !parser.is_done()) {
             // EOF before a complete response. Without this check a stale
@@ -1142,6 +1148,136 @@ std::string DockerClient::copy_from_container(const std::string& id,
                             id);
     }
     throw_status_error("copy_from_container(" + id + ", '" + container_path + "')", res, id);
+}
+
+namespace {
+
+/// An open, streaming `GET /containers/{id}/archive` download: read_block()
+/// hands out successive body blocks — the pull shape both the sink overload
+/// and libarchive's read callback need. The constructor sends the request
+/// and requires a 200 header (a 404 throws NotFoundError before any block);
+/// the destructor closes the transport (idempotent), so an aborted consumer
+/// unwinds cleanly.
+class ArchiveDownload {
+public:
+    ArchiveDownload(const DockerHost& host, const docker::TransportTimeouts& timeouts,
+                    const std::string& target, std::string context, const std::string& id)
+        : transport_(docker::connect(host, timeouts)), stream_(*transport_),
+          context_(std::move(context)) {
+        const auto req = make_request<http::empty_body>(http::verb::get, target, host);
+        boost::system::error_code ec;
+        http::write(stream_, req, ec);
+        if (ec) {
+            transport_->close();
+            docker::throw_transport_error(context_ + " failed to send request: " + ec.message(),
+                                          ec);
+        }
+        parser_.body_limit(boost::none);
+        read_ok_header(*transport_, stream_, buffer_, parser_, context_, id);
+    }
+    ~ArchiveDownload() { transport_->close(); }
+    ArchiveDownload(const ArchiveDownload&) = delete;
+    ArchiveDownload& operator=(const ArchiveDownload&) = delete;
+
+    /// Read the next body block into data[0..size); 0 = end of the archive.
+    std::size_t read_block(char* data, std::size_t size) {
+        while (!parser_.is_done()) {
+            parser_.get().body().data = data;
+            parser_.get().body().size = size;
+            boost::system::error_code ec;
+            http::read_some(stream_, buffer_, parser_, ec);
+            if (ec == http::error::need_buffer) {
+                ec = {};
+            }
+            if (ec == http::error::end_of_stream && parser_.is_done()) {
+                ec = {}; // EOF-delimited body ended exactly here: normal
+            }
+            if (ec) {
+                transport_->close();
+                docker::throw_transport_error(
+                    context_ + " failed reading the archive stream: " + ec.message(), ec);
+            }
+            const std::size_t got = size - parser_.get().body().size;
+            if (got != 0) {
+                return got;
+            }
+            // A zero-byte pass parses chunk framing only — read again.
+        }
+        return 0;
+    }
+
+private:
+    std::shared_ptr<docker::ITransport> transport_;
+    docker::TransportStream stream_;
+    boost::beast::flat_buffer buffer_;
+    http::response_parser<http::buffer_body> parser_;
+    std::string context_;
+};
+
+} // namespace
+
+void DockerClient::copy_from_container(const std::string& id, const std::string& container_path,
+                                       const docker::ByteSink& sink) {
+    const std::string target =
+        versioned("/containers/" + id + "/archive?path=" + url_encode(container_path));
+    ArchiveDownload download(host_, timeouts_, target,
+                             "copy_from_container(" + id + ", '" + container_path + "')", id);
+
+    std::vector<char> block(std::size_t{64} * 1024);
+    for (;;) {
+        const std::size_t n = download.read_block(block.data(), block.size());
+        if (n == 0) {
+            return;
+        }
+        sink(block.data(), n);
+    }
+}
+
+void DockerClient::copy_from_container_to(const std::string& id, const std::string& container_path,
+                                          const std::filesystem::path& dest_dir) {
+    const std::string target =
+        versioned("/containers/" + id + "/archive?path=" + url_encode(container_path));
+    ArchiveDownload download(host_, timeouts_, target,
+                             "copy_from_container_to(" + id + ", '" + container_path + "')", id);
+
+    // libarchive pulls blocks straight off the response as it extracts —
+    // wire to disk, nothing buffered whole.
+    docker::extract_tar_to_dir(
+        [&download](char* data, std::size_t size) { return download.read_block(data, size); },
+        dest_dir);
+}
+
+DockerClient::ContainerPathStat
+DockerClient::container_path_stat(const std::string& id, const std::string& container_path) {
+    const std::string target =
+        versioned("/containers/" + id + "/archive?path=" + url_encode(container_path));
+    const std::string context = "container_path_stat(" + id + ", '" + container_path + "')";
+
+    const Response res = request("HEAD", target);
+    if (res.status_code != 200) {
+        throw_status_error(context, res, id);
+    }
+    const std::string encoded = res.header("X-Docker-Container-Path-Stat");
+    if (encoded.empty()) {
+        throw DockerError(context + " failed: the daemon sent no X-Docker-Container-Path-Stat "
+                                    "header");
+    }
+
+    ContainerPathStat out;
+    try {
+        const nlohmann::json stat = nlohmann::json::parse(docker::base64_decode(encoded));
+        out.name = stat.value("name", "");
+        out.size = stat.value("size", std::uint64_t{0});
+        out.mode = stat.value("mode", std::uint32_t{0});
+        out.mtime = stat.value("mtime", "");
+        out.link_target = stat.value("linkTarget", "");
+    } catch (const std::exception& e) {
+        throw DockerError(context +
+                          " failed: undecodable X-Docker-Container-Path-Stat header: " + e.what());
+    }
+    // Go's os.FileMode keeps the type bits high; bit 31 is ModeDir.
+    out.is_dir = (out.mode & 0x80000000U) != 0;
+    return out;
 }
 
 std::string

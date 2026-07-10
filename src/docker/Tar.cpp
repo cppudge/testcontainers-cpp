@@ -13,7 +13,9 @@
 #include <fstream>
 #include <ios>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <utility>
@@ -361,6 +363,179 @@ std::string build_context_tar(const std::vector<TarFile>& files) {
     stream_context_tar(files,
                        [&out](const char* data, std::size_t size) { out.append(data, size); });
     return out;
+}
+
+namespace {
+
+/// Client data for the libarchive read callback: the pull source, its block
+/// buffer, and the first exception it threw (same C-frame firewall as the
+/// write side: stored here, reported as ARCHIVE_FATAL, rethrown from C++).
+struct SourceState {
+    const TarSource* source = nullptr;
+    std::vector<char> buf;
+    std::exception_ptr error;
+};
+
+la_ssize_t read_from_source(struct archive* /*a*/, void* client_data, const void** buffer) {
+    auto* state = static_cast<SourceState*>(client_data);
+    try {
+        const std::size_t n = (*state->source)(state->buf.data(), state->buf.size());
+        *buffer = state->buf.data();
+        return static_cast<la_ssize_t>(n); // 0 = end of stream
+    } catch (...) {
+        state->error = std::current_exception();
+        return -1;
+    }
+}
+
+/// Throw for a failed libarchive read call: the source's own exception when
+/// it threw one, DockerError with libarchive's diagnostic otherwise.
+[[noreturn]] void throw_read_error(const SourceState& state, struct archive* a, const char* op) {
+    if (state.error) {
+        std::rethrow_exception(state.error);
+    }
+    const char* err = archive_error_string(a);
+    throw DockerError(std::string("extract_tar_to_dir: ") + op +
+                      " failed: " + (err ? err : "unknown error"));
+}
+
+/// Validate an archive entry pathname and resolve it under `dest_dir`.
+/// Rejects absolute / drive-rooted names and any ".." component (tar-slip);
+/// "." components are dropped. Returns nullopt for an effectively-empty name.
+std::optional<std::filesystem::path> safe_dest_path(const std::string& name,
+                                                    const std::filesystem::path& dest_dir) {
+    if (name.empty()) {
+        return std::nullopt;
+    }
+    const bool drive_rooted = name.size() >= 2 &&
+                              std::isalpha(static_cast<unsigned char>(name[0])) != 0 &&
+                              name[1] == ':';
+    if (name.front() == '/' || name.front() == '\\' || drive_rooted) {
+        throw DockerError("extract_tar_to_dir: refusing absolute entry path '" + name + "'");
+    }
+    std::filesystem::path out = dest_dir;
+    bool any = false;
+    std::string_view rest(name);
+    while (!rest.empty()) {
+        const std::size_t sep = rest.find_first_of("/\\");
+        const std::string_view part = rest.substr(0, sep);
+        if (part == "..") {
+            throw DockerError("extract_tar_to_dir: refusing traversal entry path '" + name + "'");
+        }
+        if (!part.empty() && part != ".") {
+            out /= part;
+            any = true;
+        }
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        rest.remove_prefix(sep + 1);
+    }
+    if (!any) {
+        return std::nullopt;
+    }
+    // Belt and braces: on Windows a COMPONENT carrying a root-name ("C:",
+    // or "a:b" — an NTFS alternate data stream) makes operator/= RESET the
+    // accumulator onto another drive, silently escaping dest_dir. Verify the
+    // resolved path still sits under dest_dir by this platform's own rules
+    // (on POSIX a colon is an ordinary filename character and stays inside).
+    const std::filesystem::path rel = out.lexically_relative(dest_dir);
+    if (rel.empty() || *rel.begin() == "..") {
+        throw DockerError("extract_tar_to_dir: refusing entry path escaping the destination: '" +
+                          name + "'");
+    }
+    return out;
+}
+
+} // namespace
+
+void extract_tar_to_dir(const TarSource& source, const std::filesystem::path& dest_dir) {
+    // Declared BEFORE the archive handle: archive_read_free may still call
+    // read_from_source while unwinding (mirrors the write side).
+    SourceState state;
+    state.source = &source;
+    state.buf.resize(kTarBlockSize);
+
+    ArchivePtr a(archive_read_new(), archive_read_free);
+    if (a == nullptr) {
+        throw DockerError("extract_tar_to_dir: archive_read_new failed");
+    }
+    archive_read_support_format_tar(a.get());
+
+    if (archive_read_open(a.get(), &state, /*open*/ nullptr, read_from_source,
+                          /*close*/ nullptr) != ARCHIVE_OK) {
+        throw_read_error(state, a.get(), "archive_read_open");
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(dest_dir, ec);
+    if (ec) {
+        throw DockerError("extract_tar_to_dir: cannot create destination directory '" +
+                          dest_dir.string() + "': " + ec.message());
+    }
+
+    struct archive_entry* entry = nullptr;
+    std::vector<char> block(kTarBlockSize);
+    for (;;) {
+        const int rc = archive_read_next_header(a.get(), &entry);
+        if (rc == ARCHIVE_EOF) {
+            break;
+        }
+        // ARCHIVE_WARN is non-fatal (e.g. an unset field); anything below it is.
+        if (rc < ARCHIVE_WARN) {
+            throw_read_error(state, a.get(), "archive_read_next_header");
+        }
+
+        const char* raw_name = archive_entry_pathname(entry);
+        const std::optional<std::filesystem::path> dest =
+            safe_dest_path(raw_name ? raw_name : "", dest_dir);
+        const auto type = archive_entry_filetype(entry);
+        if (!dest || (type != AE_IFREG && type != AE_IFDIR)) {
+            // Symlinks, hardlinks, devices, FIFOs: skipped by policy (a
+            // symlink written to disk could redirect a later entry outside
+            // dest_dir; callers needing full fidelity use the raw sink
+            // overload and their own extraction).
+            archive_read_data_skip(a.get());
+            continue;
+        }
+
+        if (type == AE_IFDIR) {
+            std::filesystem::create_directories(*dest, ec);
+            if (ec) {
+                throw DockerError("extract_tar_to_dir: cannot create directory '" + dest->string() +
+                                  "': " + ec.message());
+            }
+            continue;
+        }
+
+        std::filesystem::create_directories(dest->parent_path(), ec); // best-effort; open reports
+        {
+            std::ofstream out(*dest, std::ios::binary | std::ios::trunc);
+            if (!out) {
+                throw DockerError("extract_tar_to_dir: cannot create file '" + dest->string() +
+                                  "'");
+            }
+            for (;;) {
+                const la_ssize_t n = archive_read_data(a.get(), block.data(), block.size());
+                if (n == 0) {
+                    break;
+                }
+                if (n < 0) {
+                    throw_read_error(state, a.get(), "archive_read_data");
+                }
+                out.write(block.data(), static_cast<std::streamsize>(n));
+                if (!out) {
+                    throw DockerError("extract_tar_to_dir: failed writing '" + dest->string() +
+                                      "'");
+                }
+            }
+        }
+        // Permission bits, best-effort (on Windows this maps to the readonly
+        // attribute at most; failures are ignored on purpose).
+        std::filesystem::permissions(
+            *dest, static_cast<std::filesystem::perms>(archive_entry_perm(entry) & 0777),
+            std::filesystem::perm_options::replace, ec);
+    }
 }
 
 std::vector<TarEntry> extract_tar(const std::string& tar_bytes) {

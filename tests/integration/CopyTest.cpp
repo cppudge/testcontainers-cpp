@@ -29,6 +29,8 @@
 //   Copy.LargeHostFileStreams - a 5 MiB HOST FILE rides the lazy block-streamed upload path and reads back byte-exact.
 //   Copy.BatchedCopyLandsAllSources - the batched copy_to_container overload lands every source in one PUT.
 //   Copy.CopyFileFromWritesHost - copy_file_from writes the container file's contents to a host path.
+//   Copy.CopyFromToDirectoryRoundTrip - copy_from_container_to streams a container directory tree onto the host byte-exact (files, nesting, empty dirs).
+//   Copy.ContainerPathStat - container_path_stat reports a file's size, a directory's dir bit, and NotFoundError for a missing path.
 //   Copy.ReadFileRejectsDirectory - read_file on a directory throws DockerError (not a single regular file).
 //   Copy.ModeAppliedToCopiedFile - CopyToContainer::with_mode(0755) lands as the file's permission bits (stat -c %a -> 755).
 //   Copy.CopyDirAtStart - with_copy_to(host_dir) lands the whole tree under a target whose chain did not pre-exist: nested file contents match and the empty subdirectory exists.
@@ -175,6 +177,56 @@ TEST_F(Copy, CopyFileFromWritesHost) {
 
     std::error_code ec;
     std::filesystem::remove_all(dest.parent_path(), ec);
+}
+
+TEST_F(Copy, CopyFromToDirectoryRoundTrip) {
+    const tcit::TempTree tree;
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+    c.copy_to(CopyToContainer::host_dir(tree.path(), "/opt/roundtrip"));
+
+    static std::atomic<unsigned> counter{0};
+    const std::filesystem::path dest = std::filesystem::temp_directory_path() /
+                                       ("tc_copyfromdir_" + std::to_string(counter.fetch_add(1)));
+
+    DockerClient::from_environment().copy_from_container_to(c.id(), "/opt/roundtrip", dest);
+
+    // Docker roots the archive at the requested path's base name.
+    std::ifstream root(dest / "roundtrip" / "root.txt", std::ios::binary);
+    ASSERT_TRUE(root.good());
+    const std::string root_body((std::istreambuf_iterator<char>(root)),
+                                std::istreambuf_iterator<char>());
+    EXPECT_EQ(root_body, "root-body");
+
+    std::ifstream nested(dest / "roundtrip" / "sub" / "nested.txt", std::ios::binary);
+    ASSERT_TRUE(nested.good());
+    const std::string nested_body((std::istreambuf_iterator<char>(nested)),
+                                  std::istreambuf_iterator<char>());
+    EXPECT_EQ(nested_body, "nested-body");
+
+    EXPECT_TRUE(std::filesystem::is_directory(dest / "roundtrip" / "empty"));
+
+    std::error_code ec;
+    std::filesystem::remove_all(dest, ec);
+}
+
+TEST_F(Copy, ContainerPathStat) {
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+    const std::string content = "sixteen bytes!!\n";
+    c.copy_to(CopyToContainer::content(content, "/tmp/stat-me.txt"));
+
+    DockerClient client = DockerClient::from_environment();
+
+    const DockerClient::ContainerPathStat file =
+        client.container_path_stat(c.id(), "/tmp/stat-me.txt");
+    EXPECT_EQ(file.name, "stat-me.txt");
+    EXPECT_EQ(file.size, content.size());
+    EXPECT_FALSE(file.is_dir);
+
+    const DockerClient::ContainerPathStat dir = client.container_path_stat(c.id(), "/tmp");
+    EXPECT_EQ(dir.name, "tmp");
+    EXPECT_TRUE(dir.is_dir);
+
+    EXPECT_THROW(client.container_path_stat(c.id(), "/definitely/missing/path"), NotFoundError);
 }
 
 TEST_F(Copy, ReadFileRejectsDirectory) {

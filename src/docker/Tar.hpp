@@ -110,4 +110,20 @@ struct TarEntry {
 /// opened or parsed.
 std::vector<TarEntry> extract_tar(const std::string& tar_bytes);
 
+/// Pull-source for a streamed tar: fill `data` (capacity `size`), return the
+/// byte count provided, 0 at end of stream. May throw — the extraction stops
+/// and the exception propagates unchanged (the HTTP layer signals a dead
+/// download this way).
+using TarSource = std::function<std::size_t(char* data, std::size_t size)>;
+
+/// Stream-extract a tar into `dest_dir` (created if missing), reading the
+/// archive from `source` block by block — the archive is never in memory
+/// whole, and each file's bytes go straight to disk. Regular files and
+/// directories are materialized (file permission bits applied best-effort);
+/// symlinks, hardlinks, and device entries are SKIPPED. Tar-slip protection:
+/// an entry whose path is absolute, drive-rooted, or contains ".." throws
+/// DockerError before anything is written. Also throws on an unreadable
+/// archive or a filesystem failure.
+void extract_tar_to_dir(const TarSource& source, const std::filesystem::path& dest_dir);
+
 } // namespace testcontainers::docker

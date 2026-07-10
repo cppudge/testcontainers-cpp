@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -368,8 +370,50 @@ public:
     /// `GET /containers/{id}/archive?path=<container_path>` — fetch the tar archive
     /// of the file or directory at `container_path`. Returns the raw tar bytes
     /// (extract with docker::extract_tar). Throws DockerError on 404 (no such
-    /// container or path) or any non-200.
+    /// container or path) or any non-200. Buffers the whole archive — for
+    /// payloads that should not sit in memory use the sink overload or
+    /// `copy_from_container_to`.
     std::string copy_from_container(const std::string& id, const std::string& container_path);
+
+    /// Streaming download: the same `GET /containers/{id}/archive`, but the
+    /// raw tar bytes are delivered to `sink` in blocks as they arrive instead
+    /// of being buffered. Status errors (404 -> NotFoundError) are thrown
+    /// before the first block; an exception from `sink` aborts the download
+    /// and propagates unchanged.
+    void copy_from_container(const std::string& id, const std::string& container_path,
+                             const docker::ByteSink& sink);
+
+    /// Download the file or directory at `container_path` and EXTRACT it into
+    /// the host directory `dest_dir` (created if missing), streaming: each
+    /// file's bytes go from the wire straight to disk. Regular files and
+    /// directories are materialized (permission bits best-effort); symlinks
+    /// and other special entries are skipped; an entry that would escape
+    /// `dest_dir` (absolute path or "..") throws DockerError. A single-file
+    /// path lands as `dest_dir/<basename>`; a directory path lands as
+    /// `dest_dir/<dirname>/...` (Docker archives are rooted at the requested
+    /// path's base name).
+    void copy_from_container_to(const std::string& id, const std::string& container_path,
+                                const std::filesystem::path& dest_dir);
+
+    /// Metadata of a container path, decoded from the
+    /// `X-Docker-Container-Path-Stat` header of a
+    /// `HEAD /containers/{id}/archive` probe — a cheap existence/size check
+    /// before a download (no archive is transferred). `mode` carries Go's
+    /// os.FileMode bits (type bits high, permissions low). Throws
+    /// NotFoundError when the container or path does not exist.
+    struct ContainerPathStat {
+        std::string name;        ///< base name of the path inside the container
+        std::uint64_t size = 0;  ///< file size in bytes (directory sizes are fs-defined)
+        std::uint32_t mode = 0;  ///< Go os.FileMode (bit 31 = directory, low bits = perms)
+        bool is_dir = false;     ///< decoded from `mode`
+        std::string mtime;       ///< RFC3339 timestamp, verbatim
+        std::string link_target; ///< symlink target ("" for non-links)
+    };
+
+    /// `HEAD /containers/{id}/archive?path=...` — stat a container path
+    /// without downloading it (see ContainerPathStat). Throws NotFoundError
+    /// on 404, DockerError on any other non-200 or an undecodable header.
+    ContainerPathStat container_path_stat(const std::string& id, const std::string& container_path);
 
     // --- Network operations ---
 
