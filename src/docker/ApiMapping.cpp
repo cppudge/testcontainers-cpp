@@ -145,6 +145,48 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     if (spec.shm_size_bytes) {
         host_config["ShmSize"] = *spec.shm_size_bytes;
     }
+    if (spec.nano_cpus) {
+        host_config["NanoCpus"] = *spec.nano_cpus;
+    }
+    if (spec.cpuset_cpus) {
+        host_config["CpusetCpus"] = *spec.cpuset_cpus;
+    }
+    if (spec.pids_limit) {
+        host_config["PidsLimit"] = *spec.pids_limit;
+    }
+    if (spec.restart_policy) {
+        nlohmann::json policy = nlohmann::json::object();
+        policy["Name"] = spec.restart_policy->name;
+        policy["MaximumRetryCount"] = spec.restart_policy->maximum_retry_count;
+        host_config["RestartPolicy"] = std::move(policy);
+    }
+    if (!spec.dns_servers.empty()) {
+        host_config["Dns"] = spec.dns_servers;
+    }
+    if (!spec.dns_search.empty()) {
+        host_config["DnsSearch"] = spec.dns_search;
+    }
+    if (!spec.dns_options.empty()) {
+        host_config["DnsOptions"] = spec.dns_options;
+    }
+    if (!spec.sysctls.empty()) {
+        nlohmann::json sysctls = nlohmann::json::object();
+        for (const auto& [key, value] : spec.sysctls) {
+            sysctls[key] = value;
+        }
+        host_config["Sysctls"] = std::move(sysctls);
+    }
+    if (!spec.devices.empty()) {
+        nlohmann::json devices = nlohmann::json::array();
+        for (const Device& d : spec.devices) {
+            nlohmann::json entry = nlohmann::json::object();
+            entry["PathOnHost"] = d.path_on_host;
+            entry["PathInContainer"] = d.path_in_container;
+            entry["CgroupPermissions"] = d.cgroup_permissions;
+            devices.push_back(std::move(entry));
+        }
+        host_config["Devices"] = std::move(devices);
+    }
     if (!spec.ulimits.empty()) {
         nlohmann::json ulimits = nlohmann::json::array();
         for (const Ulimit& u : spec.ulimits) {

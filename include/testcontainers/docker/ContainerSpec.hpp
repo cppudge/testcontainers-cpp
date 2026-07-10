@@ -7,8 +7,10 @@
 #include <utility>
 #include <vector>
 
+#include "testcontainers/Device.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/RestartPolicy.hpp"
 #include "testcontainers/Ulimit.hpp"
 
 namespace testcontainers {
@@ -37,13 +39,22 @@ struct CreateContainerSpec {
     bool privileged = false;        ///< HostConfig.Privileged
     bool auto_remove = false;       ///< HostConfig.AutoRemove
     std::vector<Mount> mounts;      ///< HostConfig.Mounts
-    std::optional<Healthcheck> healthcheck;     ///< Healthcheck (create-body)
-    std::optional<std::int64_t> memory_bytes;   ///< HostConfig.Memory (hard limit, bytes)
-    std::optional<std::int64_t> shm_size_bytes; ///< HostConfig.ShmSize (bytes)
-    std::vector<Ulimit> ulimits;                ///< HostConfig.Ulimits
-    std::vector<std::string> cap_add;           ///< HostConfig.CapAdd
-    std::vector<std::string> cap_drop;          ///< HostConfig.CapDrop
-    std::vector<std::string> extra_hosts;       ///< HostConfig.ExtraHosts ("host:ip")
+    std::optional<Healthcheck> healthcheck;      ///< Healthcheck (create-body)
+    std::optional<std::int64_t> memory_bytes;    ///< HostConfig.Memory (hard limit, bytes)
+    std::optional<std::int64_t> shm_size_bytes;  ///< HostConfig.ShmSize (bytes)
+    std::optional<std::int64_t> nano_cpus;       ///< HostConfig.NanoCpus (1e9 = one CPU)
+    std::optional<std::string> cpuset_cpus;      ///< HostConfig.CpusetCpus ("0-2,7")
+    std::optional<std::int64_t> pids_limit;      ///< HostConfig.PidsLimit (-1 = unlimited)
+    std::vector<Ulimit> ulimits;                 ///< HostConfig.Ulimits
+    std::vector<std::string> cap_add;            ///< HostConfig.CapAdd
+    std::vector<std::string> cap_drop;           ///< HostConfig.CapDrop
+    std::vector<std::string> extra_hosts;        ///< HostConfig.ExtraHosts ("host:ip")
+    std::optional<RestartPolicy> restart_policy; ///< HostConfig.RestartPolicy
+    std::vector<std::string> dns_servers;        ///< HostConfig.Dns
+    std::vector<std::string> dns_search;         ///< HostConfig.DnsSearch (search domains)
+    std::vector<std::string> dns_options;        ///< HostConfig.DnsOptions (resolver options)
+    std::vector<std::pair<std::string, std::string>> sysctls; ///< HostConfig.Sysctls
+    std::vector<Device> devices;                              ///< HostConfig.Devices
     /// HostConfig.Isolation ("process"/"hyperv"; Windows daemons).
     std::optional<std::string> isolation;
     /// Raw JSON object deep-merged into the create body (escape hatch);

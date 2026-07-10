@@ -10,10 +10,12 @@
 #include <nlohmann/json.hpp>
 
 #include "docker/ApiMapping.hpp"
+#include "testcontainers/Device.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/ExecOptions.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Mount.hpp"
+#include "testcontainers/RestartPolicy.hpp"
 #include "testcontainers/Ulimit.hpp"
 
 // Tests in this file:
@@ -36,6 +38,10 @@
 //   ApiMapping.BuildCreateBodyNetworkAliases - a network plus aliases maps to NetworkingConfig.EndpointsConfig.<net>.Aliases, and aliases without a network emit no NetworkingConfig.
 //   ApiMapping.BuildCreateBodyStaticIpv4 - a network plus static_ipv4 maps to the endpoint's IPAMConfig.IPv4Address (no Aliases key without aliases; combines with aliases; no-op without a network).
 //   ApiMapping.BuildCreateBodyHostConfigKnobs - memory, shm size, ulimits, cap add/drop, and extra hosts map to their HostConfig fields.
+//   ApiMapping.BuildCreateBodyCpuPidsKnobs - nano_cpus, cpuset_cpus, and pids_limit map to HostConfig NanoCpus/CpusetCpus/PidsLimit.
+//   ApiMapping.BuildCreateBodyRestartPolicy - each RestartPolicy factory maps to HostConfig.RestartPolicy with Docker's Name spelling and the retry count.
+//   ApiMapping.BuildCreateBodyDnsAndSysctls - dns servers/search/options map to HostConfig Dns/DnsSearch/DnsOptions arrays and sysctl pairs to the Sysctls object.
+//   ApiMapping.BuildCreateBodyDevices - devices map to HostConfig.Devices entries with PathOnHost/PathInContainer/CgroupPermissions (default "rwm").
 //   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
 //   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
 //   ApiMapping.BuildConnectNetworkBody - the connect body carries Container, adding EndpointConfig.Aliases only when aliases are given.
@@ -402,6 +408,78 @@ TEST(ApiMapping, BuildCreateBodyHostConfigKnobs) {
     EXPECT_EQ(host["CapAdd"], nlohmann::json({"NET_ADMIN", "SYS_TIME"}));
     EXPECT_EQ(host["CapDrop"], nlohmann::json({"MKNOD"}));
     EXPECT_EQ(host["ExtraHosts"], nlohmann::json({"myhost:1.2.3.4"}));
+}
+
+TEST(ApiMapping, BuildCreateBodyCpuPidsKnobs) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.nano_cpus = 1500000000; // 1.5 CPUs
+    spec.cpuset_cpus = "0-2,7";
+    spec.pids_limit = 64;
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    const auto& host = body["HostConfig"];
+    EXPECT_EQ(host["NanoCpus"].get<std::int64_t>(), 1500000000);
+    EXPECT_EQ(host["CpusetCpus"], "0-2,7");
+    EXPECT_EQ(host["PidsLimit"].get<std::int64_t>(), 64);
+}
+
+TEST(ApiMapping, BuildCreateBodyRestartPolicy) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.restart_policy = RestartPolicy::on_failure(3);
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    const auto& policy = body["HostConfig"]["RestartPolicy"];
+    EXPECT_EQ(policy["Name"], "on-failure");
+    EXPECT_EQ(policy["MaximumRetryCount"].get<int>(), 3);
+
+    // Docker's Name strings are hyphenated; pin each factory's spelling.
+    spec.restart_policy = RestartPolicy::always();
+    EXPECT_EQ(build_create_body(spec)["HostConfig"]["RestartPolicy"]["Name"], "always");
+    spec.restart_policy = RestartPolicy::unless_stopped();
+    const auto body_unless = build_create_body(spec);
+    EXPECT_EQ(body_unless["HostConfig"]["RestartPolicy"]["Name"], "unless-stopped");
+    EXPECT_EQ(body_unless["HostConfig"]["RestartPolicy"]["MaximumRetryCount"].get<int>(), 0);
+}
+
+TEST(ApiMapping, BuildCreateBodyDnsAndSysctls) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.dns_servers = {"192.0.2.53", "192.0.2.54"};
+    spec.dns_search = {"svc.test.internal"};
+    spec.dns_options = {"ndots:2"};
+    spec.sysctls = {{"net.ipv4.ip_unprivileged_port_start", "1024"},
+                    {"net.ipv4.ping_group_range", "0 2147483647"}};
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    const auto& host = body["HostConfig"];
+    EXPECT_EQ(host["Dns"], nlohmann::json({"192.0.2.53", "192.0.2.54"}));
+    EXPECT_EQ(host["DnsSearch"], nlohmann::json({"svc.test.internal"}));
+    EXPECT_EQ(host["DnsOptions"], nlohmann::json({"ndots:2"}));
+    EXPECT_EQ(host["Sysctls"]["net.ipv4.ip_unprivileged_port_start"], "1024");
+    EXPECT_EQ(host["Sysctls"]["net.ipv4.ping_group_range"], "0 2147483647");
+}
+
+TEST(ApiMapping, BuildCreateBodyDevices) {
+    CreateContainerSpec spec;
+    spec.image = "alpine:3.20";
+    spec.devices = {Device{"/dev/fuse", "/dev/tc-fuse", "rw"},
+                    Device{"/dev/net/tun", "/dev/net/tun"}}; // permissions default to "rwm"
+
+    const auto body = build_create_body(spec);
+    ASSERT_TRUE(body.contains("HostConfig"));
+    const auto& devices = body["HostConfig"]["Devices"];
+    ASSERT_EQ(devices.size(), 2u);
+    EXPECT_EQ(devices[0]["PathOnHost"], "/dev/fuse");
+    EXPECT_EQ(devices[0]["PathInContainer"], "/dev/tc-fuse");
+    EXPECT_EQ(devices[0]["CgroupPermissions"], "rw");
+    EXPECT_EQ(devices[1]["PathOnHost"], "/dev/net/tun");
+    EXPECT_EQ(devices[1]["PathInContainer"], "/dev/net/tun");
+    EXPECT_EQ(devices[1]["CgroupPermissions"], "rwm");
 }
 
 TEST(ApiMapping, BuildNetworkCreateBody) {

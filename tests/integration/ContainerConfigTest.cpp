@@ -2,9 +2,11 @@
 
 #include <cstdint>
 #include <exception>
+#include <optional>
 #include <string>
 
 #include "testcontainers/Container.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -25,6 +27,10 @@
 //   ContainerConfig.BindMountReadOnly - a read-only bind mount exposes a host file's content inside the container and rejects writes.
 //   ContainerConfig.MemoryAndShmLimitsVisibleInside - with_memory_limit / with_shm_size land in the container's cgroup limit and /dev/shm size.
 //   ContainerConfig.CapAddDropReflectedInBounding - with_cap_add("SYS_TIME") sets and with_cap_drop("CHOWN") clears the matching bit in the container's bounding capability set.
+//   ContainerConfig.CpuPidsCpusetLimitsVisibleInside - with_cpu_limit / with_pids_limit / with_cpuset_cpus land in the container's cgroup cpu, pids, and cpuset files.
+//   ContainerConfig.SysctlAppliedInside - a with_sysctl value reads back from /proc/sys inside the container, distinct from Docker's own default.
+//   ContainerConfig.DnsConfigWrittenToResolvConf - with_dns_server / with_dns_search / with_dns_option are written into the container's /etc/resolv.conf on the default bridge.
+//   ContainerConfig.DeviceMappedInside - with_device maps a daemon-host device node to a (renamed) path inside the container.
 
 using namespace testcontainers;
 
@@ -178,6 +184,107 @@ TEST_F(ContainerConfig, MemoryAndShmLimitsVisibleInside) {
     // df -k reports /dev/shm in 1K blocks: 128 MiB = 131072.
     EXPECT_NE(logs.stdout_data.find("131072"), std::string::npos)
         << "/dev/shm size missing; stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, CpuPidsCpusetLimitsVisibleInside) {
+    // The daemon silently ignores unknown create-body fields, so a started
+    // container proves nothing about field names — read each applied limit
+    // back from the container's own cgroup files (v2 path, v1 fallback; same
+    // pattern as the memory test). The values are bracketed so a wider
+    // default (e.g. cpuset "0-7") cannot false-match. 0.5 CPUs = quota 50000
+    // of period 100000, printed as "50000 100000" (v2) or "50000" (v1).
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cpu_limit(0.5)
+                      .with_pids_limit(64)
+                      .with_cpuset_cpus("0")
+                      .with_cmd({"sh", "-c",
+                                 "echo \"cpu=[$(cat /sys/fs/cgroup/cpu.max 2>/dev/null"
+                                 " || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)]\"; "
+                                 "echo \"pids=[$(cat /sys/fs/cgroup/pids.max 2>/dev/null"
+                                 " || cat /sys/fs/cgroup/pids/pids.max)]\"; "
+                                 "echo \"cpuset=[$(cat /sys/fs/cgroup/cpuset.cpus.effective"
+                                 " 2>/dev/null || cat /sys/fs/cgroup/cpuset/cpuset.cpus)]\""})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("cpu=[50000"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("pids=[64]"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("cpuset=[0]"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, SysctlAppliedInside) {
+    // 1000 differs from BOTH defaults a container could otherwise show — the
+    // kernel's 1024 and the 0 modern daemons set themselves (moby 20.10+) —
+    // so reading it back proves OUR value flowed through on any daemon.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_sysctl("net.ipv4.ip_unprivileged_port_start", "1000")
+                      .with_cmd({"sh", "-c",
+                                 "echo \"port-start=[$("
+                                 "cat /proc/sys/net/ipv4/ip_unprivileged_port_start)]\""})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("port-start=[1000]"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, DnsConfigWrittenToResolvConf) {
+    // On the default bridge network the daemon writes Dns/DnsSearch/DnsOptions
+    // verbatim into the container's /etc/resolv.conf (a user-defined network
+    // would interpose its embedded 127.0.0.11 resolver instead). Nothing needs
+    // to answer at the server address — 192.0.2.53 is TEST-NET-1, never routed.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_dns_server("192.0.2.53")
+                      .with_dns_search("svc.test.internal")
+                      .with_dns_option("ndots:2")
+                      .with_cmd({"sh", "-c", "cat /etc/resolv.conf"})
+                      .with_wait(wait_for::exit())
+                      .start();
+
+    const ContainerLogs logs = c.logs();
+    EXPECT_NE(logs.stdout_data.find("nameserver 192.0.2.53"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("svc.test.internal"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_NE(logs.stdout_data.find("ndots:2"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+}
+
+TEST_F(ContainerConfig, DeviceMappedInside) {
+    // /dev/fuse exists on any modern daemon host (Docker Desktop VM, CI
+    // runners) but is NOT in a container's default device set, so its
+    // presence inside proves the mapping applied; mapping it under a NEW name
+    // proves PathInContainer is honored (not just a default-set leak).
+    std::optional<Container> c;
+    try {
+        c.emplace(GenericImage("alpine", "3.20")
+                      .with_device("/dev/fuse", "/dev/tc-fuse")
+                      .with_cmd({"sh", "-c",
+                                 "test -c /dev/tc-fuse && echo device-present"
+                                 " || echo device-missing"})
+                      .with_wait(wait_for::exit())
+                      .start());
+    } catch (const DockerError& e) {
+        // A daemon HOST without the node errors at create ("error gathering
+        // device information") — an environment gap, not a mapping bug: a
+        // wrong Devices field name would be silently IGNORED and surface as
+        // device-missing in the assert below. Skip on such hosts.
+        if (std::string(e.what()).find("/dev/fuse") != std::string::npos) {
+            GTEST_SKIP() << "daemon host lacks /dev/fuse: " << e.what();
+        }
+        throw;
+    }
+
+    const ContainerLogs logs = c->logs();
+    EXPECT_NE(logs.stdout_data.find("device-present"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
+    EXPECT_EQ(logs.stdout_data.find("device-missing"), std::string::npos)
+        << "stdout was: " << logs.stdout_data;
 }
 
 TEST_F(ContainerConfig, CapAddDropReflectedInBounding) {

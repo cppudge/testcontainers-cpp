@@ -76,6 +76,15 @@ suite.
 | `with_cap_add` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CapAddDropReflectedInBounding | n/a |
 | `with_cap_drop` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CapAddDropReflectedInBounding | n/a |
 | `with_extra_host` | ✅ | ✅ | ✅ ContainerConfig.ExtraHostApplied | ❌ |
+| `with_cpu_limit` | ✅ | ✅ | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | ❌ |
+| `with_cpuset_cpus` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | n/a |
+| `with_pids_limit` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.CpuPidsCpusetLimitsVisibleInside | n/a |
+| `with_restart_policy` | ✅ | ✅ | ❌ (create-body unit-tested; inspect echo planned) | ❌ |
+| `with_dns_server` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
+| `with_dns_search` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
+| `with_dns_option` | ✅ | ✅ | ✅ ContainerConfig.DnsConfigWrittenToResolvConf | ❌ |
+| `with_sysctl` | ✅ | ❌ (Linux-only) | ✅ ContainerConfig.SysctlAppliedInside | n/a |
+| `with_device` | ✅ | ❌ (Linux path semantics; Windows uses class GUIDs) | ✅ ContainerConfig.DeviceMappedInside | n/a |
 | `with_exposed_host_port` | ✅ | ❌ (throws; sshd sidecar is Linux) | ✅ HostAccess.* | n/a |
 | `with_exposed_host_port` disabled build (`TC_HOST_PORT_FORWARDING=OFF`) | ✅ | ✅ (same refusal) | ✅ HostAccess.DisabledBuildThrowsClearError (CI: linux-minimal job) | n/a |
 | `with_create_body_patch` | ✅ | ✅ | ❌ | ❌ |

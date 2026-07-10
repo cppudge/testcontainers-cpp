@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -12,10 +13,12 @@
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/CopyToContainer.hpp"
+#include "testcontainers/Device.hpp"
 #include "testcontainers/Healthcheck.hpp"
 #include "testcontainers/Lifecycle.hpp"
 #include "testcontainers/Mount.hpp"
 #include "testcontainers/RegistryAuth.hpp"
+#include "testcontainers/RestartPolicy.hpp"
 #include "testcontainers/Ulimit.hpp"
 #include "testcontainers/WaitFor.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
@@ -270,6 +273,77 @@ public:
     /// Add an `/etc/hosts` entry (`HostConfig.ExtraHosts`) mapping `host` to `ip`.
     GenericImage& with_extra_host(const std::string& host, const std::string& ip) {
         request_.spec.extra_hosts.push_back(host + ":" + ip);
+        return *this;
+    }
+
+    /// Cap the container at `cpus` CPUs' worth of time (`HostConfig.NanoCpus`) —
+    /// the `docker run --cpus` knob, e.g. 1.5 for one and a half CPUs.
+    GenericImage& with_cpu_limit(double cpus) {
+        request_.spec.nano_cpus = static_cast<std::int64_t>(std::llround(cpus * 1e9));
+        return *this;
+    }
+
+    /// Pin the container to specific host CPUs (`HostConfig.CpusetCpus`),
+    /// e.g. "0-2,7" — the `docker run --cpuset-cpus` knob. Linux daemons only.
+    GenericImage& with_cpuset_cpus(std::string cpus) {
+        request_.spec.cpuset_cpus = std::move(cpus);
+        return *this;
+    }
+
+    /// Cap the number of processes in the container (`HostConfig.PidsLimit`);
+    /// -1 lifts any daemon-default cap. Linux daemons only.
+    GenericImage& with_pids_limit(std::int64_t limit) {
+        request_.spec.pids_limit = limit;
+        return *this;
+    }
+
+    /// Have the DAEMON restart the container when it exits
+    /// (`HostConfig.RestartPolicy`), e.g.
+    /// `with_restart_policy(RestartPolicy::on_failure(3))`. See RestartPolicy
+    /// for the auto-remove and Ryuk interactions.
+    GenericImage& with_restart_policy(RestartPolicy policy) {
+        request_.spec.restart_policy = std::move(policy);
+        return *this;
+    }
+
+    /// Add a DNS server for the container (`HostConfig.Dns`). Add several for
+    /// several servers; together they REPLACE the daemon's default resolvers
+    /// in the container's /etc/resolv.conf.
+    GenericImage& with_dns_server(std::string server) {
+        request_.spec.dns_servers.push_back(std::move(server));
+        return *this;
+    }
+
+    /// Add a DNS search domain (`HostConfig.DnsSearch`).
+    GenericImage& with_dns_search(std::string domain) {
+        request_.spec.dns_search.push_back(std::move(domain));
+        return *this;
+    }
+
+    /// Add a resolver option (`HostConfig.DnsOptions`), e.g. "ndots:2".
+    GenericImage& with_dns_option(std::string option) {
+        request_.spec.dns_options.push_back(std::move(option));
+        return *this;
+    }
+
+    /// Set a namespaced kernel parameter for the container
+    /// (`HostConfig.Sysctls`), e.g.
+    /// `with_sysctl("net.ipv4.ip_unprivileged_port_start", "0")`. Linux
+    /// daemons only, and the daemon accepts only NAMESPACED sysctls (net.*,
+    /// kernel.shm*/msg*/sem, fs.mqueue.*) — host-wide ones are rejected.
+    GenericImage& with_sysctl(std::string key, std::string value) {
+        request_.spec.sysctls.emplace_back(std::move(key), std::move(value));
+        return *this;
+    }
+
+    /// Map a host device node into the container (`HostConfig.Devices`) — the
+    /// `docker run --device` knob. `cgroup_permissions` is any subset of
+    /// r(ead)/w(rite)/m(knod). Linux daemons only; `path_on_host` must exist
+    /// on the machine the DAEMON runs on (with Docker Desktop, its Linux VM).
+    GenericImage& with_device(std::string path_on_host, std::string path_in_container,
+                              std::string cgroup_permissions = "rwm") {
+        request_.spec.devices.push_back(Device{
+            std::move(path_on_host), std::move(path_in_container), std::move(cgroup_permissions)});
         return *this;
     }
 
