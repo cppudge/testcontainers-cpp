@@ -12,6 +12,8 @@
 //   [TC_TLS builds — the default]
 //   TlsTransport.HttpsSchemeIsWired - connect() for an https:// host attempts a real TLS connection (no longer "not implemented"); a refused/failed connect throws DockerError.
 //   TlsTransport.RealHandshakeRoundTrip - a TlsTransport handshakes with an in-process self-signed TLS echo server and round-trips bytes (DOCKER_TLS_VERIFY unset -> verify_none).
+//   TlsTransport.MutualTlsPresentsClientCertificate - a server that REQUIRES a client certificate (what `--tlsverify` daemons do) accepts the cert/key from DOCKER_CERT_PATH; pins the 2026-07-10 regression where the cert was loaded after SSL_new snapshotted the context and the handshake died with "certificate required".
+//   TlsTransport.VerifyRejectsUntrustedServer - with DOCKER_TLS_VERIFY=1, a server whose cert is not signed by ca.pem is rejected; pins the verify MODE being inherited by the stream (set after creation it silently stayed fail-open at verify_none).
 //   [TC_TLS=OFF builds]
 //   TlsTransport.DisabledBuildThrowsClearError - connect() for an https:// host throws a DockerError naming the TC_TLS build option.
 
@@ -128,15 +130,55 @@ done:
 
 using tctest::ScopedEnv;
 
+/// This process's id, for collision-free temp dir names.
+unsigned long process_id() {
+#if defined(_WIN32)
+    return static_cast<unsigned long>(::GetCurrentProcessId());
+#else
+    return static_cast<unsigned long>(::getpid());
+#endif
+}
+
+/// A self-deleting temp directory seeded with a self-signed cert.pem/key.pem
+/// pair. `ok` is false (test should skip) when creation or cert generation
+/// failed.
+struct CertDir {
+    explicit CertDir(const std::string& tag) {
+        namespace fs = std::filesystem;
+        path = fs::temp_directory_path() / (tag + "_" + std::to_string(process_id()));
+        std::error_code ec;
+        fs::create_directories(path, ec);
+        ok = !ec && write_self_signed_cert(path);
+    }
+    ~CertDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+    CertDir(const CertDir&) = delete;
+    CertDir& operator=(const CertDir&) = delete;
+
+    std::filesystem::path path;
+    bool ok = false;
+};
+
 } // namespace
 
 // REQUIRED: proves the Https path is implemented and reachable. No daemon
-// needed. The connection to 127.0.0.1:2376 should fail (nothing is listening),
-// but with a real connect/handshake error — never the old "not implemented".
+// needed. The connection should fail (nothing is listening), but with a real
+// connect/handshake error — never the old "not implemented". The dead port is
+// found by binding an ephemeral listener and closing it — a fixed 2376 would
+// collide with a real TLS daemon (e.g. the dind the TLS CI job runs).
 TEST(TlsTransport, HttpsSchemeIsWired) {
+    asio::io_context probe_ioc;
+    asio::ip::tcp::acceptor probe(probe_ioc,
+                                  asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    const std::uint16_t dead_port = probe.local_endpoint().port();
+    probe.close();
+
     try {
-        testcontainers::docker::connect(DockerHost::parse("https://127.0.0.1:2376"));
-        FAIL() << "expected connect() to throw (nothing is listening on 2376)";
+        testcontainers::docker::connect(
+            DockerHost::parse("https://127.0.0.1:" + std::to_string(dead_port)));
+        FAIL() << "expected connect() to throw (nothing is listening on " << dead_port << ")";
     } catch (const DockerError& e) {
         const std::string msg = e.what();
         EXPECT_EQ(msg.find("not implemented"), std::string::npos)
@@ -241,6 +283,151 @@ TEST(TlsTransport, RealHandshakeRoundTrip) {
 
     if (!round_tripped && !error.empty()) {
         FAIL() << "TLS round-trip failed: " << error;
+    }
+}
+
+// REGRESSION (2026-07-10): a `--tlsverify` daemon REQUIRES the client
+// certificate. The in-process server here demands one
+// (verify_fail_if_no_peer_cert), trusting the very pair the client presents
+// from DOCKER_CERT_PATH. The transport used to load the client cert into the
+// SSL context only after the stream was created — SSL_new had already
+// snapshotted an empty certificate list, so every handshake against a real
+// tlsverify daemon died with "certificate required". DOCKER_TLS_VERIFY stays
+// unset: the client side needs no CA/hostname machinery for this pin.
+TEST(TlsTransport, MutualTlsPresentsClientCertificate) {
+    const CertDir dir("tc_tls_mtls");
+    if (!dir.ok) {
+        GTEST_SKIP(); // could not create the temp dir / generate the cert
+    }
+
+    asio::io_context server_ioc;
+    asio::ip::tcp::acceptor acceptor(
+        server_ioc, asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    const std::uint16_t port = acceptor.local_endpoint().port();
+
+    asio::ssl::context server_ctx(asio::ssl::context::tls_server);
+    try {
+        server_ctx.use_certificate_file((dir.path / "cert.pem").string(), asio::ssl::context::pem);
+        server_ctx.use_private_key_file((dir.path / "key.pem").string(), asio::ssl::context::pem);
+        // Trust exactly the client's (self-signed) cert, and refuse a
+        // handshake without one — the dockerd --tlsverify behavior.
+        server_ctx.load_verify_file((dir.path / "cert.pem").string());
+    } catch (const std::exception&) {
+        GTEST_SKIP(); // server could not load the generated cert/key
+    }
+    server_ctx.set_verify_mode(asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert);
+
+    std::thread server_thread([&] {
+        boost::system::error_code sec;
+        asio::ssl::stream<asio::ip::tcp::socket> server_stream(server_ioc, server_ctx);
+        acceptor.accept(server_stream.lowest_layer(), sec);
+        if (sec) {
+            return;
+        }
+        server_stream.handshake(asio::ssl::stream_base::server, sec);
+        if (sec) {
+            return; // a client presenting no cert aborts here — the test then fails on read
+        }
+        std::array<char, 64> buf{};
+        const std::size_t n = server_stream.read_some(asio::buffer(buf), sec);
+        if (sec) {
+            return;
+        }
+        asio::write(server_stream, asio::buffer(buf.data(), n), sec);
+        server_stream.shutdown(sec); // best-effort
+    });
+
+    ScopedEnv cert_path("DOCKER_CERT_PATH", dir.path.string());
+    ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt);
+
+    std::string error;
+    bool round_tripped = false;
+    try {
+        auto transport = testcontainers::docker::connect(
+            DockerHost::parse("https://127.0.0.1:" + std::to_string(port)));
+
+        const std::string payload = "hello-mtls";
+        boost::system::error_code wec;
+        transport->write_some(payload.data(), payload.size(), wec);
+        ASSERT_FALSE(wec) << "write failed: " << wec.message();
+
+        std::array<char, 64> rbuf{};
+        boost::system::error_code rec;
+        const std::size_t n = transport->read_some(rbuf.data(), rbuf.size(), rec);
+        ASSERT_FALSE(rec) << "read failed: " << rec.message();
+
+        EXPECT_EQ(std::string(rbuf.data(), n), payload);
+        round_tripped = true;
+        transport->close();
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+
+    if (server_thread.joinable()) {
+        server_thread.join();
+    }
+
+    if (!round_tripped) {
+        FAIL() << "mutual-TLS round-trip failed: " << error;
+    }
+}
+
+// With DOCKER_TLS_VERIFY=1 the server certificate must actually be verified:
+// a server whose cert is NOT signed by the ca.pem in DOCKER_CERT_PATH has to
+// be rejected. Pins the verify MODE being inherited by the stream at creation
+// — set on the context after the stream existed, it silently stayed at its
+// fail-open verify_none default and this connect() would succeed.
+TEST(TlsTransport, VerifyRejectsUntrustedServer) {
+    namespace fs = std::filesystem;
+    const CertDir server_dir("tc_tls_srv");
+    const CertDir client_dir("tc_tls_cli");
+    if (!server_dir.ok || !client_dir.ok) {
+        GTEST_SKIP(); // could not create the temp dirs / generate the certs
+    }
+    // The client's ca.pem is its OWN self-signed cert — a CA that did not
+    // sign the server's (independently generated) certificate.
+    std::error_code copy_ec;
+    fs::copy_file(client_dir.path / "cert.pem", client_dir.path / "ca.pem", copy_ec);
+    if (copy_ec) {
+        GTEST_SKIP();
+    }
+
+    asio::io_context server_ioc;
+    asio::ip::tcp::acceptor acceptor(
+        server_ioc, asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    const std::uint16_t port = acceptor.local_endpoint().port();
+
+    asio::ssl::context server_ctx(asio::ssl::context::tls_server);
+    try {
+        server_ctx.use_certificate_file((server_dir.path / "cert.pem").string(),
+                                        asio::ssl::context::pem);
+        server_ctx.use_private_key_file((server_dir.path / "key.pem").string(),
+                                        asio::ssl::context::pem);
+    } catch (const std::exception&) {
+        GTEST_SKIP(); // server could not load the generated cert/key
+    }
+
+    std::thread server_thread([&] {
+        boost::system::error_code sec;
+        asio::ssl::stream<asio::ip::tcp::socket> server_stream(server_ioc, server_ctx);
+        acceptor.accept(server_stream.lowest_layer(), sec);
+        if (sec) {
+            return;
+        }
+        // The client must abort this handshake (untrusted CA) — any error
+        // here is the expected outcome.
+        server_stream.handshake(asio::ssl::stream_base::server, sec);
+    });
+
+    ScopedEnv cert_path("DOCKER_CERT_PATH", client_dir.path.string());
+    ScopedEnv verify("DOCKER_TLS_VERIFY", "1");
+
+    EXPECT_THROW((void)testcontainers::docker::connect(
+                     DockerHost::parse("https://127.0.0.1:" + std::to_string(port))),
+                 DockerError);
+
+    if (server_thread.joinable()) {
+        server_thread.join();
     }
 }
 

@@ -207,40 +207,18 @@ private:
 class TlsTransport final : public TransportBase {
 public:
     TlsTransport(const std::string& host, std::uint16_t port, const TransportTimeouts& timeouts)
-        : TransportBase(timeouts.io), ctx_(asio::ssl::context::tls_client), stream_(ioc_, ctx_) {
-        ctx_.set_options(asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
-                         asio::ssl::context::no_sslv3 | asio::ssl::context::no_tlsv1 |
-                         asio::ssl::context::no_tlsv1_1);
-
-        const std::string cert_dir = docker_cert_path();
-        const TlsFiles files = resolve_tls_files(cert_dir);
-
+        : TransportBase(timeouts.io), ctx_(make_context()), stream_(ioc_, ctx_) {
+        // ctx_ was fully configured BEFORE stream_ existed — that ordering is
+        // load-bearing. SSL_new (inside the stream constructor) snapshots the
+        // context's certificates and verify mode; context changes made after
+        // the stream exists never reach it. Loading the client certificate in
+        // this body used to mean mutual TLS silently presented no certificate
+        // (a `--tlsverify` daemon aborts with "certificate required") and the
+        // verify mode stayed fail-open at its verify_none default.
         if (docker_tls_verify()) {
-            ctx_.set_verify_mode(asio::ssl::verify_peer);
-            if (!files.ca_cert.empty() && std::filesystem::exists(files.ca_cert)) {
-                boost::system::error_code ec;
-                ctx_.load_verify_file(files.ca_cert, ec);
-                if (ec) {
-                    throw DockerError("Cannot load Docker TLS CA certificate '" + files.ca_cert +
-                                      "': " + ec.message());
-                }
-            }
+            // The hostname check is per-connection state, set on the stream
+            // (the verify MODE itself was inherited from ctx_ at creation).
             stream_.set_verify_callback(asio::ssl::host_name_verification(host));
-        } else {
-            ctx_.set_verify_mode(asio::ssl::verify_none);
-        }
-
-        // A client certificate + key (mutual TLS) when both are present.
-        if (!files.client_cert.empty() && !files.client_key.empty() &&
-            std::filesystem::exists(files.client_cert) &&
-            std::filesystem::exists(files.client_key)) {
-            try {
-                ctx_.use_certificate_file(files.client_cert, asio::ssl::context::pem);
-                ctx_.use_private_key_file(files.client_key, asio::ssl::context::pem);
-            } catch (const boost::system::system_error& e) {
-                throw DockerError("Cannot load Docker TLS client certificate/key from '" +
-                                  cert_dir + "': " + e.what());
-            }
         }
 
         const auto deadline = Clock::now() + timeouts.connect;
@@ -327,6 +305,48 @@ public:
     }
 
 private:
+    /// The fully configured TLS context, built BEFORE any stream references it
+    /// (see the constructor comment): protocol floor, the CA + verify mode when
+    /// DOCKER_TLS_VERIFY is set, and the client certificate/key (mutual TLS)
+    /// when DOCKER_CERT_PATH provides them — a `--tlsverify` daemon rejects the
+    /// handshake without those.
+    static asio::ssl::context make_context() {
+        asio::ssl::context ctx(asio::ssl::context::tls_client);
+        ctx.set_options(asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
+                        asio::ssl::context::no_sslv3 | asio::ssl::context::no_tlsv1 |
+                        asio::ssl::context::no_tlsv1_1);
+
+        const std::string cert_dir = docker_cert_path();
+        const TlsFiles files = resolve_tls_files(cert_dir);
+
+        if (docker_tls_verify()) {
+            ctx.set_verify_mode(asio::ssl::verify_peer);
+            if (!files.ca_cert.empty() && std::filesystem::exists(files.ca_cert)) {
+                boost::system::error_code ec;
+                ctx.load_verify_file(files.ca_cert, ec);
+                if (ec) {
+                    throw DockerError("Cannot load Docker TLS CA certificate '" + files.ca_cert +
+                                      "': " + ec.message());
+                }
+            }
+        } else {
+            ctx.set_verify_mode(asio::ssl::verify_none);
+        }
+
+        if (!files.client_cert.empty() && !files.client_key.empty() &&
+            std::filesystem::exists(files.client_cert) &&
+            std::filesystem::exists(files.client_key)) {
+            try {
+                ctx.use_certificate_file(files.client_cert, asio::ssl::context::pem);
+                ctx.use_private_key_file(files.client_key, asio::ssl::context::pem);
+            } catch (const boost::system::system_error& e) {
+                throw DockerError("Cannot load Docker TLS client certificate/key from '" +
+                                  cert_dir + "': " + e.what());
+            }
+        }
+        return ctx;
+    }
+
     void cancel_pending() {
         boost::system::error_code ignore;
         stream_.lowest_layer().cancel(ignore);
