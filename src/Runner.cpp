@@ -30,8 +30,10 @@ std::string file_meta(const std::filesystem::path& path) {
     if (!ec) {
         const std::filesystem::file_time_type mtime = std::filesystem::last_write_time(path, ec);
         if (!ec) {
-            return "|" + std::to_string(size) + "|" +
-                   std::to_string(mtime.time_since_epoch().count());
+            // The clock's rep is __int128 on Apple's libc++ (no to_string
+            // overload); long long holds ns-since-epoch until year ~2262.
+            const auto ticks = static_cast<long long>(mtime.time_since_epoch().count());
+            return "|" + std::to_string(size) + "|" + std::to_string(ticks);
         }
     }
     return "|stat-failed";
