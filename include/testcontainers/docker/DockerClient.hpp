@@ -116,12 +116,13 @@ public:
     // carry over — it belongs to the daemon, not to the connection.
     DockerClient(const DockerClient& other)
         : host_(other.host_), timeouts_(other.timeouts_), pull_retry_(other.pull_retry_),
-          api_prefix_(other.api_prefix_) {}
+          max_response_body_(other.max_response_body_), api_prefix_(other.api_prefix_) {}
     DockerClient& operator=(const DockerClient& other) {
         if (this != &other) {
             host_ = other.host_;
             timeouts_ = other.timeouts_;
             pull_retry_ = other.pull_retry_;
+            max_response_body_ = other.max_response_body_;
             api_prefix_ = other.api_prefix_;
             session_enabled_ = false;
             session_transport_.reset();
@@ -134,7 +135,7 @@ public:
     // instead of renegotiating on its next typed call.
     DockerClient(DockerClient&& other) noexcept
         : host_(std::move(other.host_)), timeouts_(other.timeouts_), pull_retry_(other.pull_retry_),
-          api_prefix_(std::move(other.api_prefix_)) {
+          max_response_body_(other.max_response_body_), api_prefix_(std::move(other.api_prefix_)) {
         other.api_prefix_.reset();
     }
     DockerClient& operator=(DockerClient&& other) noexcept {
@@ -142,6 +143,7 @@ public:
             host_ = std::move(other.host_);
             timeouts_ = other.timeouts_;
             pull_retry_ = other.pull_retry_;
+            max_response_body_ = other.max_response_body_;
             api_prefix_ = std::move(other.api_prefix_);
             other.api_prefix_.reset();
             session_enabled_ = false;
@@ -178,6 +180,17 @@ public:
         pull_retry_.attempts = retry.attempts < 1 ? 1 : retry.attempts;
     }
     const PullRetry& pull_retry() const noexcept { return pull_retry_; }
+
+    /// Cap the response body size the BUFFERED request paths are willing to
+    /// hold in memory — `request()`, `logs()`, the string
+    /// `copy_from_container` — so a runaway reply becomes a DockerError
+    /// instead of unbounded allocation. std::nullopt (the default) keeps the
+    /// historical no-limit behavior. The paths that manage their own reads
+    /// (the sink download, `copy_from_container_to`, `follow_logs`, exec
+    /// output, build progress) are not affected by the cap. A copy of the
+    /// client carries the cap along.
+    void set_max_response_body(std::optional<std::uint64_t> limit) { max_response_body_ = limit; }
+    std::optional<std::uint64_t> max_response_body() const noexcept { return max_response_body_; }
 
     /// Perform an HTTP request against the daemon and return the full response.
     /// `target` is the path, sent VERBATIM (e.g. "/_ping",
@@ -505,8 +518,9 @@ private:
     DockerHost host_;
     docker::TransportTimeouts timeouts_;
     PullRetry pull_retry_;
-    std::optional<std::string> api_prefix_; ///< negotiated "/v1.NN" ("" = none)
-    bool session_enabled_ = false;          ///< a Session is active on this instance
+    std::optional<std::uint64_t> max_response_body_; ///< buffered-path body cap (nullopt = none)
+    std::optional<std::string> api_prefix_;          ///< negotiated "/v1.NN" ("" = none)
+    bool session_enabled_ = false;                   ///< a Session is active on this instance
     std::shared_ptr<docker::ITransport> session_transport_; ///< kept-alive connection
 };
 

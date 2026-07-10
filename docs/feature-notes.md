@@ -160,16 +160,33 @@ real daemon serves); TLS cannot half-close, so exec-with-stdin throws up front t
 `tls.Conn` cannot either — the docker CLI hangs where we throw).
 
 **Copy to / from container** — `CopyToContainer` (host file, in-memory bytes, or a recursive
-host directory; `with_mode` applies to file entries) is PUT as a USTAR tar per source (entry
-paths ≤ 100/255 chars; the whole tree is buffered in memory). Targets may be drive-rooted
-(`C:\dir\x` ⇒ `/dir/x`). A single-file source needs a pre-existing parent directory; a
-directory source ships its own target chain (dirs 0755, empty dirs preserved, dir symlinks
-not descended). Copy-from covers single regular files (`read_file` / `copy_file_from`); for
-trees, run `docker::extract_tar` on the raw `copy_from_container` bytes.
+host directory; `with_mode` applies to file entries) is PUT as a pax(restricted) tar — plain
+USTAR until a field doesn't fit, so long paths and >8 GiB files work — STREAMED as a chunked
+upload since 2026-07-10: host files are read in 64 KiB blocks as the chunks go out, nothing is
+buffered whole, and a mid-upload daemon rejection surfaces as the daemon's status where the
+transport delivers it (best-effort on named pipes). The batched
+`copy_to_container(id, vector)` sends every source in ONE archive/PUT (the runner ships a
+request's whole copy set that way; shared directory chains deduplicated, file collisions
+last-wins). Targets may be drive-rooted (`C:\dir\x` ⇒ `/dir/x`). A single-file source needs a
+pre-existing parent directory; a directory source ships its own target chain (dirs 0755, empty
+dirs preserved, dir symlinks not descended). Copy-from: single regular files via `read_file` /
+`copy_file_from` (buffered); whole trees via `copy_from_container_to(id, path, dest_dir)` —
+a streaming download + untar (wire to disk, tar-slip protected incl. the Windows
+interior-drive-letter escape, symlinks skipped by policy) — or the raw-bytes sink overload
+`copy_from_container(id, path, sink)`. `container_path_stat(id, path)` HEADs the archive
+endpoint for a cheap existence/size probe (decoded `X-Docker-Container-Path-Stat`).
+`set_max_response_body(bytes)` caps what the BUFFERED paths will hold (a runaway body becomes
+a DockerError instead of unbounded allocation); streaming paths are unaffected.
 
 **Build from Dockerfile** (`GenericBuildableImage`) — Dockerfile from a host path or an inline
-string; context from host files/dirs (recursive walk, no `.dockerignore` filtering) and
-in-memory data; `build()` returns a runnable `GenericImage`. Build output streams live to
+string; context from host files/dirs and in-memory data; `build()` returns a runnable
+`GenericImage`. Since 2026-07-10 the context STREAMS: host files are descriptors read in
+blocks while the chunked `POST /build` upload runs (`build_image` gained a `BodyProducer`
+overload; the string overload wraps it), and a directory source honors a `.dockerignore` at
+its root with docker-build (moby/patternmatcher) semantics — component globs, `**`, negation
+last-wins, parent-dir exclusion, `^` in classes literal — while a root-mapped source's
+`.dockerignore`/`Dockerfile` always ship (an explicit `with_dockerfile*` beats a walked-up
+host Dockerfile). Build output streams live to
 `with_build_log_consumer` (decoded line by line as the daemon emits it), and a failed build's
 DockerError carries the tail of the step output — the failing RUN's own stdout/stderr — even
 without a consumer. `GenericImage::exists(name, tag)` (constructor-style arguments; backed by

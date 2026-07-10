@@ -326,6 +326,7 @@ Network / Volume) on Windows.
 | `host()` | ✅ | ✅ | ✅ RedisMvp, Exec (scheme) | ❌ |
 | `set/transport_timeouts` | ✅ | ✅ | ❌ (unit-tested) | ❌ |
 | `set/pull_retry` | ✅ | ✅ | ❌ (unit-tested: PullRetryTest) | ❌ |
+| `set/max_response_body` | ✅ | ✅ | ❌ (unit-tested: BodyLimitTest) | ❌ |
 | `request(method, target, …)` | ✅ | ✅ | ✅ ReaperTest, NetworkTest (raw inspect) | ✅ WindowsEngine `/version`, WindowsNetworks raw inspect |
 | `ping()` | ✅ | ✅ | ✅ EngineGuard (every suite's SetUp) | ✅ EngineGuard |
 | `server_os()` | ✅ | ✅ | ✅ WindowsEngine tag resolution | ✅ WindowsEngine (implicitly, via is_windows_engine) |
@@ -335,6 +336,7 @@ Network / Volume) on Windows.
 | `inspect_image(reference)` | ✅ | ✅ | ✅ via GenericImage::inspect (BuildImage.InspectReflectsImageConfig) | ✅ via GenericImage::inspect (WindowsBuildImage.ExistsAndBuildLogConsumer) |
 | `inspect_image_raw(reference)` | ✅ | ✅ | ✅ BuildImage.InspectReflectsImageConfig (direct; also under every `inspect_image`) | ✅ implicit — every `inspect_image` goes through it |
 | `build_image(tar, opts[, consumer])` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
+| `build_image(producer, opts[, consumer])` | ✅ | ✅ | ✅ every GenericBuildableImage build streams through it (also wire-tested: BuildWireTest) | ✅ same path (WindowsBuildImage.*) |
 | `create_container(spec, auth?)` | ✅ | ✅ | ✅ DockerLifecycle.*, ReaperTest, DockerLogs | ❌ (Windows tests go through `start()`) |
 | `start_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.CreateStartInspectRemove | ❌ |
 | `inspect_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.*, Compose.RestartKeepsProjectAlive | ❌ (indirect via is_running) |
@@ -346,7 +348,11 @@ Network / Volume) on Windows.
 | `follow_logs(id, opts, consumer)` | ✅ | ✅ | ✅ DockerLogs.FollowStreamsUntilExit, DockerLogs.FollowStopsEarly… | ❌ |
 | `exec(id, cmd[, opts[, consumer]])` | ✅ | ✅ | ✅ via Container (Exec.*) | ✅ via Container (WindowsExec.*) |
 | `copy_to_container(id, source)` | ✅ | ✅ | ✅ via Container.copy_to (Copy.*) | ✅ via Container.copy_to (WindowsCopy.*) |
+| `copy_to_container(id, sources)` (batched) | ✅ | ✅ | ✅ Copy.BatchedCopyLandsAllSources (also the runner's copy-at-start path) | ✅ via with_copy_to at start (WindowsCopy.CopyAtStart*) |
 | `copy_from_container(id, path)` | ✅ | ✅ | ✅ via Container.read_file (Copy.*) | ✅ via Container.read_file (WindowsCopy.*) |
+| `copy_from_container(id, path, sink)` | ✅ | ✅ | ❌ (wire-tested: CopyWireTest.SinkStreamsArchiveDownload) | ❌ |
+| `copy_from_container_to(id, path, dest)` | ✅ | ✅ | ✅ Copy.CopyFromToDirectoryRoundTrip | ❌ |
+| `container_path_stat(id, path)` | ✅ | ✅ | ✅ Copy.ContainerPathStat | ❌ |
 | `create_network(name, labels)` / `create_network(spec)` | ✅ | ✅ | ✅ via Network (Networks.*) | ✅ via Network (WindowsNetworks.*) |
 | `connect_network(net, id, aliases)` | ✅ | ✅ | ✅ via Network.connect (Networks.ConnectAttachesRunningContainerWithAlias) | ❌ [a] |
 | `disconnect_network(net, id, force)` | ✅ | ✅ | ❌ [b] | ❌ |

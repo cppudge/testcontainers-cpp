@@ -248,6 +248,7 @@ if(BUILD_TESTING)
         tests/unit/ResponseTest.cpp
         tests/unit/CannedHttpServerTest.cpp
         tests/unit/CopyWireTest.cpp
+        tests/unit/BodyLimitTest.cpp
         tests/unit/BuildWireTest.cpp
         tests/unit/DockerIgnoreTest.cpp
         tests/unit/ApiMappingTest.cpp

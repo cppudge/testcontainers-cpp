@@ -5,11 +5,14 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 3 of the agreed batch order (2026-07-10; batches 1–2 landed the same day —
-pull retry + credential-helper cache; TC_BUILD_INTEGRATION_TESTS, clamped_wait_plan,
-release.yml, the tls-e2e dind job + the mutual-TLS fix it flushed out): streaming &
-memory — see the "Upload/download paths buffer whole payloads" entry below, plus the
-USTAR→pax and `.dockerignore` riders in the copy-to / build entries.
+Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day —
+1: pull retry + credential-helper cache; 2: TC_BUILD_INTEGRATION_TESTS,
+clamped_wait_plan, release.yml, the tls-e2e dind job + the mutual-TLS fix it flushed
+out; 3: streaming & memory — chunked copy-to/build uploads with batched copy,
+`.dockerignore`, streaming downloads/untar, `container_path_stat`,
+`set_max_response_body`): lifecycle — reuse freshness (size+mtime in the hash), a
+per-daemon reaper map, session labels on built images (`?labels=`), compose reaping
+via the `com.docker.compose.project` label filter.
 
 (`test_package/` into the clang-tidy job's globs was considered and dropped — little
 profit for the extra build-graph plumbing; it stays a documented residual below.)
@@ -78,22 +81,14 @@ profit for the extra build-graph plumbing; it stays a documented residual below.
   per-endpoint cache lookup and the `GET /version`, so two threads can both issue an
   endpoint's first request (idempotent, harmless; the loser's emplace is a quiet no-op).
   (`src/docker/DockerClient.cpp`)
-- **Upload/download paths buffer whole payloads in memory** (2026-07-10 audit) — copy-to
-  holds the file/tree bodies plus the finished tar plus the request-body copy (~2× the
-  payload); the build context lives ~3× buffered for the whole build; copy-from /
-  `read_file` hold the full archive plus the extracted body (~2–3×). Fine for test
-  fixtures; a multi-GB payload dies with a clean `bad_alloc` (or an OOM-kill on a
-  memory-capped runner). Every streaming fix is INTERNAL — libarchive already writes
-  through a callback, USTAR sizes are stat-computable so the PUT can send a real
-  Content-Length, and downloads can mirror the `LogConsumer` pattern — EXCEPT
-  `DockerClient::build_image(const std::string& context_tar, …)`, whose string parameter a
-  streaming source would replace (treat `GenericBuildableImage::build()` as the stable
-  surface; the low-level signature may change for streaming). The Docker API needs nothing
-  new: tar streams both directions, `POST /build?remote=` makes the daemon fetch the
-  context itself, and `HEAD /containers/{id}/archive` returns the file size for a cheap
-  pre-download cap. A configurable `body_limit` ceiling (today `body_limit(none)`) would
-  turn a runaway download into a `DockerError` instead of a crash.
-  (`src/docker/Tar.cpp`, `src/GenericBuildableImage.cpp`, `src/docker/DockerClient.cpp`)
+- **Streaming residuals** (batch 3 landed 2026-07-10; the former whole-payload-buffering
+  entry is closed) — exec output and `logs()` still buffer into strings by API contract
+  (streaming exec/log CONSUMERS exist); `POST /build?remote=` (daemon-side context fetch)
+  and content-hash context reuse were consciously skipped; `throw_upload_error`'s
+  early-error read is best-effort by transport (a TCP reset can destroy the buffered
+  response; a broken named pipe delivers nothing — the raw transport error is the
+  fallback); `extract_tar_to_dir` skips symlinks by policy (full-fidelity trees need the
+  raw sink overload + own untar). (`src/docker/DockerClient.cpp`, `src/docker/Tar.cpp`)
 - **Reuse hash is not content-aware for host-path copy-to sources** — the hash canonical
   takes a host-path source's PATH only (byte sources contribute content), so editing a
   fixture file in place still adopts the stale reused container. Documented on
@@ -103,17 +98,19 @@ profit for the extra build-graph plumbing; it stays a documented residual below.
   subprocess outcome is cached, 5-min TTL since 2026-07-10); no end-to-end private-registry
   integration test against a real authenticated registry (a `registry:2` + htpasswd fixture
   seeded via the daemon's push would cover it). (`src/docker/Auth.cpp`)
-- **copy-to / copy-from** — USTAR caps entry path length (100/255 chars; pax would lift it);
-  one tar + PUT per source (no batching); no directory-tree copy-FROM helper (use
-  `extract_tar` on the raw bytes; copy-to has `CopyToContainer::host_dir`). `host_dir` does
-  not descend into directory symlinks and skips non-regular files (no cycle guard needed, but
-  symlink-heavy trees copy shallower than `cp -r`), and it buffers the entire tree in memory
-  (every file body plus the finished tar) — fine for test fixtures, wrong tool for
-  multi-gigabyte trees until the build/PUT path streams.
-- **Build from Dockerfile** — no `.dockerignore` filtering on `with_file` directory walks;
-  built images are not session-labeled (not reaped). The context tar is fully buffered and
-  its upload runs under the base io deadline (the 10-minute silent-step widening starts only
-  after the response header). No secrets / ssh / cache-from / squash / platform-on-build.
+- **copy-to / copy-from** — `host_dir` does not descend into directory symlinks and skips
+  non-regular files (no cycle guard needed, but symlink-heavy trees copy shallower than
+  `cp -r`); `copy_from_container_to` skips symlink entries by policy; per-source error
+  attribution is coarser in a batched copy (the context names the source COUNT — host-read
+  failures still name the file). The pax/streaming/batching/dir-copy-FROM gaps closed with
+  batch 3 (2026-07-10).
+- **Build from Dockerfile** — built images are not session-labeled (not reaped). The context
+  upload runs under the base io deadline per block (the 10-minute silent-step widening
+  starts only after the response header). `.dockerignore` is honored per DIRECTORY source
+  (paths relative to that source's root) — a subdir-mapped source's ignore file is applied
+  client-side only, and rare moby divergences are documented in `DockerIgnore.hpp`
+  (malformed patterns match nothing where docker errors; `a**b` stays within a component).
+  No secrets / ssh / cache-from / squash / platform-on-build.
 - **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
   still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
   surface Memory/CpuQuota/etc., so those can't be asserted via inspect.

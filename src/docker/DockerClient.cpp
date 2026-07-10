@@ -329,11 +329,17 @@ Response DockerClient::request_with_io_timeout(
         }
 
         boost::beast::flat_buffer buffer;
-        // Disable Beast's default 1 MiB body limit: Docker archive (copy-from)
-        // and log bodies can comfortably exceed it, and we always read the
-        // whole body.
+        // Beast's default 1 MiB body limit is replaced by the client's own
+        // cap: none by default (Docker archive and log bodies comfortably
+        // exceed 1 MiB and we read the whole body), or the caller's
+        // set_max_response_body ceiling, which turns a runaway reply into a
+        // typed error below instead of unbounded allocation.
         http::response_parser<http::string_body> parser;
-        parser.body_limit(boost::none);
+        if (max_response_body_) {
+            parser.body_limit(*max_response_body_);
+        } else {
+            parser.body_limit(boost::none);
+        }
         if (method == "HEAD") {
             // A HEAD reply advertises the body it would have sent (e.g. the
             // archive size on /containers/{id}/archive) but never carries
@@ -348,6 +354,13 @@ Response DockerClient::request_with_io_timeout(
             throw DockerError("Failed to read response from Docker (" + std::string(method) + " " +
                               std::string(target) +
                               "): connection closed before the response completed");
+        }
+        if (ec == http::error::body_limit) {
+            throw DockerError("Failed to read response from Docker (" + std::string(method) + " " +
+                              std::string(target) +
+                              "): the response body exceeds the configured "
+                              "max_response_body cap of " +
+                              std::to_string(max_response_body_.value_or(0)) + " bytes");
         }
         if (ec && ec != http::error::end_of_stream) {
             docker::throw_transport_error("Failed to read response from Docker (" +
