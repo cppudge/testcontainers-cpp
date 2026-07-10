@@ -7,8 +7,8 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day — see
 [feature-notes.md](feature-notes.md) and the git history): lifecycle — reuse freshness
-(size+mtime in the hash), a per-daemon reaper map, session labels on built images
-(`?labels=`), compose reaping via the `com.docker.compose.project` label filter.
+(size+mtime in the hash), a per-daemon reaper map, compose reaping via the
+`com.docker.compose.project` label filter. (Session labels on built images: landed.)
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional
@@ -38,8 +38,7 @@ Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day
   extraction could in principle stay silent longer — widen like `build` if it ever bites).
   `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded).
   (`src/docker/Transport.*`, `src/WaitStrategies.cpp`)
-- **Ryuk gaps** — images never get the session label (future image resources must be tagged to
-  be reaped); no graceful in-process reaper shutdown (relies on process-exit closing the
+- **Ryuk gaps** — no graceful in-process reaper shutdown (relies on process-exit closing the
   socket); the process-global reaper binds to the FIRST daemon it starts against — a second
   daemon used later in the same process gets labels but no crash-safe reaping (a per-daemon
   reaper map would be the full fix). A real Windows Ryuk (named-pipe mount + Windows reaper
@@ -90,9 +89,10 @@ Batch 4 of the agreed batch order (2026-07-10; batches 1–3 landed the same day
   subprocess outcome is cached, 5-min TTL since 2026-07-10); no end-to-end private-registry
   integration test against a real authenticated registry (a `registry:2` + htpasswd fixture
   seeded via the daemon's push would cover it). (`src/docker/Auth.cpp`)
-- **Build from Dockerfile** — built images are not session-labeled (not reaped; batch 4 adds
-  `?labels=`). No secrets / ssh / cache-from / squash / platform-on-build. Rare
-  `.dockerignore` matcher divergences from moby are documented in `DockerIgnore.hpp`.
+- **Build from Dockerfile** — no per-image keep switch: a built image is always session-reaped
+  unless `TESTCONTAINERS_RYUK_DISABLED` (process-wide) turns the reaper off. No secrets / ssh /
+  cache-from / squash / platform-on-build. Rare `.dockerignore` matcher divergences from moby
+  are documented in `DockerIgnore.hpp`.
 - **HostConfig typed setters** — cpu limits, restart policy, dns, sysctls, devices, pids-limit
   still go through the `with_create_body_patch` escape hatch; `ContainerInspect` doesn't
   surface Memory/CpuQuota/etc., so those can't be asserted via inspect.

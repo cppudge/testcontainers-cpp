@@ -115,6 +115,7 @@ Notes:
 | `with_pull` | ✅ | ✅ | ✅ BuildImage.DockerfilePathAndTargetStage | ❌ |
 | `with_build_log_consumer` | ✅ | ✅ | ✅ BuildImage.BuildLogConsumerStreamsSteps | ✅ WindowsBuildImage.ExistsAndBuildLogConsumer |
 | `build()` | ✅ | ✅ | ✅ BuildImage.BuildsAndRunsInlineDockerfile, BuildImage.BuildFailureThrows, BuildImage.BuildFailureCarriesStepOutput | ✅ WindowsBuildImage.BuildsAndRunsInlineDockerfile, WindowsBuildImage.BuildFailureThrows |
+| `build()` session labels + reaper boot | ✅ | ✅ (labels applied; no reaper on the Windows engine) | ✅ BuildImage.BuiltImageCarriesSessionLabels | ❌ (labels applied, unwatched) |
 | `descriptor()`, getters | ✅ | ✅ | unit-tested | unit-tested |
 
 The full builder surface (host-path Dockerfile, file/dir/in-memory context,
@@ -337,6 +338,7 @@ Network / Volume) on Windows.
 | `inspect_image_raw(reference)` | ✅ | ✅ | ✅ BuildImage.InspectReflectsImageConfig (direct; also under every `inspect_image`) | ✅ implicit — every `inspect_image` goes through it |
 | `build_image(tar, opts[, consumer])` | ✅ | ✅ | ✅ via GenericBuildableImage (BuildImage.*) | ✅ via GenericBuildableImage (WindowsBuildImage.*) |
 | `build_image(producer, opts[, consumer])` | ✅ | ✅ | ✅ every GenericBuildableImage build streams through it (also wire-tested: BuildWireTest) | ✅ same path (WindowsBuildImage.*) |
+| `BuildOptions::labels` (`?labels=`) | ✅ | ✅ | ✅ BuildImage.BuiltImageCarriesSessionLabels (unit: ApiMapping.BuildQueryLabels) | ❌ |
 | `create_container(spec, auth?)` | ✅ | ✅ | ✅ DockerLifecycle.*, ReaperTest, DockerLogs | ❌ (Windows tests go through `start()`) |
 | `start_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.CreateStartInspectRemove | ❌ |
 | `inspect_container(id)` | ✅ | ✅ | ✅ DockerLifecycle.*, Compose.RestartKeepsProjectAlive | ❌ (indirect via is_running) |

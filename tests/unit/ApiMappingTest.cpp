@@ -78,6 +78,7 @@
 //   ApiMapping.BuildScannerTailIsBounded - the error message keeps only the LAST few KB of step output: bounded overall and ending with the most recent line.
 //   ApiMapping.BuildQueryBasics - build_build_query always emits t, dockerfile and forcerm=1 (a failed build's intermediate container must not leak) and includes nocache/pull/target only when set.
 //   ApiMapping.BuildQueryBuildArgs - a build_arg yields a buildargs= value that URL-decodes to the JSON map.
+//   ApiMapping.BuildQueryLabels - labels yield a labels= value that parses back to the JSON map; no labels means no labels= key.
 //   ApiMapping.ExpectStringFieldExtracts - expect_string_field returns the named top-level string field.
 //   ApiMapping.ExpectStringFieldWrapsFailures - a malformed body, a missing field, and a non-string field all throw DockerError carrying the context, never raw nlohmann exceptions.
 
@@ -1110,6 +1111,28 @@ TEST(ApiMapping, BuildQueryBuildArgs) {
     const auto parsed = nlohmann::json::parse(value);
     EXPECT_EQ(parsed["VERSION"], "1.2");
     EXPECT_EQ(parsed["FLAG"], "on");
+}
+
+TEST(ApiMapping, BuildQueryLabels) {
+    BuildOptions options;
+    options.tag = "myimg:latest";
+    const auto identity = [](const std::string& v) { return v; };
+
+    // No labels configured: the key must be absent entirely (an empty labels={}
+    // would still be accepted by the daemon, but there is no reason to send it).
+    EXPECT_EQ(build_build_query(options, identity).find("labels="), std::string::npos);
+
+    options.labels = {{"org.testcontainers.session-id", "abc123"}, {"custom", "x"}};
+    const std::string q = build_build_query(options, identity);
+    const std::size_t pos = q.find("labels=");
+    ASSERT_NE(pos, std::string::npos);
+    std::string value = q.substr(pos + std::string("labels=").size());
+    if (const std::size_t amp = value.find('&'); amp != std::string::npos) {
+        value = value.substr(0, amp);
+    }
+    const auto parsed = nlohmann::json::parse(value);
+    EXPECT_EQ(parsed["org.testcontainers.session-id"], "abc123");
+    EXPECT_EQ(parsed["custom"], "x");
 }
 
 TEST(ApiMapping, ExpectStringFieldExtracts) {

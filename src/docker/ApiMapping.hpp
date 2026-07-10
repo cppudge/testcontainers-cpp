@@ -108,8 +108,9 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
 std::pair<std::string, std::string> split_image(const std::string& image);
 
 /// Build the query string (incl. leading '?') for `POST /build`: t, dockerfile,
-/// nocache, pull, target (when set), and buildargs (a JSON object, percent-encoded).
-/// `encode` is the caller's URL-encoder. Unit-testable without a daemon.
+/// nocache, pull, target (when set), and buildargs / labels (JSON objects,
+/// percent-encoded). `encode` is the caller's URL-encoder. Unit-testable
+/// without a daemon.
 std::string build_build_query(const BuildOptions& options,
                               const std::function<std::string(const std::string&)>& encode);
 

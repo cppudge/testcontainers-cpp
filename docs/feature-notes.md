@@ -91,8 +91,8 @@ the reuse-adopt path is not retried; no inter-attempt backoff). A throwing creat
 started hook aborts start() and cleans up; stopping fires once on teardown — never for a
 persistent (reuse) handle — and its exceptions are swallowed.
 
-**Reaper (Ryuk)** — containers, networks, and named volumes carry the session label; images do
-NOT (unreaped). Pinned to `testcontainers/ryuk:0.11.0`, skipped on the Windows engine and via
+**Reaper (Ryuk)** — containers, networks, named volumes, and built images carry the session
+label. Pinned to `testcontainers/ryuk:0.11.0`, skipped on the Windows engine and via
 `TESTCONTAINERS_RYUK_DISABLED`. Process-global: it binds to the FIRST daemon it starts against;
 `run(client, request)` boots it on that client's daemon, but later runs against a different
 daemon in the same process get labels and no crash-safe reaping (see TODO).
@@ -199,9 +199,15 @@ change. `GenericImage::inspect(name, tag)` / `img.inspect()` (backed by
 `DockerClient::inspect_image[_raw]`, which also takes full references/digests) return a typed
 `ImageInspect` — id, repo tags/digests, created, os/arch, size, and the image config (labels,
 env, cmd, entrypoint, exposed ports, workdir, user); the instance form uses `image():tag()`
-verbatim, no substitutor. Built images carry no session label (not reaped). `forcerm=1` is always sent —
-without it the legacy builder keeps a failed step's intermediate container, which carries no
-labels and leaks past Ryuk.
+verbatim, no substitutor. Built images are session-scoped: `build()` ships the managed-by /
+session labels via `?labels=` (merged with the Dockerfile's own LABELs; on a duplicate key the
+query label wins, `docker build --label` parity) and boots the reaper, so Ryuk removes the
+image shortly after the process exits — base images and pulled layers are untouched. With the
+reaper disabled the session label is omitted and the image persists; there is no per-image
+keep switch (`TESTCONTAINERS_RYUK_DISABLED` is process-wide). The raw
+`DockerClient::build_image` adds no labels of its own — `BuildOptions::labels` is
+caller-controlled. `forcerm=1` is always sent — without it the legacy builder keeps a failed
+step's intermediate container, which carries no labels and leaks past Ryuk.
 
 **HostConfig** — typed setters for memory / shm_size / ulimits / cap_add / cap_drop /
 extra_hosts; everything else through `with_create_body_patch` (an RFC-7386 deep-merge applied

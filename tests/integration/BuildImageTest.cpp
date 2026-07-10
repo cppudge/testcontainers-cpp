@@ -7,7 +7,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
+#include "Reaper.hpp"
 #include "testcontainers/Container.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericBuildableImage.hpp"
@@ -28,6 +30,7 @@
 //   BuildImage.BuildLogConsumerStreamsSteps - with_build_log_consumer receives the step banners and a RUN step's own echo output during build().
 //   BuildImage.BuildFailureCarriesStepOutput - a failing RUN's own output (echoed before the exit) appears in the DockerError message, not just the daemon's exit-code line.
 //   BuildImage.DockerignoreFiltersContext - a .dockerignore at a directory source's root keeps excluded files out of the uploaded context (COPY sees keep.txt and the .dockerignore itself, not *.log or the ignored dir).
+//   BuildImage.BuiltImageCarriesSessionLabels - a built image carries the managed-by/session labels (so Ryuk reaps it), merged with the Dockerfile's own LABELs (query label wins a duplicate key), and a Ryuk sidecar is up after a pure build().
 //   BuildImage.ExistsReflectsLocalImages - GenericImage::exists is true for a just-built tag and false for a name that was never built.
 //   BuildImage.InspectReflectsImageConfig - GenericImage::inspect (static and instance) returns the built image's id/tag/os and Config (label, exposed port, workdir, cmd); inspect_image_raw returns the raw body; a never-built reference throws NotFoundError.
 //   WindowsBuildImage.BuildsAndRunsInlineDockerfile - the same round-trip on a Windows daemon: a nanoserver-based Dockerfile bakes a file, the built image types it out.
@@ -201,6 +204,40 @@ TEST_F(BuildImage, DockerignoreFiltersContext) {
     EXPECT_EQ(out.stdout_data.find("skip.log"), std::string::npos)
         << "stdout was: " << out.stdout_data;
     EXPECT_EQ(out.stdout_data.find("logs"), std::string::npos) << "stdout was: " << out.stdout_data;
+}
+
+TEST_F(BuildImage, BuiltImageCarriesSessionLabels) {
+    // Built images are session-scoped: build() ships the managed-by/session
+    // labels via ?labels= (so Ryuk reaps the image after the run) and they
+    // MERGE with the Dockerfile's own LABELs rather than replacing them. On a
+    // duplicate key the query label wins (docker build --label parity) — the
+    // Dockerfile below tries to override managed-by and must lose.
+    GenericBuildableImage("tc-build-labels", "latest")
+        .with_dockerfile_string("FROM alpine:3.20\n"
+                                "LABEL tc-user-label=kept\n"
+                                "LABEL org.testcontainers.managed-by=dockerfile-tried\n")
+        .build();
+
+    const ImageInspect info = GenericImage::inspect("tc-build-labels");
+    ASSERT_EQ(info.labels.count("org.testcontainers.managed-by"), 1u);
+    EXPECT_EQ(info.labels.at("org.testcontainers.managed-by"), "testcontainers");
+    ASSERT_EQ(info.labels.count("tc-user-label"), 1u);
+    EXPECT_EQ(info.labels.at("tc-user-label"), "kept");
+    if (!detail::ryuk_disabled()) {
+        ASSERT_EQ(info.labels.count("org.testcontainers.session-id"), 1u);
+        EXPECT_EQ(info.labels.at("org.testcontainers.session-id"), detail::session_id());
+
+        // build() must have booted the reaper even with no container started
+        // (a labelled image without a watching Ryuk would never be reaped).
+        DockerClient client = DockerClient::from_environment();
+        const std::vector<ContainerSummary> running = client.list_containers(
+            {{"label", "org.testcontainers.managed-by=testcontainers"}}, /*all*/ false);
+        const bool found_ryuk =
+            std::any_of(running.begin(), running.end(), [](const ContainerSummary& c) {
+                return c.image.find("testcontainers/ryuk") != std::string::npos;
+            });
+        EXPECT_TRUE(found_ryuk) << "no running testcontainers/ryuk container found";
+    }
 }
 
 TEST_F(BuildImage, ExistsReflectsLocalImages) {

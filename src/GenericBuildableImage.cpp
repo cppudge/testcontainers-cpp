@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "FileRead.hpp"
+#include "Reaper.hpp"
 #include "docker/DockerIgnore.hpp"
 #include "docker/Tar.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
@@ -105,6 +106,18 @@ GenericImage GenericBuildableImage::build() const {
     options.target = target_;
     options.no_cache = no_cache_;
     options.pull = pull_;
+
+    // The built image carries the same managed-by/session labels as containers,
+    // so Ryuk removes it once this process exits (crash-safe cleanup). With the
+    // reaper disabled the session label is omitted and the image persists.
+    for (const auto& label : detail::testcontainers_labels()) {
+        options.labels.push_back(label);
+    }
+
+    // The labels are only reaped if a reaper is actually watching the session —
+    // boot it BEFORE building, like run() does before creating a container
+    // (no-op when Ryuk is disabled or on a Windows-containers daemon).
+    detail::Reaper::instance().ensure_started();
 
     // Stream the context: blocks leave as they are produced, so the tar (and
     // the tree's file bodies) never sit in memory whole.

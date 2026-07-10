@@ -697,6 +697,13 @@ std::string build_build_query(const BuildOptions& options,
         }
         append("buildargs", args.dump());
     }
+    if (!options.labels.empty()) {
+        nlohmann::json labels = nlohmann::json::object();
+        for (const auto& [key, value] : options.labels) {
+            labels[key] = value;
+        }
+        append("labels", labels.dump());
+    }
     return query;
 }
 

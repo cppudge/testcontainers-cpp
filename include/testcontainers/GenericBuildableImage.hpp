@@ -135,6 +135,13 @@ public:
     /// build context, and return a runnable `GenericImage` for it. Throws
     /// DockerError on failure (including a build error embedded in the daemon's
     /// streamed output, which Docker reports with an HTTP 200).
+    ///
+    /// The built image is session-scoped, like every testcontainers resource: it
+    /// carries the testcontainers labels, and the Ryuk reaper removes it shortly
+    /// after this process exits (the base image and pulled layers are untouched).
+    /// build() starts that reaper on first use, so it can also throw for a
+    /// reaper-startup failure, before any build work. For an image that must
+    /// outlive the test run, disable the reaper (`TESTCONTAINERS_RYUK_DISABLED=1`).
     GenericImage build() const;
 
 private:
