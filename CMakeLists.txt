@@ -245,6 +245,7 @@ if(BUILD_TESTING)
         tests/unit/DockerHostTest.cpp
         tests/unit/HostResolveTest.cpp
         tests/unit/ResponseTest.cpp
+        tests/unit/CannedHttpServerTest.cpp
         tests/unit/ApiMappingTest.cpp
         tests/unit/ApiVersionTest.cpp
         tests/unit/AuthTest.cpp

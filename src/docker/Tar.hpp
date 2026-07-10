@@ -1,22 +1,39 @@
 #pragma once
 
+#include <cstddef>
+#include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "testcontainers/CopyToContainer.hpp"
 
-// In-memory tar (USTAR) builder for the copy-to-container endpoint. Docker's
+// Streaming tar writer/reader for the archive endpoints. Docker's
 // `PUT /containers/{id}/archive` takes a tar archive and extracts it into the
 // directory named by the `path` query parameter. We always PUT with `path=/`
 // and make each entry's name relative (see normalize_entry_name), so an entry
 // named `tmp/foo.txt` lands at `/tmp/foo.txt`.
 //
+// Archives are produced in the pax "restricted" flavor: entries are plain
+// USTAR until a field does not fit (a path over 100 chars, a file over 8 GiB),
+// then a pax extension header rides along just for that entry. Docker's Go tar
+// reader consumes both. The writers stream: entry bodies are read from the
+// host in blocks and pushed to a sink as the archive is produced, so nothing
+// buffers the whole payload (the build_* wrappers collect into a string for
+// callers that want the small-payload convenience).
+//
 // Kept separate from DockerClient (and free of any Boost/HTTP dependency) so it
-// can be unit-tested without a daemon: build a tar, read it back with libarchive
-// and assert the entry fields.
+// can be unit-tested without a daemon: stream a tar, read it back with
+// libarchive and assert the entry fields.
 namespace testcontainers::docker {
 
-/// Strip a single leading '/' from a path (USTAR entry names are relative).
+/// Receives successive blocks of a tar stream as it is produced (up to ~64 KiB
+/// each). May throw: the archive production stops and the exception propagates
+/// out of the `stream_*` call unchanged (the HTTP layer uses that to abort on
+/// a dead connection with its own typed error).
+using TarSink = std::function<void(const char* data, std::size_t size)>;
+
+/// Strip a single leading '/' from a path (tar entry names are relative).
 /// A path without a leading slash is returned unchanged.
 std::string strip_leading_slash(const std::string& path);
 
@@ -28,12 +45,13 @@ std::string strip_leading_slash(const std::string& path);
 /// alone (a valid character in Linux file names).
 std::string normalize_entry_name(const std::string& target);
 
-/// Build a tar archive (USTAR) for `source` and return the raw tar bytes.
+/// Stream a tar archive for `source` into `sink`.
 ///
 /// For a host-file or in-memory-bytes source the archive holds ONE regular-file
 /// entry: the entry name is `source.target()` normalized (see
 /// normalize_entry_name), the size and mode are set, and the body is the host
-/// file's bytes (when `source.is_file()`) or `source.bytes()`.
+/// file's bytes (when `source.is_file()`) or `source.bytes()`. A host file is
+/// read in blocks at stream time, never loaded whole.
 ///
 /// For a directory source (`source.is_dir()`) the archive holds a directory
 /// entry for the normalized target and each of its path components (so nothing
@@ -42,20 +60,39 @@ std::string normalize_entry_name(const std::string& target);
 /// `source.mode()`; directories are 0755. Directory symlinks are not descended
 /// into; non-regular files (sockets, FIFOs, dangling symlinks) are skipped.
 ///
-/// Throws DockerError if a host file or directory cannot be read or the
-/// archive cannot be produced.
+/// Throws DockerError if a host file or directory cannot be read, changes size
+/// mid-stream, or the archive cannot be produced; an exception thrown by
+/// `sink` propagates unchanged.
+void stream_tar(const CopyToContainer& source, const TarSink& sink);
+
+/// Stream ONE tar archive holding the entries of all `sources` in order (each
+/// source contributes exactly what its single-source overload would). Backs
+/// the batched copy-to-container call: one archive, one PUT, N sources.
+void stream_tar(const std::vector<CopyToContainer>& sources, const TarSink& sink);
+
+/// stream_tar collected into a string — the raw tar bytes, for small payloads
+/// and tests.
 std::string build_tar(const CopyToContainer& source);
 
 /// One file to place into a build-context tar.
 struct TarFile {
     std::string name; ///< path within the context (e.g. "Dockerfile", "app/x.txt")
-    std::string body; ///< file contents (may be binary)
+    std::string body; ///< inline file contents (may be binary); ignored when `path` is set
     int mode = 0644;  ///< octal regular-file mode
+    /// When set, the entry's bytes come from this host file, read in blocks at
+    /// stream time instead of being preloaded (the descriptor stays cheap no
+    /// matter the file size). The file must exist and keep its size until the
+    /// stream completes. Set exactly one of `body` / `path`.
+    std::filesystem::path path;
 };
 
-/// Build a USTAR archive holding all `files` as regular-file entries (names used
-/// verbatim, leading '/' stripped). Returns the raw tar bytes. Throws DockerError
-/// on failure. This is the build-context body for `POST /build`.
+/// Stream a tar archive holding all `files` as regular-file entries (names used
+/// verbatim, leading '/' stripped) into `sink`. Throws DockerError on failure;
+/// an exception thrown by `sink` propagates unchanged. This is the
+/// build-context body for `POST /build`.
+void stream_context_tar(const std::vector<TarFile>& files, const TarSink& sink);
+
+/// stream_context_tar collected into a string — the raw tar bytes.
 std::string build_context_tar(const std::vector<TarFile>& files);
 
 /// One entry extracted from a tar archive.

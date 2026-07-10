@@ -1,6 +1,5 @@
 #include "docker/Tar.hpp"
 
-#include "FileRead.hpp"
 #include "testcontainers/Error.hpp"
 
 #include <archive.h>
@@ -9,7 +8,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <ios>
+#include <iterator>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -19,88 +23,173 @@ namespace testcontainers::docker {
 
 namespace {
 
-// libarchive write callback: append the bytes it hands us to a std::string. The
-// client_data is the destination buffer. Returning the byte count signals all
-// bytes were consumed; returning -1 would signal an error.
-la_ssize_t append_to_string(struct archive* /*a*/, void* client_data, const void* buffer,
-                            std::size_t length) {
-    auto* out = static_cast<std::string*>(client_data);
-    out->append(static_cast<const char*>(buffer), length);
-    return static_cast<la_ssize_t>(length);
+/// One sink call per block keeps the wire writes coarse without buffering
+/// much; also the read granularity for lazy file bodies.
+constexpr std::size_t kTarBlockSize = 64 * 1024;
+
+/// Client data for the libarchive write callback: the destination sink plus
+/// the first exception it threw. libarchive is C — an exception must not
+/// unwind through its frames — so the callback catches everything, stores it
+/// here and reports -1 (ARCHIVE_FATAL); the C++ layer rethrows after the
+/// failed libarchive call returns.
+struct SinkState {
+    const TarSink* sink = nullptr;
+    std::exception_ptr error;
+};
+
+la_ssize_t write_to_sink(struct archive* /*a*/, void* client_data, const void* buffer,
+                         std::size_t length) {
+    auto* state = static_cast<SinkState*>(client_data);
+    try {
+        (*state->sink)(static_cast<const char*>(buffer), length);
+        return static_cast<la_ssize_t>(length);
+    } catch (...) {
+        state->error = std::current_exception();
+        return -1;
+    }
+}
+
+/// Throw for a failed libarchive write call: the sink's own exception when it
+/// threw one (full fidelity — a transport error keeps its type and message),
+/// DockerError with libarchive's diagnostic otherwise.
+[[noreturn]] void throw_write_error(const SinkState& state, struct archive* a,
+                                    const std::string& ctx, const char* op) {
+    if (state.error) {
+        std::rethrow_exception(state.error);
+    }
+    const char* err = archive_error_string(a);
+    throw DockerError(ctx + ": " + std::string(op) + " failed: " + (err ? err : "unknown error"));
 }
 
 /// One entry queued for a tar archive (a regular file or a directory).
 struct PendingEntry {
-    std::string name; ///< relative entry pathname ('/'-separated; dirs end in '/')
-    std::string body; ///< file contents (empty for directories)
-    int mode = 0644;  ///< permission bits
+    std::string name;             ///< relative entry pathname ('/'-separated; dirs end in '/')
+    std::string body;             ///< inline file contents (used when `file` is empty)
+    std::filesystem::path file;   ///< host file whose bytes are streamed at write time
+    std::uintmax_t file_size = 0; ///< header size for a `file` entry (stat-time)
+    int mode = 0644;              ///< permission bits
     bool is_dir = false;
 };
 
-/// Write `entries` into a USTAR archive and return the raw tar bytes. `ctx`
-/// prefixes error messages (e.g. "copy_to_container"). Throws DockerError on
-/// any libarchive failure.
-std::string write_tar(const std::vector<PendingEntry>& entries, const std::string& ctx) {
-    struct archive* a = archive_write_new();
+using ArchivePtr = std::unique_ptr<struct archive, int (*)(struct archive*)>;
+using EntryPtr = std::unique_ptr<struct archive_entry, void (*)(struct archive_entry*)>;
+
+/// Stat `path` for a lazy file entry's header size. Throws DockerError
+/// (prefixed by `ctx`) when the file cannot be read.
+std::uintmax_t stat_size_or_throw(const std::filesystem::path& path, const std::string& ctx) {
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        throw DockerError(ctx + ": cannot open host file '" + path.string() + "': " + ec.message());
+    }
+    return size;
+}
+
+void write_data_or_throw(struct archive* a, const SinkState& state, const std::string& ctx,
+                         const char* data, std::size_t size) {
+    const la_ssize_t written = archive_write_data(a, data, size);
+    if (written < 0 || static_cast<std::size_t>(written) != size) {
+        throw_write_error(state, a, ctx, "archive_write_data");
+    }
+}
+
+/// Write `entries` as a pax(restricted) tar, pushing the produced blocks to
+/// `sink`. A lazy `file` entry's body is read in kTarBlockSize blocks here —
+/// the whole payload is never in memory. `ctx` prefixes error messages (e.g.
+/// "copy_to_container"). Throws DockerError on any libarchive/host-read
+/// failure; an exception thrown by `sink` propagates unchanged.
+void write_tar_stream(const std::vector<PendingEntry>& entries, const std::string& ctx,
+                      const TarSink& sink) {
+    // Declared BEFORE the archive handle on purpose: when an error below
+    // unwinds the stack, archive_write_free flushes buffered data through
+    // write_to_sink one last time — the callback state must still be alive.
+    SinkState state;
+    state.sink = &sink;
+
+    ArchivePtr a(archive_write_new(), archive_write_free);
     if (a == nullptr) {
         throw DockerError(ctx + ": archive_write_new failed");
     }
-    // USTAR is the simplest portable format Docker accepts.
-    archive_write_set_format_ustar(a);
+    // pax "restricted": entries stay plain USTAR until a field does not fit
+    // (a >100-char path, a >8 GiB file), then a pax extension header rides
+    // along for that entry only. Docker's Go tar reader consumes both.
+    archive_write_set_format_pax_restricted(a.get());
+    archive_write_set_bytes_per_block(a.get(), static_cast<int>(kTarBlockSize));
+    // Do not pad the final block up to bytes_per_block (tar output is already
+    // 512-aligned; a full 64 KiB tail would just be zeros on the wire).
+    archive_write_set_bytes_in_last_block(a.get(), 1);
 
-    std::string out;
-    if (archive_write_open(a, &out, /*open*/ nullptr, append_to_string, /*close*/ nullptr) !=
+    if (archive_write_open(a.get(), &state, /*open*/ nullptr, write_to_sink, /*close*/ nullptr) !=
         ARCHIVE_OK) {
-        const std::string err = archive_error_string(a) ? archive_error_string(a) : "unknown error";
-        archive_write_free(a);
-        throw DockerError(ctx + ": archive_write_open failed: " + err);
+        throw_write_error(state, a.get(), ctx, "archive_write_open");
     }
 
+    std::vector<char> buf(kTarBlockSize);
     for (const PendingEntry& e : entries) {
-        struct archive_entry* entry = archive_entry_new();
-        archive_entry_set_pathname(entry, e.name.c_str());
-        archive_entry_set_filetype(entry, e.is_dir ? AE_IFDIR : AE_IFREG);
+        const bool from_file = !e.file.empty();
+        EntryPtr entry(archive_entry_new(), archive_entry_free);
+        if (entry == nullptr) {
+            throw DockerError(ctx + ": archive_entry_new failed");
+        }
+        archive_entry_set_pathname(entry.get(), e.name.c_str());
+        archive_entry_set_filetype(entry.get(), e.is_dir ? AE_IFDIR : AE_IFREG);
         // libarchive's mode parameter is 16-bit on Windows (CRT _mode_t);
         // permission bits always fit.
-        archive_entry_set_perm(entry, static_cast<unsigned short>(e.mode));
-        archive_entry_set_size(entry, e.is_dir ? 0 : static_cast<la_int64_t>(e.body.size()));
+        archive_entry_set_perm(entry.get(), static_cast<unsigned short>(e.mode));
+        archive_entry_set_size(entry.get(), e.is_dir    ? 0
+                                            : from_file ? static_cast<la_int64_t>(e.file_size)
+                                                        : static_cast<la_int64_t>(e.body.size()));
 
-        if (archive_write_header(a, entry) != ARCHIVE_OK) {
-            const std::string err =
-                archive_error_string(a) ? archive_error_string(a) : "unknown error";
-            archive_entry_free(entry);
-            archive_write_free(a);
-            throw DockerError(ctx + ": archive_write_header failed: " + err);
+        if (archive_write_header(a.get(), entry.get()) != ARCHIVE_OK) {
+            throw_write_error(state, a.get(), ctx, "archive_write_header");
         }
-        if (!e.is_dir && !e.body.empty()) {
-            const la_ssize_t written = archive_write_data(a, e.body.data(), e.body.size());
-            if (written < 0 || static_cast<std::size_t>(written) != e.body.size()) {
-                const std::string err =
-                    archive_error_string(a) ? archive_error_string(a) : "short write";
-                archive_entry_free(entry);
-                archive_write_free(a);
-                throw DockerError(ctx + ": archive_write_data failed: " + err);
+
+        if (e.is_dir) {
+            continue;
+        }
+        if (from_file) {
+            std::ifstream in(e.file, std::ios::binary);
+            if (!in) {
+                throw DockerError(ctx + ": cannot open host file '" + e.file.string() + "'");
             }
+            std::uintmax_t remaining = e.file_size;
+            while (remaining > 0) {
+                const std::size_t want =
+                    static_cast<std::size_t>(std::min<std::uintmax_t>(buf.size(), remaining));
+                in.read(buf.data(), static_cast<std::streamsize>(want));
+                const std::streamsize got = in.gcount();
+                if (got <= 0) {
+                    break;
+                }
+                write_data_or_throw(a.get(), state, ctx, buf.data(), static_cast<std::size_t>(got));
+                remaining -= static_cast<std::uintmax_t>(got);
+            }
+            // The header committed the stat-time size: a file that shrank,
+            // grew, or became unreadable mid-stream would corrupt the archive
+            // framing — fail loudly (GNU tar's "file changed as we read it").
+            in.peek(); // reaches EOF only if the file still ends at file_size
+            if (remaining != 0 || !in.eof()) {
+                throw DockerError(ctx + ": host file '" + e.file.string() +
+                                  "' changed or became unreadable while being archived");
+            }
+        } else if (!e.body.empty()) {
+            write_data_or_throw(a.get(), state, ctx, e.body.data(), e.body.size());
         }
-        archive_entry_free(entry);
     }
 
-    // archive_write_close flushes the trailing blocks; archive_write_free closes
-    // implicitly but we close explicitly to surface any flush error.
-    if (archive_write_close(a) != ARCHIVE_OK) {
-        const std::string err = archive_error_string(a) ? archive_error_string(a) : "unknown error";
-        archive_write_free(a);
-        throw DockerError(ctx + ": archive_write_close failed: " + err);
+    // archive_write_close flushes the pax/ustar trailer through the sink; close
+    // explicitly to surface a flush failure (free alone would swallow it).
+    if (archive_write_close(a.get()) != ARCHIVE_OK) {
+        throw_write_error(state, a.get(), ctx, "archive_write_close");
     }
-    archive_write_free(a);
-    return out;
 }
 
 /// Recursively list `dir` as tar entries rooted at `base` (the normalized
 /// container target, e.g. "opt/data"): directory entries for `base` and each
 /// of its path components first, then one entry per directory/regular file in
 /// the tree, sorted by name (parents always precede children). Files carry
-/// `file_mode`; directories are 0755. Throws DockerError when `dir` is not a
+/// `file_mode` and are recorded lazily (path + stat size; bytes are read at
+/// stream time); directories are 0755. Throws DockerError when `dir` is not a
 /// directory or the walk fails.
 std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const std::string& base,
                                         int file_mode) {
@@ -124,7 +213,11 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
     for (std::size_t pos = root.find('/');; pos = root.find('/', pos + 1)) {
         const std::string component = (pos == std::string::npos) ? root : root.substr(0, pos);
         if (!component.empty()) {
-            out.push_back(PendingEntry{component + "/", "", 0755, true});
+            PendingEntry e;
+            e.name = component + "/";
+            e.mode = 0755;
+            e.is_dir = true;
+            out.push_back(std::move(e));
         }
         if (pos == std::string::npos) {
             break;
@@ -142,11 +235,18 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
             if (item.is_directory()) {
                 // Not descended into when it is a symlink (iterator default);
                 // it still lands as a (possibly empty) directory.
-                out.push_back(PendingEntry{name + "/", "", 0755, true});
+                PendingEntry e;
+                e.name = name + "/";
+                e.mode = 0755;
+                e.is_dir = true;
+                out.push_back(std::move(e));
             } else if (item.is_regular_file()) {
-                out.push_back(
-                    PendingEntry{name, detail::read_file_or_throw(item.path(), "copy_to_container"),
-                                 file_mode, false});
+                PendingEntry e;
+                e.name = name;
+                e.file = item.path();
+                e.file_size = item.file_size(); // throws into the catch below
+                e.mode = file_mode;
+                out.push_back(std::move(e));
             }
             // Anything else (sockets, FIFOs, dangling symlinks) is skipped.
         }
@@ -159,6 +259,30 @@ std::vector<PendingEntry> walk_host_dir(const std::filesystem::path& dir, const 
     // archive. Lexicographic order keeps parents before their children.
     std::sort(out.begin(), out.end(),
               [](const PendingEntry& a, const PendingEntry& b) { return a.name < b.name; });
+    return out;
+}
+
+/// The entries `source` contributes to an archive (shared by both stream_tar
+/// overloads): one regular-file entry for a file/bytes source (a host file is
+/// recorded lazily — path + stat size), the directory chain plus the walked
+/// tree for a directory source.
+std::vector<PendingEntry> collect_entries(const CopyToContainer& source) {
+    const std::string name = normalize_entry_name(source.target());
+    if (source.is_dir()) {
+        return walk_host_dir(source.host_path(), name, source.mode());
+    }
+
+    PendingEntry e;
+    e.name = name;
+    e.mode = source.mode();
+    if (source.is_file()) {
+        e.file_size = stat_size_or_throw(source.host_path(), "copy_to_container");
+        e.file = source.host_path();
+    } else {
+        e.body = source.bytes();
+    }
+    std::vector<PendingEntry> out;
+    out.push_back(std::move(e));
     return out;
 }
 
@@ -183,30 +307,49 @@ std::string normalize_entry_name(const std::string& target) {
     return strip_leading_slash(t);
 }
 
-std::string build_tar(const CopyToContainer& source) {
-    const std::string name = normalize_entry_name(source.target());
-
-    std::vector<PendingEntry> entries;
-    if (source.is_dir()) {
-        entries = walk_host_dir(source.host_path(), name, source.mode());
-    } else {
-        // The entry body: either the host file's bytes or the in-memory bytes.
-        std::string body = source.is_file()
-                               ? detail::read_file_or_throw(source.host_path(), "copy_to_container")
-                               : source.bytes();
-        entries.push_back(PendingEntry{name, std::move(body), source.mode(), false});
-    }
-    return write_tar(entries, "copy_to_container");
+void stream_tar(const CopyToContainer& source, const TarSink& sink) {
+    write_tar_stream(collect_entries(source), "copy_to_container", sink);
 }
 
-std::string build_context_tar(const std::vector<TarFile>& files) {
+void stream_tar(const std::vector<CopyToContainer>& sources, const TarSink& sink) {
+    std::vector<PendingEntry> entries;
+    for (const CopyToContainer& source : sources) {
+        std::vector<PendingEntry> part = collect_entries(source);
+        entries.insert(entries.end(), std::make_move_iterator(part.begin()),
+                       std::make_move_iterator(part.end()));
+    }
+    write_tar_stream(entries, "copy_to_container", sink);
+}
+
+std::string build_tar(const CopyToContainer& source) {
+    std::string out;
+    stream_tar(source, [&out](const char* data, std::size_t size) { out.append(data, size); });
+    return out;
+}
+
+void stream_context_tar(const std::vector<TarFile>& files, const TarSink& sink) {
     std::vector<PendingEntry> entries;
     entries.reserve(files.size());
     for (const TarFile& file : files) {
-        entries.push_back(
-            PendingEntry{strip_leading_slash(file.name), file.body, file.mode, false});
+        PendingEntry e;
+        e.name = strip_leading_slash(file.name);
+        e.mode = file.mode;
+        if (!file.path.empty()) {
+            e.file_size = stat_size_or_throw(file.path, "build_context_tar");
+            e.file = file.path;
+        } else {
+            e.body = file.body;
+        }
+        entries.push_back(std::move(e));
     }
-    return write_tar(entries, "build_context_tar");
+    write_tar_stream(entries, "build_context_tar", sink);
+}
+
+std::string build_context_tar(const std::vector<TarFile>& files) {
+    std::string out;
+    stream_context_tar(files,
+                       [&out](const char* data, std::size_t size) { out.append(data, size); });
+    return out;
 }
 
 std::vector<TarEntry> extract_tar(const std::string& tar_bytes) {

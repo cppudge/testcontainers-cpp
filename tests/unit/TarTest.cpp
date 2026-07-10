@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -34,6 +35,14 @@
 //   Tar.DirSourceWindowsTarget - a host_dir source with a "C:\..." target roots the tree under the drive-stripped name.
 //   Tar.DirSourceTrailingSlashTarget - "/opt/data/" and "/opt/data" produce byte-identical archives (no doubled separators).
 //   Tar.MissingHostDirThrows - a host_dir source pointing at a missing path or at a regular file throws DockerError.
+//   Tar.PaxLongPathRoundTrips - a flat >100-char entry name (unrepresentable in plain USTAR) round-trips via the pax extension header.
+//   Tar.StreamHostFileInBlocks - a ~200 KB host file is streamed to the sink in multiple 64 KiB blocks and the reassembled archive round-trips byte-for-byte.
+//   Tar.SinkExceptionPropagates - an exception thrown by the sink at trailer-flush time surfaces from stream_tar with its type and message intact.
+//   Tar.SinkExceptionPropagatesMidStream - a sink that throws mid-body (large file) also surfaces unchanged.
+//   Tar.BatchedSourcesShareOneArchive - the vector stream_tar overload packs every source's entries into one archive in order.
+//   Tar.ContextTarLazyFileEntry - a TarFile with `path` set streams the host file's bytes (the inline body is ignored).
+//   Tar.ContextTarMissingLazyFileThrows - a TarFile whose `path` does not exist throws DockerError.
+//   Tar.ZeroByteLazyFileEntry - a zero-byte host file round-trips as an empty regular-file entry (the exact-EOF edge of the changed-size check).
 
 using testcontainers::CopyToContainer;
 using testcontainers::DockerError;
@@ -41,6 +50,7 @@ using testcontainers::docker::build_context_tar;
 using testcontainers::docker::build_tar;
 using testcontainers::docker::extract_tar;
 using testcontainers::docker::normalize_entry_name;
+using testcontainers::docker::stream_tar;
 using testcontainers::docker::strip_leading_slash;
 using testcontainers::docker::TarEntry;
 using testcontainers::docker::TarFile;
@@ -294,6 +304,131 @@ TEST(Tar, MissingHostDirThrows) {
     // A regular file is not a directory source either.
     const TempFile file("not-a-dir");
     EXPECT_THROW(build_tar(CopyToContainer::host_dir(file.string(), "/opt/x")), DockerError);
+}
+
+TEST(Tar, PaxLongPathRoundTrips) {
+    // A flat 154-char name cannot be represented in plain USTAR (the name
+    // field caps at 100 chars and the prefix split needs a '/'); the pax
+    // "restricted" writer adds an extension header for exactly this entry.
+    const std::string long_name = std::string(150, 'x') + ".txt";
+    const std::string tar = build_tar(CopyToContainer::content("deep", "/" + long_name));
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries.front().name, long_name);
+    EXPECT_EQ(entries.front().body, "deep");
+    EXPECT_TRUE(entries.front().is_regular_file);
+}
+
+TEST(Tar, StreamHostFileInBlocks) {
+    // ~200 KB host file: streamed to the sink in 64 KiB blocks (several
+    // calls), never preloaded; the reassembled archive round-trips.
+    std::string content;
+    for (int i = 0; content.size() < 200'000; ++i) {
+        content += "block payload line " + std::to_string(i) + "\n";
+    }
+    const TempFile file(content);
+
+    std::string tar;
+    std::size_t calls = 0;
+    stream_tar(CopyToContainer::host_file(file.string(), "/data/big.bin"),
+               [&](const char* data, std::size_t size) {
+                   ++calls;
+                   tar.append(data, size);
+               });
+
+    EXPECT_GE(calls, 3u); // 200 KB comes through in 64 KiB blocks
+    const std::vector<TarEntry> entries = extract_tar(tar);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries.front().name, "data/big.bin");
+    EXPECT_EQ(entries.front().body, content);
+}
+
+TEST(Tar, SinkExceptionPropagates) {
+    // The sink's exception must surface from stream_tar with its type and
+    // message intact (the HTTP layer aborts an upload by throwing out of the
+    // sink). A small archive is buffered in full, so the sink first runs at
+    // trailer-flush (archive_write_close) time — the flush error path.
+    const auto boom = [](const char*, std::size_t) { throw std::runtime_error("wire broke"); };
+    try {
+        stream_tar(CopyToContainer::content("x", "/f"), boom);
+        FAIL() << "stream_tar did not propagate the sink exception";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "wire broke");
+    }
+}
+
+TEST(Tar, SinkExceptionPropagatesMidStream) {
+    // A >64 KiB body makes the sink run during archive_write_data — the
+    // mid-body error path, distinct from the trailer flush above.
+    const std::string content(200'000, 'q');
+    const TempFile file(content);
+    std::size_t calls = 0;
+    const auto boom = [&calls](const char*, std::size_t) {
+        if (++calls == 2) {
+            throw std::runtime_error("wire broke mid-stream");
+        }
+    };
+    try {
+        stream_tar(CopyToContainer::host_file(file.string(), "/data/big.bin"), boom);
+        FAIL() << "stream_tar did not propagate the sink exception";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "wire broke mid-stream");
+    }
+}
+
+TEST(Tar, BatchedSourcesShareOneArchive) {
+    const TempFile file("file-body");
+    const std::vector<CopyToContainer> sources = {
+        CopyToContainer::content("first", "/a/one.txt"),
+        CopyToContainer::host_file(file.string(), "/b/two.txt").with_mode(0600),
+    };
+
+    std::string tar;
+    stream_tar(sources, [&tar](const char* data, std::size_t size) { tar.append(data, size); });
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].name, "a/one.txt");
+    EXPECT_EQ(entries[0].body, "first");
+    EXPECT_EQ(entries[1].name, "b/two.txt");
+    EXPECT_EQ(entries[1].body, "file-body");
+    EXPECT_EQ(entries[1].mode & 0777, 0600);
+}
+
+TEST(Tar, ContextTarLazyFileEntry) {
+    const TempFile file("lazy-context-bytes");
+    TarFile lazy;
+    lazy.name = "app/data.bin";
+    lazy.body = "ignored when path is set";
+    lazy.path = std::filesystem::path(file.string());
+
+    const std::string tar = build_context_tar({lazy, TarFile{"Dockerfile", "FROM scratch\n"}});
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].name, "app/data.bin");
+    EXPECT_EQ(entries[0].body, "lazy-context-bytes"); // the host file's bytes, not `body`
+    EXPECT_EQ(entries[1].name, "Dockerfile");
+    EXPECT_EQ(entries[1].body, "FROM scratch\n");
+}
+
+TEST(Tar, ContextTarMissingLazyFileThrows) {
+    TarFile lazy;
+    lazy.name = "x";
+    lazy.path = std::filesystem::temp_directory_path() / "tc_tartest_missing_ctx_file";
+    EXPECT_THROW(build_context_tar({lazy}), DockerError);
+}
+
+TEST(Tar, ZeroByteLazyFileEntry) {
+    const TempFile file("");
+    const std::string tar = build_tar(CopyToContainer::host_file(file.string(), "/tmp/empty"));
+    const std::vector<TarEntry> entries = extract_tar(tar);
+
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries.front().name, "tmp/empty");
+    EXPECT_TRUE(entries.front().is_regular_file);
+    EXPECT_EQ(entries.front().body, "");
 }
 
 TEST(Tar, ContextTarTwoFiles) {

@@ -25,8 +25,10 @@ namespace tcunit {
 /// The single-level constructors keep the historical one-connection-per-
 /// response behavior. It records each request (head + body) globally and per
 /// connection, so tests can assert both the call sequence and which
-/// connection carried it. Exactly enough server to drive DockerClient's
-/// status/parse error paths, the start orchestration, and keep-alive reuse.
+/// connection carried it; a chunked request body is drained and recorded
+/// DECODED (the head keeps its Transfer-Encoding header). Exactly enough
+/// server to drive DockerClient's status/parse error paths, the start
+/// orchestration, keep-alive reuse, and the chunked streaming uploads.
 ///
 /// Connections are served CONCURRENTLY (a worker thread per accepted
 /// connection): exec opens its hijack transport first but sends its request
@@ -146,23 +148,34 @@ private:
             if (head_end == std::string::npos) {
                 break; // client closed / gave up on this connection
             }
-            // Hazard: a request announcing MORE Content-Length than the
-            // client actually sends deadlocks here (we block reading, the
-            // client blocks waiting for the response). Our client always
-            // sends exactly what it announces, and chunked encoding is not
-            // supported.
-            const std::size_t total = head_end + 4 + content_length(request);
-            while (!ec && request.size() < total) {
-                const std::size_t n = socket.read_some(asio::buffer(buf), ec);
-                request.append(buf, n);
+            const std::string head = request.substr(0, head_end + 4);
+            std::string recorded;
+            if (is_chunked(head)) {
+                // A chunked body (the client's streaming uploads): drain and
+                // DECODE it, so the recorded request carries the payload
+                // bytes without chunk framing — tests assert on the payload,
+                // and the head keeps its Transfer-Encoding header for tests
+                // that assert the encoding itself.
+                recorded = head + drain_chunked_body(socket, request, head_end + 4, ec);
+            } else {
+                // Hazard: a request announcing MORE Content-Length than the
+                // client actually sends deadlocks here (we block reading, the
+                // client blocks waiting for the response). Our client always
+                // sends exactly what it announces.
+                const std::size_t total = head_end + 4 + content_length(head);
+                while (!ec && request.size() < total) {
+                    const std::size_t n = socket.read_some(asio::buffer(buf), ec);
+                    request.append(buf, n);
+                }
+                recorded = request;
             }
             {
                 // Indexed access under the lock: the accept loop may still be
                 // growing the vector (reallocation), so no reference is held
                 // across the append.
                 const std::lock_guard<std::mutex> lock(mutex_);
-                requests_.push_back(request);
-                requests_by_connection_[index].push_back(request);
+                requests_.push_back(recorded);
+                requests_by_connection_[index].push_back(recorded);
             }
             asio::write(socket, asio::buffer(response), ec);
             if (ec) {
@@ -184,25 +197,101 @@ private:
         return connections;
     }
 
-    /// The Content-Length announced in `head`, or 0 when absent (our client
-    /// always sends it on bodied requests; chunked encoding is not supported).
-    static std::size_t content_length(const std::string& head) {
-        // Case-insensitive scan for the header name at a line start.
-        static constexpr const char* kName = "content-length:";
+    /// The value of the `name` header (pass it lowercase WITH the colon, e.g.
+    /// "content-length:") in `head`, or "" when absent. Case-insensitive scan
+    /// for the header name at a line start.
+    static std::string find_header(const std::string& head, const char* name) {
         for (std::size_t pos = head.find("\r\n"); pos != std::string::npos;
              pos = head.find("\r\n", pos + 2)) {
             const std::size_t line = pos + 2;
             std::size_t i = 0;
-            while (kName[i] != '\0' && line + i < head.size() &&
-                   std::tolower(static_cast<unsigned char>(head[line + i])) == kName[i]) {
+            while (name[i] != '\0' && line + i < head.size() &&
+                   std::tolower(static_cast<unsigned char>(head[line + i])) == name[i]) {
                 ++i;
             }
-            if (kName[i] == '\0') {
-                return static_cast<std::size_t>(
-                    std::strtoull(head.c_str() + line + i, nullptr, 10));
+            if (name[i] == '\0') {
+                const std::size_t value = line + i;
+                const std::size_t end = head.find("\r\n", value);
+                return head.substr(value,
+                                   end == std::string::npos ? std::string::npos : end - value);
             }
         }
-        return 0;
+        return {};
+    }
+
+    /// The Content-Length announced in `head`, or 0 when absent.
+    static std::size_t content_length(const std::string& head) {
+        const std::string value = find_header(head, "content-length:");
+        return value.empty() ? 0
+                             : static_cast<std::size_t>(std::strtoull(value.c_str(), nullptr, 10));
+    }
+
+    /// True when `head` announces a chunked request body.
+    static bool is_chunked(const std::string& head) {
+        std::string value = find_header(head, "transfer-encoding:");
+        for (char& c : value) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return value.find("chunked") != std::string::npos;
+    }
+
+    /// Read and DECODE a chunked request body. `data` holds everything read
+    /// off the connection so far (head included); the body starts at `pos`,
+    /// and more is read from `socket` as needed. Returns the decoded payload;
+    /// on a read error (`ec` set — client died mid-body) the decode stops
+    /// early with what arrived.
+    static std::string drain_chunked_body(boost::asio::ip::tcp::socket& socket, std::string& data,
+                                          std::size_t pos, boost::system::error_code& ec) {
+        namespace asio = boost::asio;
+        char buf[1024];
+        const auto read_more = [&]() -> bool {
+            const std::size_t n = socket.read_some(asio::buffer(buf), ec);
+            if (ec) {
+                return false;
+            }
+            data.append(buf, n);
+            return true;
+        };
+        const auto find_crlf = [&](std::size_t from) -> std::size_t {
+            std::size_t at = 0;
+            while ((at = data.find("\r\n", from)) == std::string::npos) {
+                if (!read_more()) {
+                    return std::string::npos;
+                }
+            }
+            return at;
+        };
+
+        std::string body;
+        for (;;) {
+            // "<hex-size>[;extension]\r\n" — strtoull stops at the ';'.
+            const std::size_t line_end = find_crlf(pos);
+            if (line_end == std::string::npos) {
+                return body;
+            }
+            const std::size_t size =
+                static_cast<std::size_t>(std::strtoull(data.c_str() + pos, nullptr, 16));
+            pos = line_end + 2;
+            if (size == 0) {
+                // Trailer section: lines until the empty terminator (our
+                // client sends no trailers, so the next line IS the
+                // terminator).
+                for (;;) {
+                    const std::size_t t = find_crlf(pos);
+                    if (t == std::string::npos || t == pos) {
+                        return body;
+                    }
+                    pos = t + 2;
+                }
+            }
+            while (data.size() < pos + size + 2) { // the chunk + its trailing CRLF
+                if (!read_more()) {
+                    return body;
+                }
+            }
+            body.append(data, pos, size);
+            pos += size + 2;
+        }
     }
 
     boost::asio::io_context ioc_;
