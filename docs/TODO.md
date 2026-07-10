@@ -50,11 +50,11 @@ the exec stdin write with the output read.
   2026-07-11, streaming exec); a background-thread RAII log handle with socket-level
   cancellation is not provided. (`src/docker/DockerClient.cpp`)
 - **exec residuals** — no TTY resize (`POST /exec/{id}/resize`); one fresh connection per exec;
-  stdin is written fully (then half-closed) BEFORE any output is read, so a command echoing a
-  LARGE stdin back can backpressure the write into an io-deadline timeout (bounded, not a hang;
-  realistic exec-stdin payloads are tiny) — interleave the stdin write with the output read if
-  it ever matters. Named-pipe half-close note: `FlushFileBuffers` before the zero-length EOF
-  message is the one transport operation the io deadline cannot bound (go-winio parity).
+  a daemon that ignores the connection upgrade (a plain 200) still gets its stdin written
+  sequentially before the body read — the interleaved stdin/output pump (2026-07-11) covers
+  the upgraded stream every real daemon serves. Named-pipe half-close note: `FlushFileBuffers`
+  before the zero-length EOF message is the one transport operation no deadline can bound
+  (go-winio parity), and inside the pump the flush also pauses output reads while it blocks.
 - **`run_process` residuals** — children are spawned directly (no shell), so shell builtins
   and `.bat`/`.cmd` scripts are not runnable (every caller passes a real executable: docker,
   compose, docker-credential-<helper>). On POSIX, `working_dir` needs

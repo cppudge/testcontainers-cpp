@@ -35,6 +35,10 @@
 //   StreamRead.RawConsumerDeadlineArmsIoTimeoutPerRead - with a deadline, the raw-stream delivery re-arms the transport's io deadline with a positive remaining budget before every read.
 //   StreamRead.RawConsumerTimedOutReportsDeadlineExpired - a raw-stream read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
 //   StreamRead.RawConsumerExpiredDeadlineDeliversNothing - a deadline already in the past ends the raw delivery with DeadlineExpired before anything is delivered — the header-parse leftover included.
+//   StreamRead.PumpDeliversLeftoverStdinAndFrames - pump_exec_stream hands the transport the stdin bytes (EOF after them), demuxes the leftover plus the exchanged frames, and reports StreamEnded with no wedge.
+//   StreamRead.PumpConsumerStopReportsIt - returning false from the consumer ends the pump with ConsumerStopped (on the leftover and on an exchanged chunk alike).
+//   StreamRead.PumpExpiredDeadlineDeliversNothing - a deadline already in the past reports DeadlineExpired before the exchange starts: nothing delivered, no stdin written.
+//   StreamRead.PumpTimedOutMapsByDeadline - an exchange ending in timed_out is DeadlineExpired under a deadline, and a wedge (the caller throws) without one.
 //   StreamRead.ReportsWhyDeliveryEnded - stream_body_to_consumer returns StreamEnded on EOF and ConsumerStopped on an early stop.
 //   StreamRead.DeadlineArmsIoTimeoutPerRead - with a deadline, the transport's io deadline is re-armed with a positive remaining budget before every read.
 //   StreamRead.TimedOutReadReportsDeadlineExpired - a read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
@@ -70,12 +74,13 @@ public:
         ec = {};
         return n;
     }
-    std::size_t write_some(const void* /*data*/, std::size_t size,
+    std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
         ec = {};
-        return size; // pretend everything was written
+        written.append(static_cast<const char*>(data), size);
+        return size;
     }
-    void shutdown_send() override {}
+    void shutdown_send() override { ++half_closes; }
     bool supports_half_close() const noexcept override { return true; }
     void set_io_timeout(std::optional<std::chrono::milliseconds> timeout) override {
         io_timeouts_set.push_back(timeout);
@@ -85,6 +90,8 @@ public:
     /// Every set_io_timeout call, in order (the bounded delivery re-arms the
     /// io deadline before each read).
     std::vector<std::optional<std::chrono::milliseconds>> io_timeouts_set;
+    std::string written; ///< everything write_some was handed (the pump's stdin)
+    int half_closes = 0; ///< shutdown_send calls (the pump's stdin EOF)
 
 private:
     std::vector<std::string> chunks_;
@@ -360,6 +367,102 @@ TEST(StreamRead, RawConsumerExpiredDeadlineDeliversNothing) {
     EXPECT_EQ(end, FollowEnd::DeadlineExpired);
     EXPECT_FALSE(delivered);
     EXPECT_TRUE(transport.io_timeouts_set.empty()); // ended before any re-arm
+}
+
+TEST(StreamRead, PumpDeliversLeftoverStdinAndFrames) {
+    // The exec stdin pump: the stdin bytes go to the transport's exchange
+    // (with an EOF after them), the leftover demuxes first, and the exchanged
+    // frames demux behind it — one demuxer carries the state across, so a
+    // frame split between leftover and exchange reassembles.
+    const std::string body = frame(1, "out") + frame(2, "err");
+    const std::string leftover = body.substr(0, 13); // mid-second-frame-header
+    FakeTransport transport({body.substr(13)});
+
+    std::vector<std::pair<LogSource, std::string>> got;
+    boost::system::error_code wedge_ec;
+    const FollowEnd end = docker::pump_exec_stream(
+        transport, leftover, "stdin-bytes\n",
+        /*tty*/ false,
+        [&](LogSource source, std::string_view data) {
+            got.emplace_back(source, std::string(data));
+            return true;
+        },
+        std::nullopt, wedge_ec);
+
+    EXPECT_EQ(end, FollowEnd::StreamEnded);
+    EXPECT_FALSE(wedge_ec) << wedge_ec.message();
+    EXPECT_EQ(joined(got, LogSource::Stdout), "out");
+    EXPECT_EQ(joined(got, LogSource::Stderr), "err");
+    EXPECT_EQ(transport.written, "stdin-bytes\n");
+    EXPECT_EQ(transport.half_closes, 1);
+}
+
+TEST(StreamRead, PumpConsumerStopReportsIt) {
+    {
+        // Stop on an exchanged chunk.
+        FakeTransport transport({frame(1, "first") + frame(1, "second")});
+        boost::system::error_code wedge_ec;
+        const FollowEnd end = docker::pump_exec_stream(
+            transport, "", "in", /*tty*/ false, [](LogSource, std::string_view) { return false; },
+            std::nullopt, wedge_ec);
+        EXPECT_EQ(end, FollowEnd::ConsumerStopped);
+        EXPECT_FALSE(wedge_ec);
+    }
+    {
+        // Stop on the leftover: the exchange never runs — no stdin goes out.
+        FakeTransport transport({});
+        boost::system::error_code wedge_ec;
+        const FollowEnd end = docker::pump_exec_stream(
+            transport, frame(1, "leftover"), "in", /*tty*/ false,
+            [](LogSource, std::string_view) { return false; }, std::nullopt, wedge_ec);
+        EXPECT_EQ(end, FollowEnd::ConsumerStopped);
+        EXPECT_FALSE(wedge_ec);
+        EXPECT_TRUE(transport.written.empty());
+    }
+}
+
+TEST(StreamRead, PumpExpiredDeadlineDeliversNothing) {
+    FakeTransport transport({frame(1, "never read")});
+
+    const auto deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    bool delivered = false;
+    boost::system::error_code wedge_ec;
+    const FollowEnd end = docker::pump_exec_stream(
+        transport, frame(1, "leftover"), "in",
+        /*tty*/ false,
+        [&](LogSource, std::string_view) {
+            delivered = true;
+            return true;
+        },
+        deadline, wedge_ec);
+
+    EXPECT_EQ(end, FollowEnd::DeadlineExpired);
+    EXPECT_FALSE(wedge_ec);
+    EXPECT_FALSE(delivered);
+    EXPECT_TRUE(transport.written.empty()); // the exchange never started
+}
+
+TEST(StreamRead, PumpTimedOutMapsByDeadline) {
+    {
+        // Under a deadline, a timed-out exchange is the deadline expiring.
+        FailingTransport transport({frame(1, "partial")}, boost::asio::error::timed_out);
+        boost::system::error_code wedge_ec;
+        const FollowEnd end = docker::pump_exec_stream(
+            transport, "", "in", /*tty*/ false, [](LogSource, std::string_view) { return true; },
+            std::chrono::steady_clock::now() + std::chrono::minutes(5), wedge_ec);
+        EXPECT_EQ(end, FollowEnd::DeadlineExpired);
+        EXPECT_FALSE(wedge_ec);
+    }
+    {
+        // Without one, it is the input-phase idle guard: the caller throws.
+        FailingTransport transport({frame(1, "partial")}, boost::asio::error::timed_out);
+        boost::system::error_code wedge_ec;
+        const FollowEnd end = docker::pump_exec_stream(
+            transport, "", "in", /*tty*/ false, [](LogSource, std::string_view) { return true; },
+            std::nullopt, wedge_ec);
+        EXPECT_EQ(wedge_ec, boost::asio::error::timed_out);
+        (void)end; // meaningless with a wedge reported
+    }
 }
 
 TEST(StreamRead, ReportsWhyDeliveryEnded) {

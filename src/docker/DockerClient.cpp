@@ -1004,17 +1004,41 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
     parser.body_limit(boost::none);
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
                    /*accept_upgraded=*/true);
-    // Stdin goes in only AFTER the response header: the connection is now the
-    // raw hijacked stream end to end (see feed_stdin).
-    feed_stdin(*transport, stream, exec_id, opts);
-    // The output completes only when the command exits — it may legitimately
-    // run (and stay silent) for as long as the caller's command takes.
-    transport->set_io_timeout(std::nullopt);
     std::string body;
-    if (parser.get().result_int() == 101) {
+    if (opts.stdin_data && parser.get().result_int() == 101) {
+        // Stdin on the upgraded stream: the write is INTERLEAVED with the
+        // output read (see ITransport::exchange) — a command echoing a large
+        // stdin back cannot backpressure the write into a timeout. The io
+        // deadline bounds input-phase progress inside; once the input is out,
+        // the reads wait as long as the command runs. The header parse may
+        // already have pulled some of the stream into `buffer`.
+        const auto leftover = buffer.data();
+        body.assign(static_cast<const char*>(leftover.data()), leftover.size());
+        transport->exchange(
+            *opts.stdin_data, /*eof_after_input=*/true,
+            [&body](const char* data, std::size_t size) {
+                body.append(data, size);
+                return true;
+            },
+            std::nullopt, ec);
+        // Per the exchange contract, ANY read-side end error — eof, a broken
+        // pipe, a reset (dockerd closing the hijacked socket with our
+        // unconsumed stdin still buffered sends RST) — is the peer finishing;
+        // the exit code comes from the inspect below either way. Only the
+        // input-phase idle guard (timed_out) is a failure, mirroring the
+        // streaming sibling (pump_exec_stream).
+        if (ec == boost::asio::error::timed_out) {
+            transport->close();
+            docker::throw_transport_error(
+                "exec start " + exec_id + " failed to pump stdin/output: " + ec.message(), ec);
+        }
+    } else if (parser.get().result_int() == 101) {
         // Upgraded (the normal path): the exec stream arrives raw on the
         // connection, not as an HTTP body; the header parse may already have
-        // pulled some of it into `buffer`.
+        // pulled some of it into `buffer`. The output completes only when the
+        // command exits — it may legitimately run (and stay silent) for as
+        // long as the caller's command takes.
+        transport->set_io_timeout(std::nullopt);
         const auto leftover = buffer.data();
         body = docker::read_raw_stream(
             *transport,
@@ -1026,6 +1050,11 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
                 ec);
         }
     } else {
+        // A daemon that ignored the upgrade (a plain 200): stdin — when any —
+        // goes in sequentially AFTER the response header (see feed_stdin),
+        // then the output arrives as an ordinary HTTP body.
+        feed_stdin(*transport, stream, exec_id, opts);
+        transport->set_io_timeout(std::nullopt);
         http::read(stream, buffer, parser, ec); // the rest of the body
         if (ec && ec != http::error::end_of_stream) {
             transport->close();
@@ -1096,10 +1125,10 @@ DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::str
 
     // 4) Read the response incrementally, delivering chunks to consumer as they
     //    arrive (mirrors follow_logs). With Tty=false demux frames; with Tty=true
-    //    deliver the raw bytes as a single stdout stream. Stdin goes in only
-    //    AFTER the response header (see feed_stdin), bounded by the deadline's
-    //    remaining budget when one was given; the read loops re-arm that budget
-    //    per read, so the whole delivery is deadline-bounded too.
+    //    deliver the raw bytes as a single stdout stream. Stdin on the upgraded
+    //    stream is INTERLEAVED with the output read (see pump_exec_stream);
+    //    everything after the header is bounded by the deadline when one was
+    //    given.
     boost::beast::flat_buffer buffer;
     http::response_parser<http::buffer_body> parser;
     parser.body_limit(boost::none);
@@ -1107,7 +1136,27 @@ DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::str
     read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
                    /*accept_upgraded=*/true);
     FollowEnd end = FollowEnd::DeadlineExpired; // when already past the deadline
-    if (arm_streaming_deadline(*transport, deadline)) {
+    if (opts.stdin_data && parser.get().result_int() == 101) {
+        if (deadline) {
+            // The absolute deadline is the pump's only bound — a still-armed
+            // io deadline would masquerade as DeadlineExpired.
+            transport->set_io_timeout(std::nullopt);
+        }
+        const auto leftover = buffer.data();
+        boost::system::error_code wedge_ec;
+        end = docker::pump_exec_stream(
+            *transport,
+            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()),
+            *opts.stdin_data, opts.tty, consumer, deadline, wedge_ec);
+        if (wedge_ec) {
+            transport->close();
+            docker::throw_transport_error("exec start " + exec_id +
+                                              " failed to pump stdin/output: " + wedge_ec.message(),
+                                          wedge_ec);
+        }
+    } else if (arm_streaming_deadline(*transport, deadline)) {
+        // No stdin on this path (or a daemon that ignored the upgrade, where
+        // stdin — when any — goes in sequentially; see feed_stdin).
         feed_stdin(*transport, stream, exec_id, opts);
         if (parser.get().result_int() == 101) {
             // Upgraded (the normal path): raw stream, not an HTTP body (see the

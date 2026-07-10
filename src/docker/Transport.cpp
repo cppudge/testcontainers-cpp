@@ -2,6 +2,7 @@
 
 #include "AsioRun.hpp"
 #include "Env.hpp"
+#include "docker/DuplexExchange.hpp"
 #include "docker/TlsConfig.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
@@ -54,7 +55,9 @@ std::chrono::milliseconds remaining(Clock::time_point deadline) {
     return left > std::chrono::milliseconds::zero() ? left : std::chrono::milliseconds::zero();
 }
 
-using detail::run_pending;
+// Explicitly the OUTER detail: docker::detail (DuplexExchange.hpp) would
+// otherwise shadow it from inside namespace testcontainers::docker.
+using testcontainers::detail::run_pending;
 
 /// Deadline-bounded single I/O operation. `initiate(handler)` must start
 /// exactly one async operation on `ioc` completing with (error_code, bytes);
@@ -74,6 +77,8 @@ std::size_t bounded_io(asio::io_context& ioc,
     run_pending(ioc, timeout, done, ec, cancel);
     return bytes;
 }
+
+using detail::duplex_exchange;
 
 /// Resolve host:port within the remaining connect budget. An IP literal skips
 /// the resolver entirely (the common case for a non-localhost DOCKER_HOST).
@@ -182,6 +187,14 @@ public:
         socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
     }
     bool supports_half_close() const noexcept override { return true; }
+    void exchange(std::string_view input, bool eof_after_input, const ChunkSink& on_chunk,
+                  std::optional<std::chrono::steady_clock::time_point> deadline,
+                  boost::system::error_code& ec) override {
+        duplex_exchange(
+            ioc_, socket_, io_timeout_, input, eof_after_input, on_chunk, deadline,
+            [&] { shutdown_send(); }, // synchronous: safe in the pump's outer loop
+            [&] { cancel_pending(); }, ec);
+    }
     void close() override {
         boost::system::error_code ec;
         socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
@@ -402,6 +415,14 @@ public:
         socket_.shutdown(asio::local::stream_protocol::socket::shutdown_send, ec);
     }
     bool supports_half_close() const noexcept override { return true; }
+    void exchange(std::string_view input, bool eof_after_input, const ChunkSink& on_chunk,
+                  std::optional<std::chrono::steady_clock::time_point> deadline,
+                  boost::system::error_code& ec) override {
+        duplex_exchange(
+            ioc_, socket_, io_timeout_, input, eof_after_input, on_chunk, deadline,
+            [&] { shutdown_send(); }, // synchronous: safe in the pump's outer loop
+            [&] { cancel_pending(); }, ec);
+    }
     void close() override {
         boost::system::error_code ec;
         socket_.close(ec);
@@ -523,16 +544,50 @@ public:
         // and in practice the daemon proxy drains its pipe promptly.
         ::FlushFileBuffers(handle_.native_handle());
         // The handle is registered with ioc_'s IOCP, so even this synchronous-
-        // looking write must complete through the io_context: overlapped_ptr
-        // wraps a handler as an OVERLAPPED, and the deadline handling matches
-        // every other operation on this transport.
+        // looking write must complete through the io_context, and the deadline
+        // handling matches every other operation on this transport.
         bool done = false;
         boost::system::error_code ec;
-        asio::windows::overlapped_ptr overlapped(
-            ioc_, [&](const boost::system::error_code& op_ec, std::size_t) {
-                done = true;
-                ec = op_ec;
-            });
+        start_zero_write([&](const boost::system::error_code& op_ec, std::size_t) {
+            done = true;
+            ec = op_ec;
+        });
+        run_pending(ioc_, io_timeout_, done, ec, [&] { cancel_pending(); });
+    }
+    bool supports_half_close() const noexcept override { return message_mode_; }
+    void exchange(std::string_view input, bool eof_after_input, const ChunkSink& on_chunk,
+                  std::optional<std::chrono::steady_clock::time_point> deadline,
+                  boost::system::error_code& ec) override {
+        duplex_exchange(
+            ioc_, handle_, io_timeout_, input, eof_after_input, on_chunk, deadline,
+            [&] {
+                // The pump-safe sibling of shutdown_send(): flush, then only
+                // INITIATE the zero-length EOF message — the pump owns the
+                // event loop, and shutdown_send's nested run_pending would
+                // replay the pump's read chain until the io deadline drained
+                // (see duplex_exchange). Fire-and-forget: the completion is
+                // executed (and on failure discarded) by the pump's own loop
+                // or its final drain.
+                if (!message_mode_) {
+                    return; // unreachable behind the half-close guard
+                }
+                ::FlushFileBuffers(handle_.native_handle()); // see shutdown_send
+                start_zero_write([](const boost::system::error_code&, std::size_t) {});
+            },
+            [&] { cancel_pending(); }, ec);
+    }
+    void close() override {
+        boost::system::error_code ec;
+        handle_.close(ec);
+    }
+
+private:
+    /// Initiate the zero-length EOF message (an overlapped WriteFile posting
+    /// its completion into ioc_'s IOCP) completing into `handler`. Shared by
+    /// shutdown_send — which then drives the io_context until it lands — and
+    /// the pump path, which leaves the completion to the pump's event loop.
+    template <class Handler> void start_zero_write(Handler handler) {
+        asio::windows::overlapped_ptr overlapped(ioc_, std::move(handler));
         const BOOL ok = ::WriteFile(handle_.native_handle(), "", 0, /*bytes written*/ nullptr,
                                     overlapped.get());
         const DWORD last_error = ::GetLastError();
@@ -546,15 +601,8 @@ public:
             // OVERLAPPED now and posts the completion to ioc_.
             overlapped.release();
         }
-        run_pending(ioc_, io_timeout_, done, ec, [&] { cancel_pending(); });
-    }
-    bool supports_half_close() const noexcept override { return message_mode_; }
-    void close() override {
-        boost::system::error_code ec;
-        handle_.close(ec);
     }
 
-private:
     void cancel_pending() {
         boost::system::error_code ignore;
         handle_.cancel(ignore);
@@ -597,14 +645,14 @@ std::string docker_cert_path() {
     // Docker's documented fallback: when verification is on but no explicit cert
     // path is set, look in ~/.docker.
     if (docker_tls_verify()) {
-        if (const std::string home = detail::home_dir(); !home.empty()) {
+        if (const std::string home = testcontainers::detail::home_dir(); !home.empty()) {
             return (std::filesystem::path(home) / ".docker").string();
         }
     }
     return {};
 }
 
-bool docker_tls_verify() { return detail::env_truthy("DOCKER_TLS_VERIFY"); }
+bool docker_tls_verify() { return testcontainers::detail::env_truthy("DOCKER_TLS_VERIFY"); }
 
 void throw_transport_error(const std::string& message, const boost::system::error_code& ec) {
     if (ec == asio::error::timed_out) {

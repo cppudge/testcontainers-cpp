@@ -152,7 +152,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `logs()` | ✅ | ✅ | ✅ ContainerConfig.*, Tty.LogsAreRawNotFramed | ✅ WindowsContainer.EchoExitsWithExpectedLogs, WindowsBuildImage.* |
 | `follow_logs()` | ✅ | ✅ | ✅ Tty.FollowLogsDeliversRaw | ❌ |
 | `exec(cmd)` | ✅ | ✅ | ✅ Exec.CapturesStdoutAndZeroExit | ✅ WindowsContainer.ExecRunsInRunningContainer |
-| `exec(cmd, opts)` | ✅ | ✅ | ✅ Exec.PassesEnv/UsesWorkingDir/RunsAsUser/TtyCapturesRawStdout/FeedsStdin | ✅ WindowsExec.* |
+| `exec(cmd, opts)` | ✅ | ✅ | ✅ Exec.PassesEnv/UsesWorkingDir/RunsAsUser/TtyCapturesRawStdout/FeedsStdin/LargeStdinEchoRoundTrip | ✅ WindowsExec.* |
 | `exec(cmd, opts, consumer)` | ✅ | ✅ | ✅ Exec.StreamsOutputIncrementally, Exec.StreamingStopsWhenConsumerReturnsFalse | ✅ WindowsExec.StreamsOutputIncrementally, WindowsExec.StreamingStopsWhenConsumerReturnsFalse |
 | `exec(cmd, opts, consumer, deadline)` | ✅ | ✅ | ✅ Exec.DeadlineBoundedStreamingReportsExpiry, Exec.DeadlineBoundedStreamingCompletesInTime | ✅ WindowsExec.DeadlineBoundedStreamingReportsExpiry |
 | `copy_to(source)` | ✅ | ✅ [b] | ✅ Copy.CopyIntoRunningContainer | ✅ WindowsCopy.CopyIntoRunningContainer |

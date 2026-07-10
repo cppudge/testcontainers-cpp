@@ -258,6 +258,7 @@ if(BUILD_TESTING)
         tests/unit/StreamReadTest.cpp
         tests/unit/TransportTimeoutTest.cpp
         tests/unit/TransportHalfCloseTest.cpp
+        tests/unit/TransportExchangeTest.cpp
         tests/unit/ExecWireTest.cpp
         tests/unit/ErrorModelTest.cpp
         tests/unit/PullRetryTest.cpp

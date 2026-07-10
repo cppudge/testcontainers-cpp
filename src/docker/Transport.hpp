@@ -1,11 +1,15 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/system_error.hpp>
 
@@ -53,6 +57,67 @@ public:
     /// Callers that NEED the EOF signal (exec stdin) should fail loudly instead
     /// of hanging when this is false.
     virtual bool supports_half_close() const noexcept = 0;
+
+    /// Receives one arriving chunk of an exchange(); return false to stop.
+    using ChunkSink = std::function<bool(const char* data, std::size_t size)>;
+
+    /// Full-duplex exchange on a hijacked stream (the exec-attach pump): send
+    /// all of `input` — half-closing after it when `eof_after_input` — while
+    /// delivering every arriving chunk to `on_chunk`, until the peer ends the
+    /// stream, `on_chunk` declines more, or time runs out. The concrete
+    /// transports override this with a genuinely INTERLEAVED pump (both
+    /// directions in flight at once, so a peer that echoes a large `input`
+    /// back cannot wedge the send side); this base implementation is the
+    /// sequential fallback — write, half-close, then read — for fakes and for
+    /// transports the pump cannot reach (TLS cannot half-close, so exec-stdin
+    /// is rejected upstream).
+    ///
+    /// Outcome reporting, identical across implementations: `ec` is empty
+    /// after a consumer stop; the read side's end error (eof / broken_pipe /
+    /// a reset) when the peer finished — callers normalize it exactly like a
+    /// plain read loop's; asio timed_out when `deadline` passed or (while the
+    /// input was still going out) the io deadline saw no progress. A send-side
+    /// error alone never sets `ec`: the peer may legitimately finish — or
+    /// exit — without consuming all of its stdin, and the read side then
+    /// reports the real outcome.
+    virtual void exchange(std::string_view input, bool eof_after_input, const ChunkSink& on_chunk,
+                          std::optional<std::chrono::steady_clock::time_point> deadline,
+                          boost::system::error_code& ec) {
+        ec = {};
+        boost::system::error_code send_ec;
+        std::size_t sent = 0;
+        while (sent < input.size() && !send_ec) {
+            const std::size_t n = write_some(input.data() + sent, input.size() - sent, send_ec);
+            if (n == 0 && !send_ec) {
+                send_ec = boost::asio::error::broken_pipe; // a 0-byte success would spin
+            }
+            sent += n;
+        }
+        if (!send_ec && eof_after_input) {
+            shutdown_send();
+        }
+        std::array<char, 8192> buf{};
+        for (;;) {
+            if (deadline) {
+                const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    *deadline - std::chrono::steady_clock::now());
+                if (left <= std::chrono::milliseconds::zero()) {
+                    ec = boost::asio::error::timed_out;
+                    return;
+                }
+                set_io_timeout(left);
+            }
+            const std::size_t n = read_some(buf.data(), buf.size(), ec);
+            if (n != 0 && !on_chunk(buf.data(), n)) {
+                ec = {};
+                return; // the consumer asked to stop: a clean end
+            }
+            if (ec) {
+                return; // peer end (eof / broken_pipe), reset, or timed_out
+            }
+        }
+    }
+
     virtual void close() = 0;
 };
 

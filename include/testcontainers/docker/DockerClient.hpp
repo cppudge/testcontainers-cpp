@@ -376,9 +376,10 @@ public:
     /// Deadline
     /// mechanics match the follow_logs overload: connecting, the create/start
     /// round-trips, and reading the response header run under the transport's
-    /// io deadline, so an expiry there surfaces as TransportTimeoutError (as
-    /// does a deadline cutting a stalled stdin write short), not as
-    /// DeadlineExpired. `opts.detach` is rejected like the overload above.
+    /// io deadline, so an expiry there surfaces as TransportTimeoutError, not
+    /// as DeadlineExpired; everything after the header — the stdin writes
+    /// included — is the deadline's. `opts.detach` is rejected like the
+    /// overload above.
     ExecStreamResult exec(const std::string& id, const std::vector<std::string>& cmd,
                           const ExecOptions& opts, const LogConsumer& consumer,
                           std::chrono::steady_clock::time_point deadline);

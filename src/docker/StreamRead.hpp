@@ -141,6 +141,56 @@ inline std::string read_raw_stream(ITransport& transport, std::string_view lefto
     return out;
 }
 
+/// Exec-attach pump for a hijacked (101-upgraded) stream WITH stdin: hand the
+/// transport the stdin bytes to write (half-closing after them) INTERLEAVED
+/// with the output read — see ITransport::exchange — delivering each arriving
+/// chunk to `consumer` (`leftover`, already in memory, first), demuxing
+/// unless `tty`. A command that echoes a large stdin back can no longer
+/// backpressure the write into a timeout. End reporting mirrors
+/// stream_raw_to_consumer: read errors (the stream ending, a reset) are
+/// StreamEnded, an expired `deadline` is DeadlineExpired (nothing delivered
+/// when it was already past at entry). `wedge_ec` is set — and the FollowEnd
+/// meaningless — ONLY when the exchange timed out with NO deadline given:
+/// the input-phase idle guard tripped (a peer consuming neither direction),
+/// which the caller reports as its transport error.
+inline FollowEnd pump_exec_stream(ITransport& transport, std::string_view leftover,
+                                  std::string_view stdin_data, bool tty,
+                                  const LogConsumer& consumer,
+                                  std::optional<std::chrono::steady_clock::time_point> deadline,
+                                  boost::system::error_code& wedge_ec) {
+    wedge_ec = {};
+    LogDemuxer demuxer;
+    if (deadline && *deadline <= std::chrono::steady_clock::now()) {
+        return FollowEnd::DeadlineExpired;
+    }
+    if (!leftover.empty() && !detail::deliver_chunk(demuxer, leftover, tty, consumer)) {
+        return FollowEnd::ConsumerStopped;
+    }
+    bool stopped = false;
+    boost::system::error_code ec;
+    transport.exchange(
+        stdin_data, /*eof_after_input=*/true,
+        [&](const char* data, std::size_t size) {
+            if (!detail::deliver_chunk(demuxer, std::string_view(data, size), tty, consumer)) {
+                stopped = true;
+                return false;
+            }
+            return true;
+        },
+        deadline, ec);
+    if (stopped) {
+        return FollowEnd::ConsumerStopped;
+    }
+    if (ec == boost::asio::error::timed_out) {
+        if (deadline) {
+            return FollowEnd::DeadlineExpired;
+        }
+        wedge_ec = ec; // the input-phase idle guard: the caller throws
+        return FollowEnd::StreamEnded;
+    }
+    return FollowEnd::StreamEnded; // eof / broken_pipe / reset: the stream is over
+}
+
 /// Streaming sibling of read_raw_stream: deliver a hijacked (101-upgraded)
 /// stream to `consumer` chunk by chunk (`leftover` first), demuxing unless
 /// `tty`. Any read error — the stream ending, the daemon resetting it — ends

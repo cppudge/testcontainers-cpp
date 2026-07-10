@@ -24,6 +24,7 @@
 //   ExecWire.UpgradedStreamReadsRaw - a 101 reply routes the output through the raw read path: frames arriving with (or after) the 101 header are demuxed, not parsed as an HTTP body.
 //   ExecWire.DeadlineOverloadReportsExitCodeWhenFinished - the deadline overload delivers the stream, reports StreamEnded, and carries the exit code the inspect returned for the finished command.
 //   ExecWire.DeadlineOverloadNoExitCodeWhileRunning - after an early consumer stop with the command still running, the inspect's null ExitCode reads as "no exit code" (never a parse error or a fake 0) and the result says ConsumerStopped.
+//   ExecWire.DeadlineOverloadWithStdinPumps - stdin + deadline on the upgraded stream rides the interleaved pump end to end: the output demuxes to the consumer, the server absorbs the stdin, and the result carries StreamEnded plus the inspect's exit code.
 //   ExecWire.StreamingConsumerStopReadsExitZeroWhileRunning - the plain streaming overload keeps its historical contract through the shared-impl rewire: a still-running command after an early stop reads as exit code 0.
 
 namespace {
@@ -276,6 +277,35 @@ TEST(ExecWire, DeadlineOverloadNoExitCodeWhileRunning) {
 
     EXPECT_EQ(res.end, testcontainers::FollowEnd::ConsumerStopped);
     EXPECT_FALSE(res.exit_code.has_value());
+}
+
+TEST(ExecWire, DeadlineOverloadWithStdinPumps) {
+    // stdin + deadline on the upgraded stream rides the interleaved pump end
+    // to end: output demuxed to the consumer, stdin absorbed by the server
+    // (the "" script entry), exit code from the inspect.
+    CannedHttpServer server(std::vector<std::vector<std::string>>{
+        {upgraded_with(frame(1, "pumped")), ""},
+        {ping_ok()},
+        {exec_created()},
+        {http_response(200, "OK", R"({"Running":false,"ExitCode":0})")},
+    });
+    DockerClient client = fast_client(server);
+
+    ExecOptions opts;
+    opts.stdin_data = "ping\n";
+    std::string collected;
+    const testcontainers::ExecStreamResult res = client.exec(
+        "abc", {"cat"}, opts,
+        [&](LogSource, std::string_view data) {
+            collected.append(data);
+            return true;
+        },
+        std::chrono::steady_clock::now() + std::chrono::minutes(5));
+
+    EXPECT_EQ(res.end, testcontainers::FollowEnd::StreamEnded);
+    ASSERT_TRUE(res.exit_code.has_value());
+    EXPECT_EQ(*res.exit_code, 0);
+    EXPECT_EQ(collected, "pumped");
 }
 
 TEST(ExecWire, StreamingConsumerStopReadsExitZeroWhileRunning) {

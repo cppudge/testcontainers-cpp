@@ -34,6 +34,8 @@
 //   Exec.DeadlineBoundedStreamingReportsExpiry - a silent command outliving the deadline ends delivery with DeadlineExpired and no exit code (the command keeps running), long before the command's own runtime.
 //   Exec.DeadlineBoundedStreamingCompletesInTime - a command finishing before the deadline streams its output, reports StreamEnded, and carries its real exit code.
 //   Exec.FeedsStdin - ExecOptions.stdin_data is piped to the command's stdin and read back (cat -> "ping"); runs on unix socket, TCP, AND the Windows named pipe (zero-length-message EOF); skipped on TLS (no half-close).
+//   Exec.LargeStdinEchoRoundTrip - an 8 MiB stdin round-trips through `cat` byte-identically: possible only because the stdin write is INTERLEAVED with the output read (sequential feeding wedged on daemon-side backpressure in well under 1 MiB); skipped on TLS.
+//   Exec.StdinToEarlyExitingCommandStillReportsExit - a command that exits without reading its multi-megabyte stdin ends as a NORMAL exec (exit code delivered, no exception): the daemon's hijack teardown with unconsumed stdin must read as a clean stream end; skipped on TLS.
 //   Exec.StdinThrowsOnNonHalfClosableTransport - on the TLS transport, exec with stdin_data throws DockerError up front instead of hanging the reader; skipped on transports that half-close.
 //   Exec.PrivilegedExecExpandsCapabilities - ExecOptions.privileged grants the exec process a strict superset of the unprivileged exec's effective capabilities.
 //   Exec.DetachedRunsInBackground - detach=true returns a default ExecResult (empty output, exit 0) and the command really runs: its marker file appears when polled.
@@ -219,6 +221,53 @@ TEST_F(Exec, FeedsStdin) {
     const ExecResult res = c.exec({"cat"}, opts);
     EXPECT_NE(res.stdout_data.find("ping"), std::string::npos) << "stdout was: " << res.stdout_data;
     EXPECT_EQ(res.exit_code, 0);
+}
+
+TEST_F(Exec, LargeStdinEchoRoundTrip) {
+    const DockerScheme scheme = DockerClient::from_environment().host().scheme();
+    if (scheme == DockerScheme::Https) {
+        GTEST_SKIP(); // exec-stdin needs a half-closable transport; TLS cannot signal EOF
+    }
+
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // 8 MiB is far beyond the socket/pipe buffering on every hop, so this
+    // round-trip completes only because the stdin write is INTERLEAVED with
+    // the output read: `cat` echoes as it reads, and with the historical
+    // write-everything-first sequencing the echo backpressured the write into
+    // an io-deadline timeout after well under 1 MiB. The pattern (no relation
+    // to any power of two) would catch dropped or reordered chunks.
+    std::string big(std::size_t{8} * 1024 * 1024, '\0');
+    for (std::size_t i = 0; i < big.size(); ++i) {
+        big[i] = static_cast<char>('a' + static_cast<char>(i % 23));
+    }
+    ExecOptions opts;
+    opts.stdin_data = big;
+    const ExecResult res = c.exec({"cat"}, opts);
+
+    EXPECT_EQ(res.exit_code, 0);
+    ASSERT_EQ(res.stdout_data.size(), big.size());
+    EXPECT_TRUE(res.stdout_data == big); // EQ would dump 8 MiB on a failure
+}
+
+TEST_F(Exec, StdinToEarlyExitingCommandStillReportsExit) {
+    const DockerScheme scheme = DockerClient::from_environment().host().scheme();
+    if (scheme == DockerScheme::Https) {
+        GTEST_SKIP(); // exec-stdin needs a half-closable transport; TLS cannot signal EOF
+    }
+
+    Container c = GenericImage("alpine", "3.20").with_cmd({"sleep", "60"}).start();
+
+    // The command exits without reading a byte of its 4 MiB stdin — with the
+    // interleaved pump most of the input is still unconsumed daemon-side when
+    // the exec dies. The daemon's teardown of the hijacked stream must still
+    // read as a normal end: exit code delivered, no exception.
+    ExecOptions opts;
+    opts.stdin_data = std::string(std::size_t{4} * 1024 * 1024, 'x');
+    const ExecResult res = c.exec({"sh", "-c", "exit 7"}, opts);
+
+    EXPECT_EQ(res.exit_code, 7);
+    EXPECT_TRUE(res.stdout_data.empty());
 }
 
 TEST_F(Exec, StdinThrowsOnNonHalfClosableTransport) {

@@ -154,15 +154,14 @@ pseudo-TTY rewrites `\n` → `\r\n`, so match substrings, not exact lines.
 
 **Exec** — `ExecOptions` (env / working_dir / user / privileged / tty / stdin_data / detach)
 plus a streaming overload (`exec(cmd, opts, consumer)`) and its deadline-bounded variant
-(`exec(cmd, opts, consumer, deadline)` → `ExecStreamResult`): the stdin writes and the wait
-for each next output chunk are bounded by the absolute deadline (the named-pipe half-close
-flush in the stdin EOF below is the one step no deadline can bound), and the result says WHY
-delivery ended (`FollowEnd`) plus the exit code — present only when the command had finished,
-because closing the attach stream does not kill it (a command cut off by the deadline keeps
-running in the container; nothing in the Engine API kills an exec). An expiry while
-connecting / creating / starting (or a deadline cutting a stalled stdin write short) surfaces
-as `TransportTimeoutError` instead — `DeadlineExpired` is reported once output could flow.
-`detach` is fire-and-forget
+(`exec(cmd, opts, consumer, deadline)` → `ExecStreamResult`): everything after the start
+response's header — the stdin writes included — is bounded by the absolute deadline (the
+named-pipe half-close flush below is the one step no deadline can bound), and the result says
+WHY delivery ended (`FollowEnd`) plus the exit code — present only when the command had
+finished, because closing the attach stream does not kill it (a command cut off by the
+deadline keeps running in the container; nothing in the Engine API kills an exec). An expiry
+while connecting / creating / starting surfaces as `TransportTimeoutError` instead —
+`DeadlineExpired` is reported once output could flow. `detach` is fire-and-forget
 (`docker exec -d`): create + start as two plain round-trips (nothing attached, no
 upgrade/hijack, no exec-inspect), the result keeps its defaults (empty output, exit_code 0 —
 the command is still running, and a command that fails inside the container surfaces no
@@ -173,12 +172,18 @@ docker-CLI parity, needed twice over: Docker Desktop's named-pipe proxy drops cl
 sent after the POST on a non-upgraded connection (stdin would be lost), and some daemons never
 terminate a non-upgraded exec-start response at all (observed on a Windows-containers 29.1.5:
 output arrived, the EOF never did — CI hang pinned by a procdump stack). A daemon that ignores
-the upgrade answers 200 and the HTTP-body read handles it. Stdin is fed only AFTER the
-response header. Stdin EOF:
+the upgrade answers 200 and the HTTP-body read handles it (stdin then goes in sequentially
+after the header — the pre-2026-07-11 behavior). On the upgraded stream, stdin (fed only
+AFTER the response header) is INTERLEAVED with the output read — one full-duplex pump on the
+transport's event loop — so a command echoing a multi-megabyte stdin back cannot backpressure
+the write into a timeout; while stdin is still going out, the io deadline guards against a
+peer consuming NEITHER direction, and once it is out, reads wait as long as the command runs.
+Stdin EOF:
 TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirrors go-winio's
 `CloseWrite` (flush, then a zero-length message — message-mode pipes only, which is what every
-real daemon serves); TLS cannot half-close, so exec-with-stdin throws up front there (Go's
-`tls.Conn` cannot either — the docker CLI hangs where we throw).
+real daemon serves; inside the pump the flush also pauses output reads while it blocks); TLS
+cannot half-close, so exec-with-stdin throws up front there (Go's `tls.Conn` cannot either —
+the docker CLI hangs where we throw).
 
 **Copy to / from container** — `CopyToContainer` (host file, in-memory bytes, or a recursive
 host directory; `with_mode` applies to file entries) is PUT as a pax(restricted) tar — plain
