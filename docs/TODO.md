@@ -39,10 +39,9 @@ restart policy, dns, sysctls, devices, pids-limit setters + surfacing those fiel
   `DockerComposeContainer`'s own TCP probe still uses a synchronous `connect` (OS-bounded).
   (`src/docker/Transport.*`, `src/WaitStrategies.cpp`)
 - **Ryuk gaps** — no graceful in-process reaper shutdown (relies on process-exit closing each
-  control socket); daemons are keyed by endpoint URL, so two URL spellings of the same daemon
-  (`tcp://localhost` vs `tcp://127.0.0.1`) boot two harmless reapers. A real Windows Ryuk
-  (named-pipe mount + Windows reaper image) is unexplored — the feasibility notes lived in
-  docs/04, removed at v0.1.0 (git history). (`src/Reaper.*`)
+  control socket). A real Windows Ryuk (named-pipe mount + Windows reaper image) is
+  unexplored — the feasibility notes lived in docs/04, removed at v0.1.0 (git history).
+  (`src/Reaper.*`)
 - **Wait-probe connection cost** — port/http wait probes open a fresh TCP connection +
   `io_context` per probe (fine at 200ms polling; revisit if probe frequency ever increases).
   (`src/WaitStrategies.cpp`)
@@ -78,11 +77,6 @@ restart policy, dns, sysctls, devices, pids-limit setters + surfacing those fiel
   the raw sink overload + own untar); per-source error attribution is coarser in a batched
   copy (the context names the source COUNT; host-read failures still name the file).
   (`src/docker/DockerClient.cpp`, `src/docker/Tar.cpp`)
-- **Reuse freshness is metadata-based** — host-path copy-to sources hash size+mtime per
-  file (full content hashing stays rejected — it would re-read the whole tree on every
-  start), so an edit that preserves BOTH size and mtime (deliberate timestamp reset) still
-  adopts the stale container; a stale reuse container also lingers after any hash change
-  until pruned externally. (`src/Runner.cpp`)
 - **Credential helpers** — the config file is still re-read on every pull (only the helper
   subprocess outcome is cached, 5-min TTL since 2026-07-10); no end-to-end private-registry
   integration test against a real authenticated registry (a `registry:2` + htpasswd fixture
