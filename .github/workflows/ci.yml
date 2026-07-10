@@ -222,18 +222,24 @@ jobs:
           done
           [ -n "$ok" ] || { echo "::error::dind TLS endpoint never became ready"; docker logs dind; exit 1; }
 
-      # Compose is excluded: its tests drive the docker CLI, which cannot take
-      # an https:// DOCKER_HOST (compose coverage lives in the plain-transport
-      # jobs). Exec-stdin tests self-skip on TLS (no half-close) — and their
-      # TLS-only sibling (StdinThrowsOnNonHalfClosableTransport) runs ONLY
-      # here, so this job adds coverage the other jobs skip.
+      # Exclusions, each a dind/TLS property rather than a library gap:
+      # - Compose.*: its tests drive the docker CLI, which cannot take an
+      #   https:// DOCKER_HOST (compose coverage lives in the plain jobs).
+      # - ContainerConfig.BindMountReadOnly: a bind mount resolves on the
+      #   DAEMON's filesystem — dind's own, not the runner's, so the mounted
+      #   host dir comes up empty (every local-daemon job covers this test).
+      # Exec-stdin tests self-skip on TLS (no half-close) — and their TLS-only
+      # sibling (StdinThrowsOnNonHalfClosableTransport) runs ONLY here, so
+      # this job adds coverage the other jobs skip.
       - name: Integration tests (mutual TLS)
         timeout-minutes: 25
         env:
           DOCKER_HOST: https://docker:2376
           DOCKER_TLS_VERIFY: '1'
           DOCKER_CERT_PATH: ${{ github.workspace }}/dind-certs/client
-        run: ./build/ninja/bin/tc_integration_tests --gtest_filter='-Compose.*'
+        run: >
+          ./build/ninja/bin/tc_integration_tests
+          --gtest_filter='-Compose.*:ContainerConfig.BindMountReadOnly'
 
       - name: dind daemon log (on failure)
         if: failure()
