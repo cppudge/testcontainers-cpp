@@ -243,6 +243,8 @@ row's Windows column is n/a for that reason.
 | `with_exposed_service` (+ per-instance overload) | ✅ | n/a | ✅ Compose.* (per-instance: ScaleRunsTwoInstances) | n/a |
 | `with_profile` | ✅ | n/a | ✅ Compose.ProfileGatesService (gated service down without / up with; profile-aware teardown) | n/a |
 | `with_scale` | ✅ | n/a | ✅ Compose.ScaleRunsTwoInstances (two live instances, distinct ports, PING both) | n/a |
+| `with_ambassador` | ✅ | n/a | ✅ Compose.AmbassadorReachesUnpublishedPort (PONG through the relay; service publishes nothing; network removed cleanly) | n/a |
+| `with_ambassador_image` | ✅ | n/a | ❌ (default alpine/socat:1.8.0.3 used) | n/a |
 | `with_project_name` | ✅ | n/a | ❌ | n/a |
 | `with_compose_image` | ✅ | n/a | ❌ (default docker:26.1-cli used) | n/a |
 | `with_env` / `with_env_vars` | ✅ | n/a | ❌ | n/a |

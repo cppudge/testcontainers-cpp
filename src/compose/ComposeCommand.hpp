@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "testcontainers/ContainerPort.hpp"
+
 // Pure, daemon-free compose command model + argv builders.
 //
 // These structs describe a `docker compose up` / `down` invocation in the
@@ -81,5 +83,24 @@ std::string shell_quote_assignment(const std::string& key, const std::string& va
 /// Pure — unit-testable without a daemon.
 std::string build_env_wrapped_script(const std::vector<std::string>& argv,
                                      const std::vector<std::pair<std::string, std::string>>& env);
+
+/// One socat relay inside the ambassador container: listen on `listen_port`
+/// (the ambassador's own, published to the host) and forward every connection
+/// to `service`:`service_port` over the compose network (the service name is
+/// compose-network DNS).
+struct AmbassadorTarget {
+    std::string service;
+    ContainerPort service_port;
+    ContainerPort listen_port;
+};
+
+/// Assemble the /bin/sh -c script running one backgrounded socat per target
+/// plus a trailing `wait` (keeps the container alive; `fork` serves any number
+/// of connections; `reuseaddr` survives quick restarts). TCP targets relay
+/// TCP-LISTEN -> TCP, UDP targets UDP-LISTEN -> UDP; a target's listen and
+/// service ports share the protocol by construction. Service names are
+/// library-controlled compose identifiers (no shell metacharacters), emitted
+/// verbatim. Pure — unit-testable without a daemon.
+std::string build_socat_script(const std::vector<AmbassadorTarget>& targets);
 
 } // namespace testcontainers::compose

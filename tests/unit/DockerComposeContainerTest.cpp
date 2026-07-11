@@ -25,6 +25,7 @@
 //   DockerComposeContainer.ProfilesAccumulateInOrder - profiles() is empty by default; with_profile appends in call order (rvalue chaining included).
 //   DockerComposeContainer.ScalesLastValueWinsPerService - scales() is empty by default; with_scale records per service and the last value wins.
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
+//   DockerComposeContainer.AmbassadorGetters - ambassadors() is empty by default with the pinned socat image; with_ambassador accumulates (dedup is start()'s job) and with_ambassador_image overrides the image.
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws, on the plain, indexed, instance-list, and log accessors alike.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
@@ -154,6 +155,23 @@ TEST(DockerComposeContainer, FlagGetters) {
     EXPECT_EQ(compose.wait_timeout(), std::chrono::seconds(120));
     EXPECT_FALSE(compose.remove_volumes());
     EXPECT_TRUE(compose.remove_images());
+}
+
+TEST(DockerComposeContainer, AmbassadorGetters) {
+    {
+        const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+        EXPECT_TRUE(compose.ambassadors().empty());
+        EXPECT_EQ(compose.ambassador_image(), "alpine/socat:1.8.0.3");
+    }
+
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n")
+                                               .with_ambassador("db", tcp(5432))
+                                               .with_ambassador("db", tcp(5432))
+                                               .with_ambassador_image("alpine/socat:custom");
+    ASSERT_EQ(compose.ambassadors().size(), 2u); // recorded verbatim; start() dedups
+    EXPECT_EQ(compose.ambassadors().front().first, "db");
+    EXPECT_EQ(compose.ambassadors().front().second, tcp(5432));
+    EXPECT_EQ(compose.ambassador_image(), "alpine/socat:custom");
 }
 
 TEST(DockerComposeContainer, UnknownServiceThrows) {

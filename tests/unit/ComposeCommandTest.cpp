@@ -23,6 +23,7 @@
 //   ComposeCommand.ShellQuoteAssignment - KEY='value' assignments quote the value only.
 //   ComposeCommand.EnvWrappedScriptPrefixesAssignments - build_env_wrapped_script emits the env assignments before the quoted argv, all shell-quoted (spaces/quotes survive).
 //   ComposeCommand.EnvWrappedScriptEmptyEnvIsJustArgv - with no env the script is just the quoted argv.
+//   ComposeCommand.SocatScriptOneRelayPerTarget - build_socat_script backgrounds one socat per target (TCP and UDP variants) and ends with `wait`.
 
 using namespace testcontainers::compose;
 
@@ -253,4 +254,18 @@ TEST(ComposeCommand, EnvWrappedScriptPrefixesAssignments) {
 TEST(ComposeCommand, EnvWrappedScriptEmptyEnvIsJustArgv) {
     EXPECT_EQ(build_env_wrapped_script({"docker", "compose", "version"}, {}),
               "'docker' 'compose' 'version'");
+}
+
+TEST(ComposeCommand, SocatScriptOneRelayPerTarget) {
+    using testcontainers::tcp;
+    using testcontainers::udp;
+
+    const std::string script = build_socat_script({
+        {"redis", tcp(6379), tcp(2000)},
+        {"dns", udp(53), udp(2001)},
+    });
+    // One backgrounded relay per target — the trailing `wait` keeps the
+    // container alive as long as any relay runs.
+    EXPECT_EQ(script, "socat TCP-LISTEN:2000,fork,reuseaddr TCP:redis:6379 & "
+                      "socat UDP-LISTEN:2001,fork,reuseaddr UDP:dns:53 & wait");
 }

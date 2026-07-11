@@ -360,7 +360,14 @@ fixed one collides across instances). Per-service logs (2026-07-11):
 `get_service_logs` (snapshot) and `follow_service_logs` (blocking or
 deadline-bounded, per-instance forms included) delegate to the Engine-API log
 endpoints over the discovered container id, so they work identically under
-every client mode.
+every client mode. Unpublished ports (2026-07-11): `with_ambassador(service,
+port)` starts ONE socat relay container (default `alpine/socat:1.8.0.3`,
+`with_ambassador_image` overrides) on the compose project network, publishing
+an ephemeral port per target; `get_service_port` transparently resolves
+registered pairs to the relay. Teardown removes the relay BEFORE `down` — a
+foreign endpoint would block the project network's removal. Service-level by
+design (compose DNS; scaled services round-robin per connection), one shared
+network per relay, and a TCP probe on a relay port proves only the relay.
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running

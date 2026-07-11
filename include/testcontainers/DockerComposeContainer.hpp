@@ -107,6 +107,29 @@ public:
     DockerComposeContainer& with_scale(std::string service, int instances) &;
     DockerComposeContainer&& with_scale(std::string service, int instances) &&;
 
+    /// Reach `service`'s `port` from the host WITHOUT the service publishing
+    /// it: start() brings up one extra "ambassador" container (a socat relay,
+    /// see with_ambassador_image) joined to the compose project network, with
+    /// an ephemeral published port forwarding to `service`:`port` over the
+    /// network. `get_service_port(service, port)` then transparently resolves
+    /// to the ambassador's published port. Repeatable — all targets share the
+    /// one ambassador container.
+    ///
+    /// Limits: the forward targets the SERVICE name (compose-network DNS), so
+    /// a scaled service is reached round-robin per connection — per-instance
+    /// targeting needs published ports; every target must live on one shared
+    /// project network; and a with_exposed_service TCP probe on an ambassador
+    /// port only proves the RELAY is listening (socat accepts, then dials the
+    /// service per connection) — gate real readiness on compose `--wait` /
+    /// healthchecks or your own round-trip.
+    DockerComposeContainer& with_ambassador(std::string service, ContainerPort port) &;
+    DockerComposeContainer&& with_ambassador(std::string service, ContainerPort port) &&;
+
+    /// Override the socat relay image used by with_ambassador
+    /// (default: "alpine/socat:1.8.0.3").
+    DockerComposeContainer& with_ambassador_image(std::string image) &;
+    DockerComposeContainer&& with_ambassador_image(std::string image) &&;
+
     /// Activate a compose profile (repeatable). Services carrying `profiles:`
     /// in the YAML only start when one of their profiles is active; profile-less
     /// services always start. The profiles stay active for the teardown `down`
@@ -125,8 +148,8 @@ public:
     DockerComposeContainer& with_project_name(std::string name) &;
     DockerComposeContainer&& with_project_name(std::string name) &&;
 
-    /// Override the containerised ambassador image (default: "docker:26.1-cli").
-    /// Ignored by the Local client.
+    /// Override the containerised client's long-lived cli image
+    /// (default: "docker:26.1-cli"). Ignored by the Local client.
     DockerComposeContainer& with_compose_image(std::string image) &;
     DockerComposeContainer&& with_compose_image(std::string image) &&;
 
@@ -181,8 +204,10 @@ public:
     std::string get_service_host(const std::string& service) const;
 
     /// The published host port mapping `service`'s container `port` (IPv4-pref),
-    /// on the first (lowest-numbered) instance. Throws if the service is
-    /// unknown or the port isn't published.
+    /// on the first (lowest-numbered) instance. A (service, port) pair
+    /// registered via with_ambassador resolves to the ambassador's published
+    /// relay port instead. Throws if the service is unknown or the port isn't
+    /// published.
     std::uint16_t get_service_port(const std::string& service, ContainerPort port) const;
 
     /// The published host port mapping container `port` on instance `instance`
@@ -271,6 +296,14 @@ public:
     /// The requested per-service instance counts (service -> n).
     const std::map<std::string, int>& scales() const noexcept { return scales_; }
 
+    /// The registered ambassador targets, in the order added.
+    const std::vector<std::pair<std::string, ContainerPort>>& ambassadors() const noexcept {
+        return ambassadors_;
+    }
+
+    /// The socat relay image with_ambassador uses.
+    const std::string& ambassador_image() const noexcept { return ambassador_image_; }
+
     /// `--build` flag.
     bool build() const noexcept { return build_; }
     /// `--pull always` flag.
@@ -315,11 +348,14 @@ private:
 
     std::vector<std::string> compose_files_; ///< host compose files
     std::string project_;                    ///< compose project name
-    std::string compose_image_;              ///< containerised ambassador image
+    std::string compose_image_;              ///< containerised client's cli image
+    std::string ambassador_image_;           ///< socat relay image
     ComposeClientKind client_kind_ = ComposeClientKind::Local;
     std::map<std::string, std::string> env_; ///< compose env vars
     std::vector<std::string> profiles_;      ///< active compose profiles
     std::map<std::string, int> scales_;      ///< service -> --scale count
+    /// with_ambassador targets (service, container port), in the order added.
+    std::vector<std::pair<std::string, ContainerPort>> ambassadors_;
     bool build_ = false;
     bool pull_ = false;
     bool wait_ = true;

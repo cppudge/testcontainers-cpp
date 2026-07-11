@@ -100,4 +100,21 @@ std::string build_env_wrapped_script(const std::vector<std::string>& argv,
     return script;
 }
 
+std::string build_socat_script(const std::vector<AmbassadorTarget>& targets) {
+    std::string script;
+    for (const AmbassadorTarget& target : targets) {
+        const bool udp = target.service_port.proto == Proto::Udp;
+        const char* listen = udp ? "UDP-LISTEN" : "TCP-LISTEN";
+        const char* connect = udp ? "UDP" : "TCP";
+        script += "socat ";
+        script += listen;
+        script += ":" + std::to_string(target.listen_port.port) + ",fork,reuseaddr ";
+        script += connect;
+        script += ":" + target.service + ":" + std::to_string(target.service_port.port);
+        script += " & ";
+    }
+    script += "wait";
+    return script;
+}
+
 } // namespace testcontainers::compose

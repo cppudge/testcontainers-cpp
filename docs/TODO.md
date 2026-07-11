@@ -5,12 +5,12 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 8 of the agreed batch order (2026-07-10; batches 1–7 landed — see
-[feature-notes.md](feature-notes.md) and the git history): compose extensions —
-`--profile`, service scaling (`--scale`), per-service log streaming, a socat
-ambassador for unpublished ports. (Batch 7 — IPAM multi-pool, `list_networks` +
-`Network::Builder::with_reuse`, `list_volumes` + `prune_volumes`, and the
-Windows `populate` path — landed in full 2026-07-11.)
+Batch 9 of the agreed batch order (2026-07-10; batches 1–8 landed — see
+[feature-notes.md](feature-notes.md) and the git history): environment config —
+docker-context TLS materials, more `~/.testcontainers.properties` keys,
+substitutor scope (buildable/compose/raw), a time-based pull policy. (Batch 8 —
+compose `--profile`, `--scale` + per-instance accessors, per-service logs, and
+the socat ambassador for unpublished ports — landed in full 2026-07-11.)
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -102,8 +102,12 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   helper keep-alive bounds a seed (~30s Linux `sleep`, ~5min Windows `ping`) — a copy
   outrunning it can read as success (the attached exec's exit settles to 0 on a vanished
   helper); lift the budgets if a giant fixture ever bites.
-- **Compose gaps** — a socat ambassador for UNPUBLISHED ports is still unsupported
-  (`--profile`, `--scale` + indexed accessors, and per-service logs landed 2026-07-11).
+- **Compose residuals** — the socat ambassador (2026-07-11) is service-level: it dials the
+  service NAME through compose DNS (scaled services round-robin per connection; per-instance
+  targeting needs published ports), joins ONE project network (targets spanning several
+  throw), and a `with_exposed_service` TCP probe on an ambassador port proves only the relay.
+  `with_profile` and a `COMPOSE_PROFILES` set via `with_env` do not merge (which wins is
+  compose-version-dependent).
 - **Windows containers** — `Volume::populate` seeds Windows volumes via
   stage-then-in-container-copy (2026-07-11); the default helper is nanoserver:ltsc2022, so
   process-isolation daemons need a build-matched `helper_image` passed explicitly.

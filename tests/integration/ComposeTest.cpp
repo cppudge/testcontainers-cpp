@@ -5,8 +5,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "Reaper.hpp"
@@ -25,6 +27,7 @@
 //   Compose.ProfileGatesService - a service behind `profiles:` stays down without with_profile and comes up with it; the profile-aware teardown leaves no container behind.
 //   Compose.ScaleRunsTwoInstances - with_scale("redis", 2) runs two discoverable instances with distinct containers and distinct ephemeral host ports (both answer PING); the plain accessor picks instance 1; an out-of-range instance throws.
 //   Compose.ServiceLogsDeliverRedisStartup - follow_service_logs (deadline-bounded) sees redis's startup marker and stops via the consumer; the snapshot and its instance-1 form then both contain it.
+//   Compose.AmbassadorReachesUnpublishedPort - a redis publishing NOTHING answers PING through the socat relay's published port (get_service_port resolves to it); the service itself has no host binding; teardown leaves neither containers nor the project network behind.
 //   Compose.ProjectFilterRegisteredWithReaper - start() hands the session's Ryuk an extra `label=com.docker.compose.project=<project>` filter (crash-safe reaping of the stack), exactly once across a restart.
 //   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 
@@ -40,6 +43,13 @@ constexpr const char* kRedisYaml = R"(services:
     image: redis:7.2
     ports:
       - "6379"
+)";
+
+// A redis publishing NOTHING: only an in-network relay can reach it from the
+// host (the with_ambassador case).
+constexpr const char* kUnpublishedRedisYaml = R"(services:
+  redis:
+    image: redis:7.2
 )";
 
 // kRedisYaml plus a second service gated behind the "extra" profile (same
@@ -267,6 +277,66 @@ TEST_F(Compose, ServiceLogsDeliverRedisStartup) {
               std::string::npos);
 
     ASSERT_NO_THROW(compose.stop());
+}
+
+TEST_F(Compose, AmbassadorReachesUnpublishedPort) {
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP(); // host `docker compose` CLI is not available
+    }
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml(kUnpublishedRedisYaml)
+                                         .with_ambassador("redis", tcp(6379));
+    const std::string project_name = compose.project_name();
+    ASSERT_NO_THROW(compose.start());
+
+    // The service itself publishes nothing...
+    DockerClient client = DockerClient::from_environment();
+    const ContainerInspect redis_info =
+        client.inspect_container(compose.get_service_container_id("redis"));
+    const auto bound = redis_info.ports.find("6379/tcp");
+    EXPECT_TRUE(bound == redis_info.ports.end() || bound->second.empty());
+
+    // ...yet get_service_port yields a live host door: the relay's published
+    // port, PONGing straight through the compose network. Brief retry only
+    // for the moment between the relay container starting and socat binding.
+    const std::uint16_t host_port = compose.get_service_port("redis", tcp(6379));
+    EXPECT_GT(host_port, 0);
+    const std::string host = compose.get_service_host("redis");
+    std::string reply;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    for (;;) {
+        try {
+            reply = redis_ping(host, host_port);
+        } catch (const std::exception&) {
+            reply.clear(); // relay not accepting yet
+        }
+        if (reply.find("PONG") != std::string::npos ||
+            std::chrono::steady_clock::now() >= deadline) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    EXPECT_NE(reply.find("PONG"), std::string::npos);
+
+    // Teardown removes the relay BEFORE compose down, so the project network
+    // (which the relay had joined) goes away cleanly with everything else.
+    ASSERT_NO_THROW(compose.stop());
+    const auto leftovers = client.list_containers(
+        {{"label", "com.docker.compose.project=" + project_name}}, /*all*/ true);
+    EXPECT_TRUE(leftovers.empty());
+    // A force-removed endpoint can linger for a beat inside libnetwork (and
+    // the teardown label sweep covers containers only) — give the network
+    // removal the same bounded patience as the PONG above.
+    bool network_gone = false;
+    const auto net_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < net_deadline) {
+        network_gone =
+            client.list_networks({{"label", "com.docker.compose.project=" + project_name}}).empty();
+        if (network_gone) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    EXPECT_TRUE(network_gone);
 }
 
 TEST_F(Compose, ProjectFilterRegisteredWithReaper) {

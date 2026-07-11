@@ -11,6 +11,7 @@
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <filesystem>
@@ -26,10 +27,18 @@ namespace testcontainers {
 
 namespace {
 
-/// The default containerised ambassador image: a long-lived `docker:cli`
+/// The default containerised-client image: a long-lived `docker:cli`
 /// container drives `docker compose` (v2) via exec. (Was `docker/compose:1.29.2`
 /// in the one-shot MVP.)
 constexpr const char* kComposeImage = "docker:26.1-cli";
+
+/// The default with_ambassador relay image (ENTRYPOINT ["socat"]; we override
+/// with /bin/sh to run one socat per target).
+constexpr const char* kSocatImage = "alpine/socat:1.8.0.3";
+
+/// The ambassador's own listen ports start here (one per target, ascending) —
+/// they only need to be unique inside the ambassador container.
+constexpr std::uint16_t kAmbassadorBasePort = 2000;
 
 constexpr const char* kComposeProjectLabel = "com.docker.compose.project";
 constexpr const char* kComposeServiceLabel = "com.docker.compose.service";
@@ -104,6 +113,10 @@ struct DockerComposeContainer::ActiveStack {
     /// Instance numbers come from the compose container-number label (1..n;
     /// a single-instance service has just {1}).
     std::map<std::string, std::map<int, std::string>> service_to_id;
+    /// The socat ambassador container (empty = none requested).
+    std::string ambassador_id;
+    /// (service, "port/proto") -> the ambassador's own listen port for it.
+    std::map<std::pair<std::string, std::string>, ContainerPort> ambassador_targets;
 
     ActiveStack() = default;
     ActiveStack(const ActiveStack&) = delete;
@@ -113,6 +126,19 @@ struct DockerComposeContainer::ActiveStack {
     /// destructors).
     ~ActiveStack() {
         try {
+            // The ambassador goes FIRST: it is attached to the project
+            // network, and `down` cannot remove a network with a live
+            // endpoint compose doesn't know about.
+            if (!ambassador_id.empty()) {
+                try {
+                    DockerClient docker = DockerClient::from_environment();
+                    docker.remove_container(ambassador_id, /*force*/ true,
+                                            /*remove_volumes*/ true);
+                } catch (...) {
+                    // Best-effort: the label sweep below retries it.
+                }
+            }
+
             // Ask compose to tear the project down via the same client.
             if (client) {
                 try {
@@ -178,7 +204,7 @@ void DockerComposeContainer::TempFile::remove() noexcept {
 
 DockerComposeContainer::DockerComposeContainer(std::vector<std::string> files)
     : compose_files_(std::move(files)), project_("tc" + random_hex(8)),
-      compose_image_(kComposeImage) {
+      compose_image_(kComposeImage), ambassador_image_(kSocatImage) {
     // compose `-f` wants absolute paths; absolutize in place (reusing the moved
     // vector's buffer) rather than building a second vector element by element.
     for (std::string& f : compose_files_) {
@@ -214,6 +240,7 @@ DockerComposeContainer DockerComposeContainer::from_yaml(const std::string& comp
     DockerComposeContainer c;
     c.project_ = "tc" + random_hex(8);
     c.compose_image_ = kComposeImage;
+    c.ambassador_image_ = kSocatImage;
     c.client_kind_ = ComposeClientKind::Local;
 
     // Write the inline YAML to a temp `.yml` so the (default) local client has a
@@ -286,6 +313,24 @@ DockerComposeContainer& DockerComposeContainer::with_scale(std::string service, 
 }
 DockerComposeContainer&& DockerComposeContainer::with_scale(std::string service, int instances) && {
     return std::move(with_scale(std::move(service), instances));
+}
+
+DockerComposeContainer& DockerComposeContainer::with_ambassador(std::string service,
+                                                                ContainerPort port) & {
+    ambassadors_.emplace_back(std::move(service), port);
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_ambassador(std::string service,
+                                                                 ContainerPort port) && {
+    return std::move(with_ambassador(std::move(service), port));
+}
+
+DockerComposeContainer& DockerComposeContainer::with_ambassador_image(std::string image) & {
+    ambassador_image_ = std::move(image);
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_ambassador_image(std::string image) && {
+    return std::move(with_ambassador_image(std::move(image)));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_profile(std::string profile) & {
@@ -458,10 +503,78 @@ void DockerComposeContainer::start() {
         instances.emplace(instance, summary.id);
     }
 
+    // 4) with_ambassador: ONE extra socat container joined to the project
+    //    network, publishing an ephemeral relay port per target onto
+    //    `service:port` over that network. Its id lands in the stack the
+    //    moment it exists, so any failure below tears it down with the rest.
+    if (!ambassadors_.empty()) {
+        std::vector<compose::AmbassadorTarget> targets;
+        std::uint16_t next_listen = kAmbassadorBasePort;
+        for (const auto& [service, port] : ambassadors_) {
+            const auto it = stack->service_to_id.find(service);
+            if (it == stack->service_to_id.end() || it->second.empty()) {
+                throw DockerError("with_ambassador: unknown compose service '" + service +
+                                  "' in project '" + project_ +
+                                  "' (is its profile active, and its scale non-zero?)");
+            }
+            const ContainerPort listen{next_listen, port.proto};
+            if (!stack->ambassador_targets.emplace(std::make_pair(service, to_string(port)), listen)
+                     .second) {
+                continue; // duplicate registration — one relay is enough
+            }
+            targets.push_back({service, port, listen});
+            ++next_listen;
+        }
+
+        // The network to join: compose labels the project's networks; pick
+        // one holding EVERY target's container (checking only the first
+        // target would let a multi-homed service lock the choice onto a
+        // network the others lack). One relay joins ONE network.
+        std::string network;
+        for (const NetworkInspect& net : docker.list_networks(
+                 {{"label", std::string(kComposeProjectLabel) + "=" + project_}})) {
+            const NetworkInspect info = docker.inspect_network(net.id);
+            const bool all_present = std::all_of(
+                targets.begin(), targets.end(), [&](const compose::AmbassadorTarget& target) {
+                    return info.containers.count(
+                               stack->service_to_id.at(target.service).begin()->second) != 0;
+                });
+            if (all_present) {
+                network = net.name;
+                break;
+            }
+        }
+        if (network.empty()) {
+            throw DockerError("with_ambassador: no single compose project network holds every "
+                              "target (project '" +
+                              project_ +
+                              "') — one relay joins one network, so all targets must share one");
+        }
+
+        CreateContainerSpec spec;
+        spec.image = ambassador_image_;
+        // The image's entrypoint IS socat; run a shell instead so one
+        // container can host every relay (plus `wait` to stay alive).
+        spec.entrypoint = {"/bin/sh"};
+        spec.cmd = {"-c", compose::build_socat_script(targets)};
+        for (const compose::AmbassadorTarget& target : targets) {
+            spec.exposed_ports.push_back(to_string(target.listen_port));
+        }
+        spec.publish_all_ports = true;
+        spec.network = network;
+        // Session labels (standard reaping) + the project label, so the
+        // teardown sweep and the project's Ryuk filter both cover it.
+        spec.labels = detail::testcontainers_labels();
+        spec.labels.emplace_back(kComposeProjectLabel, project_);
+
+        stack->ambassador_id = docker.create_container(spec);
+        docker.start_container(stack->ambassador_id);
+    }
+
     // Adopt (active_ is null here — any previous stack was torn down up top).
     active_ = std::move(stack);
 
-    // 4) Extra guarantee on top of compose's `--wait`: wait for each exposed
+    // 5) Extra guarantee on top of compose's `--wait`: wait for each exposed
     //    service's published host port to accept a TCP connection (the Port
     //    wait strategy's probe; each attempt is bounded — see probe_budget —
     //    so a black-holed connect cannot overshoot the wait timeout). This
@@ -504,6 +617,14 @@ std::string DockerComposeContainer::get_service_host(const std::string& service)
 
 std::uint16_t DockerComposeContainer::get_service_port(const std::string& service,
                                                        ContainerPort port) const {
+    // A with_ambassador pair resolves to the relay's published port — that is
+    // the only host-side door to an unpublished service port.
+    if (active_ && !active_->ambassador_id.empty()) {
+        const auto it = active_->ambassador_targets.find({service, to_string(port)});
+        if (it != active_->ambassador_targets.end()) {
+            return published_port_of(active_->ambassador_id, it->second);
+        }
+    }
     return published_port_of(get_service_container_id(service), port);
 }
 
