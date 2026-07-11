@@ -114,33 +114,6 @@ inline FollowEnd stream_body_to_consumer(
     return FollowEnd::StreamEnded;
 }
 
-/// Read a hijacked (101-upgraded) stream to completion and return its raw
-/// bytes: after the 101 the exec output arrives directly on the connection,
-/// NOT as an HTTP body, so it is drained off the transport until EOF.
-/// `leftover` is whatever the header parse already pulled past the 101 header.
-/// A cleanly ended stream reports no error in `ec` — and the clean end DIFFERS
-/// by transport: a socket ends with `eof`, but a peer-closed named pipe ends
-/// with `broken_pipe` (asio maps only ERROR_HANDLE_EOF to eof; a pipe close is
-/// ERROR_BROKEN_PIPE), so on the primary Windows transport `broken_pipe` IS
-/// the normal completion, not a failure. Anything else is left in `ec` for the
-/// caller to throw on.
-inline std::string read_raw_stream(ITransport& transport, std::string_view leftover,
-                                   boost::system::error_code& ec) {
-    std::string out(leftover);
-    std::array<char, 8192> buf{};
-    for (;;) {
-        const std::size_t n = transport.read_some(buf.data(), buf.size(), ec);
-        out.append(buf.data(), n);
-        if (ec) {
-            break;
-        }
-    }
-    if (ec == boost::asio::error::eof || ec == boost::asio::error::broken_pipe) {
-        ec = {}; // the stream ending is the normal completion
-    }
-    return out;
-}
-
 /// Exec-attach pump for a hijacked (101-upgraded) stream WITH stdin: hand the
 /// transport the stdin bytes to write (half-closing after them) INTERLEAVED
 /// with the output read — see ITransport::exchange — delivering each arriving
@@ -191,11 +164,14 @@ inline FollowEnd pump_exec_stream(ITransport& transport, std::string_view leftov
     return FollowEnd::StreamEnded; // eof / broken_pipe / reset: the stream is over
 }
 
-/// Streaming sibling of read_raw_stream: deliver a hijacked (101-upgraded)
-/// stream to `consumer` chunk by chunk (`leftover` first), demuxing unless
-/// `tty`. Any read error — the stream ending, the daemon resetting it — ends
-/// delivery as StreamEnded (see read_raw_stream on why eof vs broken_pipe is
-/// transport-specific); the caller closes the connection in every case.
+/// Deliver a hijacked (101-upgraded) stream to `consumer` chunk by chunk
+/// (`leftover` — whatever the header parse already pulled past the 101 header
+/// — first), demuxing unless `tty`: after the 101 the output arrives raw on
+/// the connection, NOT as an HTTP body. Any read-side end maps to StreamEnded
+/// — a socket ends with `eof`, a peer-closed named pipe with `broken_pipe`
+/// (asio maps only ERROR_HANDLE_EOF to eof), and dockerd RESETS a hijacked
+/// connection still holding unconsumed stdin — all of them are the peer
+/// finishing; the caller closes the connection in every case.
 ///
 /// With a `deadline`, the transport's io deadline is re-armed with the
 /// remaining budget before every read (mirroring stream_body_to_consumer), so

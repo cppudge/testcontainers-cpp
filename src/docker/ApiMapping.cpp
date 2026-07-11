@@ -714,10 +714,6 @@ ExecStatus parse_exec_status(const std::string& body) {
     });
 }
 
-std::int64_t parse_exec_exit_code(const std::string& body) {
-    return parse_exec_status(body).exit_code.value_or(0);
-}
-
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image) {
     std::size_t start = 0;
     while (start < pull_stream.size()) {

@@ -178,7 +178,12 @@ AFTER the response header) is INTERLEAVED with the output read — one full-dupl
 transport's event loop — so a command echoing a multi-megabyte stdin back cannot backpressure
 the write into a timeout; while stdin is still going out, the io deadline guards against a
 peer consuming NEITHER direction, and once it is out, reads wait as long as the command runs.
-Stdin EOF:
+All four overloads run ONE implementation — the buffered `exec(cmd[, opts])` is the streaming
+path with an accumulating consumer (2026-07-11) — with one shared end-of-stream contract: any
+read-side end (eof, a peer-closed pipe, a reset — dockerd resets the hijacked connection when
+an exec exits with unconsumed stdin) is the peer finishing, the output received so far is
+kept, and the exec inspect settles the exit code; only a wedged input phase (`timed_out`)
+throws. Stdin EOF:
 TCP / unix sockets half-close via `shutdown(send)`; the Windows named pipe mirrors go-winio's
 `CloseWrite` (flush, then a zero-length message — message-mode pipes only, which is what every
 real daemon serves; inside the pump the flush also pauses output reads while it blocks); TLS

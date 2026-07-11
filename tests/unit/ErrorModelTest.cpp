@@ -109,7 +109,7 @@ TEST(ErrorModel, GuardedParsersWrapInvalidJson) {
     expect_wrapped([&] { docker::parse_container_list(html); }, "list_containers");
     expect_wrapped([&] { docker::parse_volume_inspect(html); }, "inspect_volume");
     expect_wrapped([&] { docker::parse_server_os(html); }, "server_os");
-    expect_wrapped([&] { docker::parse_exec_exit_code(html); }, "exec inspect");
+    expect_wrapped([&] { docker::parse_exec_status(html); }, "exec inspect");
 }
 
 TEST(ErrorModel, GuardedParsersWrapTypeErrors) {

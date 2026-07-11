@@ -11,13 +11,9 @@ Batch 7 of the agreed batch order (2026-07-10; batches 1–6 landed — see
 multi-pool support on create, `list_volumes` / volume prune; optionally a Windows
 volume-seeding helper.
 
-Analysis results awaiting a go (2026-07-11, from the exec-API and duplication reviews):
-- **exec internal unification** — reimplement the buffered exec on top of
-  `exec_stream_impl` (~−70 lines; the prologue already forked once). Precondition: decide
-  the stream-reset semantics first — the streaming side currently maps every read-end to
-  StreamEnded, and the empirical daemon behavior (RST after an exec exits with unconsumed
-  stdin is BENIGN; the inspect settles the outcome) argues for "reset tolerated, inspect
-  decides" on both paths rather than strict throwing.
+Analysis results awaiting a go (2026-07-11, from the duplication review; the exec internal
+unification landed the same day — the buffered exec now runs over `exec_stream_impl` with
+"any read-end = the peer finished, the inspect settles the outcome" on both paths):
 - **duplication sweep** (~300–350 lines, no behavior risk beyond two message-text checks):
   a `json_object_from(pairs)` helper for 8 identical map→JSON loops in ApiMapping; merge
   the 3 loopback-fixture copies in tests/unit (the accept-wake teardown trick now lives in

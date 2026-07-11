@@ -67,7 +67,6 @@
 //   ApiMapping.BuildExecCreateBodyStdinAttaches - a set stdin_data adds AttachStdin=true (and is absent otherwise).
 //   ApiMapping.BuildExecCreateBodyDetachAttachesNothing - detach=true omits every Attach* field (a detached exec streams nothing back), still emitting Cmd and Tty.
 //   ApiMapping.BuildExecCreateBodyConsoleSize - console_size emits ConsoleSize as the [height, width] array (rows first) and is omitted when unset.
-//   ApiMapping.ParseExecExitCode - exec-inspect JSON parses ExitCode into the integer result (defaulting to 0 when absent).
 //   ApiMapping.ParseExecStatus - exec-inspect JSON parses Running + ExitCode; a running exec's null ExitCode reads as absent (never a type error), a finished one carries its code.
 //   ApiMapping.ParseInspectExtractsStateAndPorts - inspect JSON parses into id, name, running state, and per-port host bindings (null becomes empty).
 //   ApiMapping.ParseInspectTty - inspect JSON with Config.Tty=true parses into ContainerInspect.tty (false when absent).
@@ -106,7 +105,6 @@ using testcontainers::docker::BuildOptions;
 using testcontainers::docker::BuildStreamScanner;
 using testcontainers::docker::expect_string_field;
 using testcontainers::docker::parse_container_list;
-using testcontainers::docker::parse_exec_exit_code;
 using testcontainers::docker::parse_exec_status;
 using testcontainers::docker::parse_image_inspect;
 using testcontainers::docker::parse_inspect;
@@ -915,13 +913,6 @@ TEST(ApiMapping, BuildExecCreateBodyConsoleSize) {
     EXPECT_EQ(body["ConsoleSize"], nlohmann::json({33, 123}));
 
     EXPECT_FALSE(build_exec_create_body({"top"}, ExecOptions{}).contains("ConsoleSize"));
-}
-
-TEST(ApiMapping, ParseExecExitCode) {
-    EXPECT_EQ(parse_exec_exit_code(R"({"ExitCode": 5, "Running": false})"), 5);
-    EXPECT_EQ(parse_exec_exit_code(R"({"ExitCode": 0})"), 0);
-    // Absent / null ExitCode (exec still running) defaults to 0.
-    EXPECT_EQ(parse_exec_exit_code(R"({"Running": true, "ExitCode": null})"), 0);
 }
 
 TEST(ApiMapping, ParseExecStatus) {

@@ -85,21 +85,6 @@ inline std::string read_error_body(docker::TransportStream& stream,
     return out;
 }
 
-inline std::string read_error_body(docker::TransportStream& stream,
-                                   boost::beast::flat_buffer& buffer,
-                                   http::response_parser<http::string_body>& parser) {
-    boost::system::error_code ec;
-    http::read(stream, buffer, parser, ec); // error bodies are small JSON lines
-    if (ec && ec != http::error::end_of_stream) {
-        return {};
-    }
-    std::string body = std::move(parser.get().body());
-    if (body.size() > 8192) {
-        body.resize(8192);
-    }
-    return body;
-}
-
 /// Throw the typed error for a non-OK daemon reply: NotFoundError on 404,
 /// DockerError carrying the HTTP status otherwise. The message is
 /// "<context> failed: HTTP <status> <body>". `resource_id` names the
@@ -219,9 +204,9 @@ void write_chunked_request(docker::ITransport& transport, docker::TransportStrea
 /// this closes `transport` and throws the typed error prefixed with `context`
 /// (a deadline expiry becomes TransportTimeoutError, a bad status goes through
 /// throw_status_error with the daemon's drained error body appended).
-template <class Parser>
 void read_ok_header(docker::ITransport& transport, docker::TransportStream& stream,
-                    boost::beast::flat_buffer& buffer, Parser& parser, const std::string& context,
+                    boost::beast::flat_buffer& buffer,
+                    http::response_parser<http::buffer_body>& parser, const std::string& context,
                     const std::string& resource_id = {}, bool accept_upgraded = false) {
     boost::system::error_code ec;
     http::read_header(stream, buffer, parser, ec);
@@ -983,113 +968,23 @@ ExecResult DockerClient::exec(const std::string& id, const std::vector<std::stri
         return ExecResult{};
     }
 
-    // 1) Connect the raw transport first and check the stdin capability BEFORE
-    //    creating the exec instance, so an unsupported-transport failure leaves
-    //    no abandoned exec on the daemon.
-    auto transport = docker::connect(host_, timeouts_);
-    require_stdin_capable(*transport, opts);
-
-    // 2) Create the exec instance (carrying env / workdir / user / privileged /
-    //    tty / attach-stdin from opts).
-    const std::string exec_id = exec_create(*this, id, versioned("/containers/" + id + "/exec"),
-                                            docker::build_exec_create_body(cmd, opts).dump());
-
-    // 3) Start the exec over the raw transport stream so stdin can (when
-    //    requested) be hijacked after the response header (see feed_stdin).
-    docker::TransportStream stream{*transport};
-    exec_start(*transport, stream, host_, exec_id, versioned("/exec/" + exec_id + "/start"), opts);
-
-    // 4) Read the whole start response. With Tty=false this is the multiplexed
-    //    frame stream (demux it); with Tty=true it is raw, unframed bytes.
-    boost::system::error_code ec;
-    boost::beast::flat_buffer buffer;
-    http::response_parser<http::string_body> parser;
-    parser.body_limit(boost::none);
-    read_ok_header(*transport, stream, buffer, parser, "exec start " + exec_id, exec_id,
-                   /*accept_upgraded=*/true);
-    // The exec is now started and the stream established: the first moment a
-    // resize_exec is valid, and before any stdin/output moves.
-    if (opts.on_started) {
-        opts.on_started(exec_id);
-    }
-    std::string body;
-    if (opts.stdin_data && parser.get().result_int() == 101) {
-        // Stdin on the upgraded stream: the write is INTERLEAVED with the
-        // output read (see ITransport::exchange) — a command echoing a large
-        // stdin back cannot backpressure the write into a timeout. The io
-        // deadline bounds input-phase progress inside; once the input is out,
-        // the reads wait as long as the command runs. The header parse may
-        // already have pulled some of the stream into `buffer`.
-        const auto leftover = buffer.data();
-        body.assign(static_cast<const char*>(leftover.data()), leftover.size());
-        transport->exchange(
-            *opts.stdin_data, /*eof_after_input=*/true,
-            [&body](const char* data, std::size_t size) {
-                body.append(data, size);
-                return true;
-            },
-            std::nullopt, ec);
-        // Per the exchange contract, ANY read-side end error — eof, a broken
-        // pipe, a reset (dockerd closing the hijacked socket with our
-        // unconsumed stdin still buffered sends RST) — is the peer finishing;
-        // the exit code comes from the inspect below either way. Only the
-        // input-phase idle guard (timed_out) is a failure, mirroring the
-        // streaming sibling (pump_exec_stream).
-        if (ec == boost::asio::error::timed_out) {
-            transport->close();
-            docker::throw_transport_error(
-                "exec start " + exec_id + " failed to pump stdin/output: " + ec.message(), ec);
-        }
-    } else if (parser.get().result_int() == 101) {
-        // Upgraded (the normal path): the exec stream arrives raw on the
-        // connection, not as an HTTP body; the header parse may already have
-        // pulled some of it into `buffer`. The output completes only when the
-        // command exits — it may legitimately run (and stay silent) for as
-        // long as the caller's command takes.
-        transport->set_io_timeout(std::nullopt);
-        const auto leftover = buffer.data();
-        body = docker::read_raw_stream(
-            *transport,
-            std::string_view(static_cast<const char*>(leftover.data()), leftover.size()), ec);
-        if (ec) {
-            transport->close();
-            docker::throw_transport_error(
-                "exec start " + exec_id + " failed to read the upgraded stream: " + ec.message(),
-                ec);
-        }
-    } else {
-        // A daemon that ignored the upgrade (a plain 200): stdin — when any —
-        // goes in sequentially AFTER the response header (see feed_stdin),
-        // then the output arrives as an ordinary HTTP body.
-        feed_stdin(*transport, stream, exec_id, opts);
-        transport->set_io_timeout(std::nullopt);
-        http::read(stream, buffer, parser, ec); // the rest of the body
-        if (ec && ec != http::error::end_of_stream) {
-            transport->close();
-            docker::throw_transport_error(
-                "exec start " + exec_id + " failed to read response: " + ec.message(), ec);
-        }
-        body = std::move(parser.get().body());
-    }
-    transport->close();
-
+    // The attached path IS the streaming implementation with an accumulating
+    // consumer: the demuxed halves append into the result (with tty everything
+    // arrives as stdout). The consumer never stops early, so delivery runs
+    // until the stream ends — a daemon resetting the connection mid-stream
+    // included (the output received so far is kept; the exec inspect settles
+    // the outcome, matching the stdin-pump contract).
     ExecResult out;
-    if (opts.tty) {
-        // Raw, unframed single stream: route it all to stdout_data unchanged.
-        out.stdout_data = std::move(body);
-    } else {
-        // Not const: the demuxed halves are moved out.
-        docker::DemuxedLogs demuxed = docker::demux_all(body);
-        out.stdout_data = std::move(demuxed.stdout_data);
-        out.stderr_data = std::move(demuxed.stderr_data);
-    }
-
-    // 5) Inspect the exec for the exit code.
-    const Response inspect_res = request("GET", versioned("/exec/" + exec_id + "/json"));
-    if (inspect_res.status_code != 200) {
-        throw_status_error("exec inspect " + exec_id, inspect_res, exec_id);
-    }
-    out.exit_code = docker::parse_exec_exit_code(inspect_res.body);
+    const ExecStreamResult res = exec_stream_impl(
+        id, cmd, opts,
+        [&out](LogSource source, std::string_view chunk) {
+            (source == LogSource::Stderr ? out.stderr_data : out.stdout_data).append(chunk);
+            return true;
+        },
+        std::nullopt);
+    // Historical contract: a command the inspect still sees running (possible
+    // only after an abnormal early stream end) reads as exit code 0.
+    out.exit_code = res.exit_code.value_or(0);
     return out;
 }
 

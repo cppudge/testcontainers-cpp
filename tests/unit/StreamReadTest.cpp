@@ -26,12 +26,10 @@
 //   StreamRead.SkipsStdinFrames - a stdin-kind frame in the stream is dropped; surrounding stdout frames still arrive.
 //   StreamRead.StopsWhenConsumerReturnsFalse - returning false from the consumer stops delivery without draining the remaining frames.
 //   StreamRead.TtyPassthroughIsRawStdout - with tty=true the unframed body bytes are delivered verbatim as stdout (no demuxing).
-//   StreamRead.RawStreamAccumulatesLeftoverAndReads - read_raw_stream (the 101-upgraded exec path) returns leftover + everything until EOF, with EOF reported as a clean end.
-//   StreamRead.RawStreamPropagatesRealErrors - a mid-stream transport error (not eof/broken_pipe) is left in ec for the caller to throw on.
-//   StreamRead.RawStreamTreatsBrokenPipeAsCleanEnd - a peer-closed NAMED PIPE ends the stream with broken_pipe (not eof) — that is the normal completion on the primary Windows transport, never an error.
 //   StreamRead.RawConsumerDemuxesLeftoverFirst - stream_raw_to_consumer demuxes frames split between the header-parse leftover and the transport reads.
 //   StreamRead.RawConsumerStopsWhenConsumerReturnsFalse - returning false stops the raw stream delivery early.
 //   StreamRead.RawConsumerReportsWhyDeliveryEnded - stream_raw_to_consumer returns StreamEnded on EOF and ConsumerStopped on an early stop.
+//   StreamRead.RawConsumerTreatsResetAndBrokenPipeAsStreamEnded - a raw stream ending in broken_pipe (a peer-closed named pipe: the NORMAL Windows completion) or connection_reset (dockerd after an exec exit with unconsumed stdin) is StreamEnded with the delivered output kept — nothing throws; the exec inspect settles the outcome.
 //   StreamRead.RawConsumerDeadlineArmsIoTimeoutPerRead - with a deadline, the raw-stream delivery re-arms the transport's io deadline with a positive remaining budget before every read.
 //   StreamRead.RawConsumerTimedOutReportsDeadlineExpired - a raw-stream read failing with asio timed_out (the re-armed io deadline firing) ends delivery with DeadlineExpired; chunks already delivered stay delivered.
 //   StreamRead.RawConsumerExpiredDeadlineDeliversNothing - a deadline already in the past ends the raw delivery with DeadlineExpired before anything is delivered — the header-parse leftover included.
@@ -185,18 +183,6 @@ TEST(StreamRead, StopsWhenConsumerReturnsFalse) {
     EXPECT_EQ(got[0].second, "first");
 }
 
-TEST(StreamRead, RawStreamAccumulatesLeftoverAndReads) {
-    // The 101-upgrade exec path: the header parse pulled some stream bytes
-    // into its buffer already (the leftover); the rest arrives from the
-    // transport until EOF — which is the NORMAL completion, not an error.
-    FakeTransport transport({"middle-", "end"});
-    boost::system::error_code ec;
-    const std::string out = docker::read_raw_stream(transport, "leftover-", ec);
-
-    EXPECT_FALSE(ec) << ec.message();
-    EXPECT_EQ(out, "leftover-middle-end");
-}
-
 namespace {
 
 /// FakeTransport variant failing with the given error after its chunks.
@@ -218,29 +204,6 @@ private:
 };
 
 } // namespace
-
-TEST(StreamRead, RawStreamPropagatesRealErrors) {
-    FailingTransport transport({"partial"}, boost::asio::error::connection_reset);
-    boost::system::error_code ec;
-    const std::string out = docker::read_raw_stream(transport, "", ec);
-
-    EXPECT_EQ(out, "partial"); // what arrived is still returned
-    EXPECT_EQ(ec, boost::asio::error::connection_reset) << ec.message();
-}
-
-TEST(StreamRead, RawStreamTreatsBrokenPipeAsCleanEnd) {
-    // On the primary Windows transport a peer-closed named pipe surfaces as
-    // broken_pipe, NOT eof (asio maps only ERROR_HANDLE_EOF to eof) — so
-    // broken_pipe is the NORMAL completion of a real named-pipe exec stream.
-    // This pin keeps a "simplification" from dropping the broken_pipe clause
-    // and breaking every real exec-with-stdin.
-    FailingTransport transport({"all the output"}, boost::asio::error::broken_pipe);
-    boost::system::error_code ec;
-    const std::string out = docker::read_raw_stream(transport, "", ec);
-
-    EXPECT_FALSE(ec) << ec.message();
-    EXPECT_EQ(out, "all the output");
-}
 
 TEST(StreamRead, RawConsumerDemuxesLeftoverFirst) {
     // A frame split between the leftover (from the header parse) and the
@@ -301,6 +264,29 @@ TEST(StreamRead, RawConsumerReportsWhyDeliveryEnded) {
         EXPECT_EQ(docker::stream_raw_to_consumer(transport, frame(1, "leftover"), /*tty*/ false,
                                                  [](LogSource, std::string_view) { return false; }),
                   FollowEnd::ConsumerStopped);
+    }
+}
+
+TEST(StreamRead, RawConsumerTreatsResetAndBrokenPipeAsStreamEnded) {
+    // The clean end of a hijacked stream DIFFERS by transport — a socket ends
+    // with eof, a peer-closed named pipe with broken_pipe (asio maps only
+    // ERROR_HANDLE_EOF to eof) — and dockerd RESETS the connection when an
+    // exec exits with unconsumed stdin. All of them are the peer finishing:
+    // delivery ends as StreamEnded with the delivered output kept, nothing
+    // throws, and the caller's exec inspect settles the outcome. The buffered
+    // exec shares this path, so this pin also keeps IT from regressing into
+    // throwing on a reset.
+    for (const auto end_ec :
+         {boost::asio::error::broken_pipe, boost::asio::error::connection_reset}) {
+        FailingTransport transport({frame(1, "all the output")}, end_ec);
+        std::vector<std::pair<LogSource, std::string>> got;
+        EXPECT_EQ(docker::stream_raw_to_consumer(transport, "", /*tty*/ false,
+                                                 [&](LogSource source, std::string_view data) {
+                                                     got.emplace_back(source, std::string(data));
+                                                     return true;
+                                                 }),
+                  FollowEnd::StreamEnded);
+        EXPECT_EQ(joined(got, LogSource::Stdout), "all the output");
     }
 }
 

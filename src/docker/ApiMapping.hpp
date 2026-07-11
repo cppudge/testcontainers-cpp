@@ -102,10 +102,6 @@ struct ExecStatus {
 /// Parse `Running` + `ExitCode` from a `GET /exec/{id}/json` response body.
 ExecStatus parse_exec_status(const std::string& body);
 
-/// Parse the `ExitCode` (integer) from a `GET /exec/{id}/json` response body;
-/// a null / absent code (a still-running exec) reads as 0.
-std::int64_t parse_exec_exit_code(const std::string& body);
-
 /// Extract a top-level string `field` from a JSON response `body`, wrapping any
 /// parse / missing-field / wrong-type failure in a DockerError (prefixed with
 /// `context`) so callers see one uniform error type instead of raw nlohmann
