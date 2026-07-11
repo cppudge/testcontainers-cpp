@@ -7,9 +7,9 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 7 of the agreed batch order (2026-07-10; batches 1–6 landed — see
 [feature-notes.md](feature-notes.md) and the git history): networks & volumes —
-`Network::Builder::with_reuse` (find-by-name + hash-label before creating),
 `list_volumes` / volume prune; optionally a Windows volume-seeding helper.
-(IPAM multi-pool on create landed 2026-07-11.)
+(IPAM multi-pool on create and `list_networks` + `Network::Builder::with_reuse`
+landed 2026-07-11.)
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -92,11 +92,10 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   unless `TESTCONTAINERS_RYUK_DISABLED` (process-wide) turns the reaper off. No secrets / ssh /
   cache-from / squash / platform-on-build. Rare `.dockerignore` matcher divergences from moby
   are documented in `DockerIgnore.hpp`.
-- **Networks** — no process-wide dedup and no cross-run reuse (each `create()` makes a new network; `keep()`
-  releases removal but cannot FIND the network next run). A `Builder::with_reuse()` mirroring
-  container reuse — find-or-create without the session label — would need find-by-name /
-  hash-label BEFORE creating (Docker happily makes duplicate network names) plus the same
-  external-prune story reuse containers have (label sweep).
+- **Networks** — no process-wide dedup of non-reuse networks (each plain `create()` makes a
+  new network). Reuse networks (`Builder::with_reuse`, 2026-07-11) share the container-reuse
+  external-prune story: nothing removes them but a label sweep
+  (`label=org.testcontainers.reuse.hash`).
 - **Volumes** — no `list_volumes` / prune / anonymous-volume management; `populate` spins up a
   real helper container per call (no batching).
 - **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, and a

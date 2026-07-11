@@ -19,7 +19,7 @@
 //   ErrorModel.DockerErrorFieldDefaults - a message-only DockerError has status_code()==nullopt and an empty resource_id().
 //   ErrorModel.NotFoundCarries404 - NotFoundError always reports status_code()==404 plus the resource id it was built with.
 //   ErrorModel.StartupTimeoutCarriesResourceId - StartupTimeoutError exposes the container id / compose service it was built with.
-//   ErrorModel.GuardedParsersWrapInvalidJson - every parse entry point (inspect/list/volume/version/exec) turns an HTML-through-200 body into a DockerError naming its operation, never a raw json exception.
+//   ErrorModel.GuardedParsersWrapInvalidJson - every parse entry point (inspect/container+network list/volume/version/exec) turns an HTML-through-200 body into a DockerError naming its operation, never a raw json exception.
 //   ErrorModel.GuardedParsersWrapTypeErrors - a syntactically-valid body with a wrong-typed field (Labels value not a string) is wrapped the same way.
 //   ErrorModel.PullStreamErrorCarriesImage - the in-stream pull error (daemon streams it through a 200) carries the image as resource_id.
 //   ErrorModel.OversizedBodyIsTruncatedInMessage - a megabyte-scale garbage body is excerpted in the error text, not embedded whole.
@@ -107,6 +107,7 @@ TEST(ErrorModel, GuardedParsersWrapInvalidJson) {
     namespace docker = testcontainers::docker;
     expect_wrapped([&] { docker::parse_inspect(html); }, "inspect_container");
     expect_wrapped([&] { docker::parse_container_list(html); }, "list_containers");
+    expect_wrapped([&] { docker::parse_network_list(html); }, "list_networks");
     expect_wrapped([&] { docker::parse_volume_inspect(html); }, "inspect_volume");
     expect_wrapped([&] { docker::parse_server_os(html); }, "server_os");
     expect_wrapped([&] { docker::parse_exec_status(html); }, "exec inspect");

@@ -42,6 +42,12 @@ VolumeInspect parse_volume_inspect(const std::string& body);
 /// empty containers).
 NetworkInspect parse_network_inspect(const std::string& body);
 
+/// Parse the response of `GET /networks` into one NetworkInspect per entry
+/// (list entries are the same shape as the single inspect; the daemon leaves
+/// `Containers` unpopulated there). A null / non-array body parses as empty;
+/// non-object entries are skipped.
+std::vector<NetworkInspect> parse_network_list(const std::string& body);
+
 /// Parse the response of `GET /images/{reference}/json` into ImageInspect.
 /// Tolerates null / absent RepoTags, RepoDigests, Config and its Labels / Env /
 /// Cmd / Entrypoint / ExposedPorts (all become empty containers).

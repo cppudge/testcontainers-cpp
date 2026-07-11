@@ -1327,6 +1327,27 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
     return docker::expect_string_field(res.body, "Id", "create_network('" + spec.name + "')");
 }
 
+std::vector<NetworkInspect>
+DockerClient::list_networks(const std::vector<std::pair<std::string, std::string>>& filters) {
+    std::string target = versioned("/networks");
+    if (!filters.empty()) {
+        // Docker's filters map each category to an array of expressions; each
+        // pair is {category, expression}, e.g. {"label", "key=value"} or
+        // {"name", "my-net"} (a substring match daemon-side).
+        nlohmann::json encoded = nlohmann::json::object();
+        for (const auto& [category, expression] : filters) {
+            encoded[category].push_back(expression);
+        }
+        target += "?filters=" + url_encode(encoded.dump());
+    }
+
+    const Response res = request("GET", target);
+    if (res.status_code != 200) {
+        throw_status_error("list_networks", res);
+    }
+    return docker::parse_network_list(res.body);
+}
+
 std::string DockerClient::inspect_network_raw(const std::string& id) {
     const Response res = request("GET", versioned("/networks/" + id));
     if (res.status_code != 200) {

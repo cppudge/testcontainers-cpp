@@ -52,6 +52,7 @@
 //   ApiMapping.ParseVolumeInspectNullMaps - null Labels/Options parse into empty maps.
 //   ApiMapping.ParseNetworkInspect - GET /networks/{id} JSON parses id/name/driver/scope, the Internal/Attachable/EnableIPv6 flags, IPAM pools (Subnet/Gateway/IPRange + name-sorted AuxiliaryAddresses), Options/Labels maps, and the Containers endpoint map.
 //   ApiMapping.ParseNetworkInspectNullsAndGarbage - null/absent Labels/Options/Containers/IPAM.Config parse into empty containers with false flags; a non-JSON body throws DockerError.
+//   ApiMapping.ParseNetworkList - a GET /networks array parses into one NetworkInspect per object entry (non-object entries skipped); a null body parses as an empty list.
 //   ApiMapping.ParseImageInspect - GET /images/{ref}/json JSON parses id/tags/digests/created/arch/os/size and the Config fields (labels, env, cmd, entrypoint, exposed ports, workdir, user).
 //   ApiMapping.ParseImageInspectNullsAndGarbage - null RepoTags (dangling image) and null Config members parse into empty containers, absent Size becomes 0; a non-JSON body throws DockerError.
 //   ApiMapping.BuildCreateBodyPatchDeepMerges - create_body_patch deep-merges into the body, keeping existing fields while adding nested and top-level ones.
@@ -109,6 +110,7 @@ using testcontainers::docker::parse_exec_status;
 using testcontainers::docker::parse_image_inspect;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_network_inspect;
+using testcontainers::docker::parse_network_list;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::split_image;
@@ -726,6 +728,32 @@ TEST(ApiMapping, ParseNetworkInspectNullsAndGarbage) {
     // A proxy's HTML smuggled through a 200 must surface as DockerError, not a
     // raw nlohmann exception.
     EXPECT_THROW(parse_network_inspect("<html>oops</html>"), DockerError);
+}
+
+TEST(ApiMapping, ParseNetworkList) {
+    // GET /networks returns an array of the same NetworkResource shape as the
+    // single inspect (list responses leave Containers unpopulated).
+    const std::string body = R"([
+        {"Name": "tc-a", "Id": "id-a", "Driver": "bridge", "Scope": "local",
+         "IPAM": {"Config": [{"Subnet": "172.31.250.0/24"}]},
+         "Labels": {"org.testcontainers.reuse.hash": "abcd"}},
+        {"Name": "tc-b", "Id": "id-b", "Driver": "nat", "Labels": null},
+        "not-an-object"
+    ])";
+
+    const auto networks = parse_network_list(body);
+    ASSERT_EQ(networks.size(), 2u); // the non-object entry is skipped
+    EXPECT_EQ(networks[0].name, "tc-a");
+    EXPECT_EQ(networks[0].id, "id-a");
+    EXPECT_EQ(networks[0].driver, "bridge");
+    ASSERT_EQ(networks[0].ipam_pools.size(), 1u);
+    EXPECT_EQ(networks[0].ipam_pools[0].subnet, "172.31.250.0/24");
+    EXPECT_EQ(networks[0].labels.at("org.testcontainers.reuse.hash"), "abcd");
+    EXPECT_EQ(networks[1].name, "tc-b");
+    EXPECT_TRUE(networks[1].labels.empty());
+
+    // Null / non-array bodies parse as an empty list, not a crash.
+    EXPECT_TRUE(parse_network_list("null").empty());
 }
 
 TEST(ApiMapping, ParseImageInspect) {

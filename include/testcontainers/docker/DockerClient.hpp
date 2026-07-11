@@ -475,6 +475,16 @@ public:
     /// `POST /networks/create` from a full spec; returns the new network id.
     std::string create_network(const NetworkCreateSpec& spec);
 
+    /// `GET /networks?filters=...` — list networks, one NetworkInspect per
+    /// entry (the daemon leaves the attached-containers detail unpopulated in
+    /// list responses). Each `filters` pair is {category, expression} and they
+    /// AND together, e.g. {"label", "key=value"} or {"name", "my-net"} — the
+    /// daemon matches network names by SUBSTRING, so callers wanting an exact
+    /// name must compare `.name` on the results. Throws DockerError on any
+    /// non-200.
+    std::vector<NetworkInspect>
+    list_networks(const std::vector<std::pair<std::string, std::string>>& filters = {});
+
     /// `GET /networks/{id}` — a structured snapshot of a network (`id` may be a
     /// name or an id, as the Docker API accepts both): driver, flags, IPAM
     /// pools, options, labels, and the currently attached containers. Throws

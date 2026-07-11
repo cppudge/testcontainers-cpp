@@ -4,15 +4,15 @@
 
 namespace testcontainers::detail {
 
-/// The label whose value is a container's reuse hash. Reusable containers carry
-/// this (instead of the session-id label) so a later run can find and adopt a
-/// still-running container that matches the same config.
+/// The label whose value is a resource's reuse hash. Reusable containers and
+/// networks carry this (instead of the session-id label) so a later run can
+/// find and adopt an existing resource that matches the same config.
 const char* reuse_hash_label();
 
-/// A stable (cross-run, cross-platform) hash of a container's canonical config,
+/// A stable (cross-run, cross-platform) hash of a resource's canonical config,
 /// used as the reuse-match label value. Deterministic; NOT cryptographic — a
 /// 64-bit FNV-1a over `canonical`, rendered as 16 lowercase hex chars. (We only
-/// need OUR containers to match OUR hash; no interop with other testcontainers.)
+/// need OUR resources to match OUR hash; no interop with other testcontainers.)
 std::string reuse_hash(const std::string& canonical);
 
 /// True if the given ~/.testcontainers.properties text sets

@@ -88,7 +88,29 @@ public:
             return *this;
         }
 
+        /// Enable network reuse. When reuse is also enabled globally
+        /// (`testcontainers.reuse.enable=true` in ~/.testcontainers.properties
+        /// or `TESTCONTAINERS_REUSE_ENABLE=true`), `create()` first looks for
+        /// an existing network with this exact name whose reuse-hash label
+        /// matches this configuration and ADOPTS it instead of creating a new
+        /// one; either way the returned handle is persistent (it does NOT
+        /// remove the network on destruction, and the network is NOT
+        /// Ryuk-reaped, so it survives across runs — clean up externally, e.g.
+        /// `docker network rm` after a `label=org.testcontainers.reuse.hash`
+        /// sweep). Requires `with_name` (a generated name would never match
+        /// across runs). If the name is already taken by a network with a
+        /// DIFFERENT configuration, `create()` throws instead of making a
+        /// same-named duplicate (Docker does not enforce unique network names,
+        /// and a duplicate makes joining by name ambiguous). When reuse is not
+        /// enabled globally this is a no-op: `create()` behaves exactly like a
+        /// normal (session-labeled, reaped) network.
+        Builder& with_reuse(bool reuse = true) {
+            reuse_ = reuse;
+            return *this;
+        }
+
         /// Create the network from the configured options, returning the handle.
+        /// With `with_reuse` active this is find-or-create (see there).
         Network create() const;
 
     private:
@@ -102,6 +124,7 @@ public:
         std::vector<NetworkIpamPool> ipam_pools_;
         std::vector<std::pair<std::string, std::string>> options_;
         std::vector<std::pair<std::string, std::string>> labels_;
+        bool reuse_ = false;
     };
 
     /// Start a builder for a richer network (driver, IPAM, options, labels).

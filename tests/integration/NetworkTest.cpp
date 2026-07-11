@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <exception>
+#include <optional>
 #include <string>
 
 #include "testcontainers/Container.hpp"
@@ -11,6 +12,8 @@
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
+#include "RandomHex.hpp"
+#include "TestEnv.hpp"
 #include "WindowsEngine.hpp"
 
 // Tests in this file (integration; require a Docker daemon — Linux mode for the
@@ -23,6 +26,10 @@
 //   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via the typed Network::inspect()).
 //   Networks.BuilderMultiPoolIpamRoundTrip - with_ipam_pool x2 (a full IPv4 pool with IPRange/aux addresses + an IPv6 pool under with_enable_ipv6) round-trips through the typed inspect, and an attached container's address is drawn from the IPv4 pool's IPRange (the daemon acted on the field, not just echoed it).
 //   Networks.StaticIpv4Assigned - with_static_ipv4 on a subnet-bearing network pins the endpoint to exactly the requested address (asserted via container inspect).
+//   Networks.ListNetworksFindsByLabel - list_networks with a label filter returns exactly the matching network (id/name/labels); the name filter finds it too (substring match daemon-side, exact match post-filtered by the caller).
+//   Networks.BuilderWithReuseAdoptsAcrossHandles - with reuse enabled globally: the first create makes a persistent reuse network (managed-by + reuse-hash labels, NO session label), a second identical create adopts the same network after the first handle dropped, and a same-name create with a DIFFERENT config throws instead of making an ambiguous duplicate.
+//   Networks.BuilderWithReuseDisabledDegrades - with reuse NOT enabled globally, with_reuse degrades to a normal session-labeled network: two creates make two distinct auto-removed networks.
+//   Networks.BuilderWithReuseRequiresName - with reuse enabled globally, with_reuse without with_name throws (a generated name would never match across runs).
 //   Networks.InspectReportsConfigAndContainers - net.inspect() reflects the created driver/IPAM pool/labels and lists an attached container's endpoint; the static Network::inspect(name) resolves the same network; inspect_raw() returns the raw body.
 //   Networks.KeepReleasesRemovalOwnership - keep() makes the handle persistent (neither remove() nor drop removes the network; cleaned up manually), while keep(false) re-arms removal so the drop removes it after all.
 //   WindowsNetworks.CreateAndRemove - the same create/remove round-trip on a Windows daemon (the default driver there is "nat").
@@ -250,6 +257,118 @@ TEST_F(Networks, StaticIpv4Assigned) {
     EXPECT_EQ(ip_on_network(dc, c.id(), net.name()), "172.31.254.10");
 
     // The container and the network are torn down by RAII at scope exit.
+}
+
+TEST_F(Networks, ListNetworksFindsByLabel) {
+    // A unique label value so stale resources from earlier runs can't collide.
+    const std::string marker = "list-it-" + detail::random_hex(8);
+    Network tagged = Network::builder().with_label("tc-list-marker", marker).create();
+    Network other = Network::create();
+
+    DockerClient dc = DockerClient::from_environment();
+    const auto by_label = dc.list_networks({{"label", "tc-list-marker=" + marker}});
+    ASSERT_EQ(by_label.size(), 1u);
+    EXPECT_EQ(by_label[0].id, tagged.id());
+    EXPECT_EQ(by_label[0].name, tagged.name());
+    EXPECT_EQ(by_label[0].labels.at("tc-list-marker"), marker);
+
+    // The name filter matches substrings daemon-side; exact-name callers
+    // post-filter (as the reuse lookup does).
+    const auto by_name = dc.list_networks({{"name", tagged.name()}});
+    bool found = false;
+    for (const auto& n : by_name) {
+        found = found || n.id == tagged.id();
+    }
+    EXPECT_TRUE(found) << "name filter did not return the network";
+
+    // Both networks are torn down by RAII at scope exit.
+}
+
+TEST_F(Networks, BuilderWithReuseAdoptsAcrossHandles) {
+    const tctest::ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "true");
+
+    // A unique name so a stale reuse network from an earlier run can't match.
+    const std::string name = "tc-reuse-net-" + detail::random_hex(8);
+    const Network::Builder base =
+        Network::builder().with_name(name).with_label("tc-reuse-it", "yes").with_reuse();
+
+    std::string created_id;
+    try {
+        {
+            Network first = base.create();
+            created_id = first.id();
+            ASSERT_FALSE(created_id.empty());
+            EXPECT_TRUE(first.is_persistent()); // reuse handles do not auto-remove
+
+            // Reuse networks carry managed-by + the reuse hash and NO session
+            // label (Ryuk must not reap what has to survive the run).
+            const NetworkInspect info = first.inspect();
+            EXPECT_EQ(info.labels.count("org.testcontainers.reuse.hash"), 1u);
+            EXPECT_EQ(info.labels.count("org.testcontainers.managed-by"), 1u);
+            EXPECT_EQ(info.labels.count("org.testcontainers.session-id"), 0u);
+        } // the persistent handle dropped without removing the network
+
+        // A second identical create must adopt the surviving network.
+        {
+            Network second = base.create();
+            EXPECT_EQ(second.id(), created_id) << "second create did not adopt";
+            EXPECT_TRUE(second.is_persistent());
+        }
+
+        // Same name, DIFFERENT config: creating would make an ambiguous
+        // same-named duplicate (Docker does not enforce unique network names),
+        // so create() must refuse.
+        Network::Builder changed = base;
+        changed.with_label("tc-reuse-extra", "1");
+        try {
+            Network dup = changed.create();
+            ADD_FAILURE() << "same-name different-config create did not throw";
+            dup.keep(false); // arm removal so the duplicate is cleaned up anyway
+        } catch (const DockerError&) {
+            // expected
+        }
+    } catch (...) {
+        // Manual cleanup: the reuse network is persistent and NOT reaped, so
+        // no handle will remove it — we must, even on failure.
+        if (!created_id.empty()) {
+            try {
+                DockerClient::from_environment().remove_network(created_id);
+            } catch (...) {
+                // Best-effort: rethrowing the real failure matters more.
+            }
+        }
+        throw;
+    }
+
+    // Manual cleanup (see above): the persistent handles removed nothing.
+    ASSERT_FALSE(created_id.empty());
+    EXPECT_NO_THROW(DockerClient::from_environment().remove_network(created_id));
+}
+
+TEST_F(Networks, BuilderWithReuseDisabledDegrades) {
+    const tctest::ScopedEnv disable("TESTCONTAINERS_REUSE_ENABLE", std::nullopt);
+
+    // With reuse NOT enabled globally, with_reuse degrades to a normal
+    // (session-labeled, auto-removed) network — and needs no fixed name.
+    Network a = Network::builder().with_reuse().create();
+    Network b = Network::builder().with_reuse().create();
+    EXPECT_NE(a.id(), b.id()) << "reuse should be inactive when not enabled globally";
+    EXPECT_FALSE(a.is_persistent());
+    EXPECT_FALSE(b.is_persistent());
+
+    const NetworkInspect info = a.inspect();
+    EXPECT_EQ(info.labels.count("org.testcontainers.session-id"), 1u);
+    EXPECT_EQ(info.labels.count("org.testcontainers.reuse.hash"), 0u);
+
+    // Both networks are torn down by RAII at scope exit.
+}
+
+TEST_F(Networks, BuilderWithReuseRequiresName) {
+    const tctest::ScopedEnv enable("TESTCONTAINERS_REUSE_ENABLE", "true");
+
+    // An active reuse request without a fixed name can never match across
+    // runs — create() must refuse rather than quietly make throwaway networks.
+    EXPECT_THROW(Network::builder().with_reuse().create(), DockerError);
 }
 
 TEST_F(Networks, KeepReleasesRemovalOwnership) {

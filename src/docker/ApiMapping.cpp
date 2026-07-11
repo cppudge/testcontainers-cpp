@@ -387,61 +387,83 @@ VolumeInspect parse_volume_inspect(const std::string& body) {
     });
 }
 
+static NetworkInspect network_inspect_from_json(const nlohmann::json& json);
+
 NetworkInspect parse_network_inspect(const std::string& body) {
-    return guard_parse("inspect_network", body, [&] {
+    return guard_parse("inspect_network", body,
+                       [&] { return network_inspect_from_json(nlohmann::json::parse(body)); });
+}
+
+std::vector<NetworkInspect> parse_network_list(const std::string& body) {
+    return guard_parse("list_networks", body, [&] {
         const nlohmann::json json = nlohmann::json::parse(body);
 
-        NetworkInspect info;
-        info.id = json.value("Id", std::string{});
-        info.name = json.value("Name", std::string{});
-        info.driver = json.value("Driver", std::string{});
-        info.scope = json.value("Scope", std::string{});
-        info.internal = json.value("Internal", false);
-        info.attachable = json.value("Attachable", false);
-        info.enable_ipv6 = json.value("EnableIPv6", false);
-        info.options = read_string_map(json, "Options");
-        info.labels = read_string_map(json, "Labels");
-
-        if (const auto ipam = json.find("IPAM"); ipam != json.end() && ipam->is_object()) {
-            if (const auto config = ipam->find("Config");
-                config != ipam->end() && config->is_array()) {
-                for (const auto& pool : *config) {
-                    if (!pool.is_object()) {
-                        continue;
-                    }
-                    NetworkIpamPool parsed;
-                    parsed.subnet = pool.value("Subnet", std::string{});
-                    parsed.gateway = pool.value("Gateway", std::string{});
-                    parsed.ip_range = pool.value("IPRange", std::string{});
-                    if (const auto aux = pool.find("AuxiliaryAddresses");
-                        aux != pool.end() && aux->is_object()) {
-                        // Sorted by name (nlohmann objects iterate in key order).
-                        for (const auto& [name, ip] : aux->items()) {
-                            parsed.aux_addresses.emplace_back(name, ip.get<std::string>());
-                        }
-                    }
-                    info.ipam_pools.push_back(std::move(parsed));
-                }
+        std::vector<NetworkInspect> out;
+        if (!json.is_array()) {
+            return out;
+        }
+        for (const auto& entry : json) {
+            if (entry.is_object()) {
+                out.push_back(network_inspect_from_json(entry));
             }
         }
-
-        if (const auto containers = json.find("Containers");
-            containers != json.end() && containers->is_object()) {
-            for (const auto& [id, endpoint] : containers->items()) {
-                NetworkEndpoint parsed;
-                if (endpoint.is_object()) {
-                    parsed.name = endpoint.value("Name", std::string{});
-                    parsed.endpoint_id = endpoint.value("EndpointID", std::string{});
-                    parsed.mac_address = endpoint.value("MacAddress", std::string{});
-                    parsed.ipv4_address = endpoint.value("IPv4Address", std::string{});
-                    parsed.ipv6_address = endpoint.value("IPv6Address", std::string{});
-                }
-                info.containers.emplace(id, std::move(parsed));
-            }
-        }
-
-        return info;
+        return out;
     });
+}
+
+/// The from-json core shared by the single inspect and the list endpoint: a
+/// `GET /networks` entry is the same NetworkResource shape, the daemon just
+/// leaves `Containers` unpopulated in list responses.
+static NetworkInspect network_inspect_from_json(const nlohmann::json& json) {
+    NetworkInspect info;
+    info.id = json.value("Id", std::string{});
+    info.name = json.value("Name", std::string{});
+    info.driver = json.value("Driver", std::string{});
+    info.scope = json.value("Scope", std::string{});
+    info.internal = json.value("Internal", false);
+    info.attachable = json.value("Attachable", false);
+    info.enable_ipv6 = json.value("EnableIPv6", false);
+    info.options = read_string_map(json, "Options");
+    info.labels = read_string_map(json, "Labels");
+
+    if (const auto ipam = json.find("IPAM"); ipam != json.end() && ipam->is_object()) {
+        if (const auto config = ipam->find("Config"); config != ipam->end() && config->is_array()) {
+            for (const auto& pool : *config) {
+                if (!pool.is_object()) {
+                    continue;
+                }
+                NetworkIpamPool parsed;
+                parsed.subnet = pool.value("Subnet", std::string{});
+                parsed.gateway = pool.value("Gateway", std::string{});
+                parsed.ip_range = pool.value("IPRange", std::string{});
+                if (const auto aux = pool.find("AuxiliaryAddresses");
+                    aux != pool.end() && aux->is_object()) {
+                    // Sorted by name (nlohmann objects iterate in key order).
+                    for (const auto& [name, ip] : aux->items()) {
+                        parsed.aux_addresses.emplace_back(name, ip.get<std::string>());
+                    }
+                }
+                info.ipam_pools.push_back(std::move(parsed));
+            }
+        }
+    }
+
+    if (const auto containers = json.find("Containers");
+        containers != json.end() && containers->is_object()) {
+        for (const auto& [id, endpoint] : containers->items()) {
+            NetworkEndpoint parsed;
+            if (endpoint.is_object()) {
+                parsed.name = endpoint.value("Name", std::string{});
+                parsed.endpoint_id = endpoint.value("EndpointID", std::string{});
+                parsed.mac_address = endpoint.value("MacAddress", std::string{});
+                parsed.ipv4_address = endpoint.value("IPv4Address", std::string{});
+                parsed.ipv6_address = endpoint.value("IPv6Address", std::string{});
+            }
+            info.containers.emplace(id, std::move(parsed));
+        }
+    }
+
+    return info;
 }
 
 ImageInspect parse_image_inspect(const std::string& body) {

@@ -370,6 +370,7 @@ Network / Volume) on Windows.
 | `copy_from_container_to(id, path, dest)` | ✅ | ✅ | ✅ Copy.CopyFromToDirectoryRoundTrip | ❌ |
 | `container_path_stat(id, path)` | ✅ | ✅ | ✅ Copy.ContainerPathStat | ❌ |
 | `create_network(name, labels)` / `create_network(spec)` | ✅ | ✅ | ✅ via Network (Networks.*) | ✅ via Network (WindowsNetworks.*) |
+| `list_networks(filters)` | ✅ | ✅ | ✅ Networks.ListNetworksFindsByLabel (+ the reuse find-before-create) | ❌ (Linux-only, as with `list_containers`) |
 | `connect_network(net, id, aliases)` | ✅ | ✅ | ✅ via Network.connect (Networks.ConnectAttachesRunningContainerWithAlias) | ❌ [a] |
 | `disconnect_network(net, id, force)` | ✅ | ✅ | ❌ [b] | ❌ |
 | `remove_network(id)` | ✅ | ✅ | ✅ via Network (Networks.CreateAndRemove) | ✅ via Network (WindowsNetworks.CreateAndRemove) |

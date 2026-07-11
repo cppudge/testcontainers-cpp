@@ -276,8 +276,15 @@ addresses, options, labels, and the attached containers'
 endpoints — addresses in CIDR form), `net.inspect_raw()` the full JSON (both over
 `DockerClient::inspect_network[_raw]`). `net.keep()` releases removal ownership —
 `Container::keep` semantics, including the Ryuk caveat (the network stays session-labeled, so
-the reaper still removes it after the process exits) and the `keep(false)` re-arm. No
-process-wide dedup — every `create()` makes a brand-new network.
+the reaper still removes it after the process exits) and the `keep(false)` re-arm.
+`Builder::with_reuse` (2026-07-11) is find-or-create with `GenericImage::with_reuse`
+semantics: gated on the same global enable, matched by a config-hash label plus the exact
+`with_name` (required), adopted/created networks are persistent and NOT session-reaped
+(external cleanup = the reuse-hash label sweep), and a same-name network with a DIFFERENT
+config makes `create()` throw rather than add an ambiguous duplicate (Docker does not
+enforce unique network names). `DockerClient::list_networks(filters)` lists networks
+(label/name filters; the daemon matches names by substring). No process-wide dedup of
+non-reuse networks — every plain `create()` makes a brand-new network.
 
 **Host access (`with_exposed_host_port`)** — services listening on the test host become
 reachable from containers at `host.testcontainers.internal:<port>` through the standard
