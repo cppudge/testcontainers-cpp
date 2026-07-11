@@ -116,6 +116,53 @@ struct Reaper::Impl {
     std::vector<std::string> filters; ///< lines Ryuk has ACKed, registration order
 };
 
+namespace {
+
+/// One filter-line round-trip on a connected Ryuk control socket: write
+/// `line`, then read the reply line (Ryuk answers one line per accepted
+/// filter). Each leg is bounded by budget() and cancelled on expiry — the
+/// socket stays usable for the caller to close or keep. On failure `ec` is
+/// set and the returned reply is empty; the caller checks the reply for
+/// "ACK" and decides retry vs throw.
+template <class BudgetFn>
+std::string send_filter_line(asio::io_context& io, tcp::socket& socket, const std::string& line,
+                             const BudgetFn& budget, boost::system::error_code& ec) {
+    bool done = false;
+    asio::async_write(socket, asio::buffer(line),
+                      [&](const boost::system::error_code& op_ec, std::size_t) {
+                          done = true;
+                          ec = op_ec;
+                      });
+    run_pending(io, budget(), done, ec, [&] {
+        boost::system::error_code ignore;
+        socket.cancel(ignore);
+    });
+    if (ec) {
+        return {};
+    }
+
+    asio::streambuf buf;
+    done = false;
+    asio::async_read_until(socket, buf, '\n',
+                           [&](const boost::system::error_code& op_ec, std::size_t) {
+                               done = true;
+                               ec = op_ec;
+                           });
+    run_pending(io, budget(), done, ec, [&] {
+        boost::system::error_code ignore;
+        socket.cancel(ignore);
+    });
+    if (ec) {
+        return {};
+    }
+    std::istream is(&buf);
+    std::string reply;
+    std::getline(is, reply);
+    return reply;
+}
+
+} // namespace
+
 Reaper::Reaper() = default;
 Reaper::~Reaper() = default;
 
@@ -221,33 +268,8 @@ std::unique_ptr<Reaper::Impl> Reaper::boot_daemon_locked(DockerClient& client) {
         });
 
         if (!ec) {
-            done = false;
-            asio::async_write(impl->socket, asio::buffer(line),
-                              [&](const boost::system::error_code& op_ec, std::size_t) {
-                                  done = true;
-                                  ec = op_ec;
-                              });
-            run_pending(impl->io, budget_left(), done, ec, [&] {
-                boost::system::error_code ignore;
-                impl->socket.cancel(ignore);
-            });
-        }
-
-        if (!ec) {
-            asio::streambuf buf;
-            done = false;
-            asio::async_read_until(impl->socket, buf, '\n',
-                                   [&](const boost::system::error_code& op_ec, std::size_t) {
-                                       done = true;
-                                       ec = op_ec;
-                                   });
-            run_pending(impl->io, budget_left(), done, ec, [&] {
-                boost::system::error_code ignore;
-                impl->socket.cancel(ignore);
-            });
+            ack = send_filter_line(impl->io, impl->socket, line, budget_left, ec);
             if (!ec) {
-                std::istream is(&buf);
-                std::getline(is, ack);
                 handshaken = true;
                 break;
             }
@@ -309,36 +331,8 @@ void Reaper::register_filter(const std::string& key, const std::string& value) {
     // ACKed the session filter on this very socket, so a failure here is a
     // dead reaper — surface it rather than run without crash-safe reaping.
     boost::system::error_code ec;
-    const std::optional<std::chrono::milliseconds> leg_budget{std::chrono::seconds(5)};
-    bool done = false;
-    asio::async_write(impl->socket, asio::buffer(line),
-                      [&](const boost::system::error_code& op_ec, std::size_t) {
-                          done = true;
-                          ec = op_ec;
-                      });
-    run_pending(impl->io, leg_budget, done, ec, [&] {
-        boost::system::error_code ignore;
-        impl->socket.cancel(ignore);
-    });
-
-    std::string ack;
-    if (!ec) {
-        asio::streambuf buf;
-        done = false;
-        asio::async_read_until(impl->socket, buf, '\n',
-                               [&](const boost::system::error_code& op_ec, std::size_t) {
-                                   done = true;
-                                   ec = op_ec;
-                               });
-        run_pending(impl->io, leg_budget, done, ec, [&] {
-            boost::system::error_code ignore;
-            impl->socket.cancel(ignore);
-        });
-        if (!ec) {
-            std::istream is(&buf);
-            std::getline(is, ack);
-        }
-    }
+    const auto leg_budget = [] { return std::chrono::milliseconds(std::chrono::seconds(5)); };
+    const std::string ack = send_filter_line(impl->io, impl->socket, line, leg_budget, ec);
     if (ec) {
         throw DockerError("Failed to register the Ryuk filter for " + key + "=" + value + ": " +
                           ec.message());

@@ -14,37 +14,36 @@
 
 namespace testcontainers {
 
-std::uint16_t Container::get_host_port(ContainerPort port) const {
-    const ContainerInspect info = client_.inspect_container(id_);
+namespace {
+
+/// Shared body of the get_host_port family: inspect, select the host port for
+/// `port` by address `family`, and throw — with the family spelled out as
+/// `published` ("published" / "IPv4-published" / "IPv6-published") — when the
+/// container publishes none.
+std::uint16_t host_port_or_throw(DockerClient& client, const std::string& id, ContainerPort port,
+                                 docker::HostPortFamily family, const char* published) {
+    const ContainerInspect info = client.inspect_container(id);
     const std::string key = to_string(port); // e.g. "6379/tcp"
-    const auto host_port = docker::select_host_port(info.ports, key, docker::HostPortFamily::Any);
+    const auto host_port = docker::select_host_port(info.ports, key, family);
     if (!host_port) {
-        throw DockerError("Container " + id_ + " has no published host port for " + key,
-                          std::nullopt, id_);
+        throw DockerError("Container " + id + " has no " + published + " host port for " + key,
+                          std::nullopt, id);
     }
     return *host_port;
+}
+
+} // namespace
+
+std::uint16_t Container::get_host_port(ContainerPort port) const {
+    return host_port_or_throw(client_, id_, port, docker::HostPortFamily::Any, "published");
 }
 
 std::uint16_t Container::get_host_port_ipv4(ContainerPort port) const {
-    const ContainerInspect info = client_.inspect_container(id_);
-    const std::string key = to_string(port);
-    const auto host_port = docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv4);
-    if (!host_port) {
-        throw DockerError("Container " + id_ + " has no IPv4-published host port for " + key,
-                          std::nullopt, id_);
-    }
-    return *host_port;
+    return host_port_or_throw(client_, id_, port, docker::HostPortFamily::Ipv4, "IPv4-published");
 }
 
 std::uint16_t Container::get_host_port_ipv6(ContainerPort port) const {
-    const ContainerInspect info = client_.inspect_container(id_);
-    const std::string key = to_string(port);
-    const auto host_port = docker::select_host_port(info.ports, key, docker::HostPortFamily::Ipv6);
-    if (!host_port) {
-        throw DockerError("Container " + id_ + " has no IPv6-published host port for " + key,
-                          std::nullopt, id_);
-    }
-    return *host_port;
+    return host_port_or_throw(client_, id_, port, docker::HostPortFamily::Ipv6, "IPv6-published");
 }
 
 std::uint16_t Container::first_mapped_port() const {

@@ -539,31 +539,34 @@ void extract_tar_to_dir(const TarSource& source, const std::filesystem::path& de
 }
 
 std::vector<TarEntry> extract_tar(const std::string& tar_bytes) {
-    struct archive* a = archive_read_new();
+    ArchivePtr a(archive_read_new(), archive_read_free);
     if (a == nullptr) {
         throw DockerError("extract_tar: archive_read_new failed");
     }
-    archive_read_support_format_tar(a);
+    archive_read_support_format_tar(a.get());
 
-    if (archive_read_open_memory(a, tar_bytes.data(), tar_bytes.size()) != ARCHIVE_OK) {
-        const std::string err = archive_error_string(a) ? archive_error_string(a) : "unknown error";
-        archive_read_free(a);
-        throw DockerError("extract_tar: archive_read_open_memory failed: " + err);
+    // The ArchivePtr frees the handle on every exit; throwing needs no manual
+    // cleanup (extract_tar_to_dir works the same way).
+    const auto fail = [&a](const char* what) {
+        const char* err = archive_error_string(a.get());
+        throw DockerError("extract_tar: " + std::string(what) +
+                          " failed: " + (err != nullptr ? err : "unknown error"));
+    };
+
+    if (archive_read_open_memory(a.get(), tar_bytes.data(), tar_bytes.size()) != ARCHIVE_OK) {
+        fail("archive_read_open_memory");
     }
 
     std::vector<TarEntry> entries;
     struct archive_entry* entry = nullptr;
     for (;;) {
-        const int rc = archive_read_next_header(a, &entry);
+        const int rc = archive_read_next_header(a.get(), &entry);
         if (rc == ARCHIVE_EOF) {
             break;
         }
         // ARCHIVE_WARN is non-fatal (e.g. an unset field); anything below it is.
         if (rc < ARCHIVE_WARN) {
-            const std::string err =
-                archive_error_string(a) ? archive_error_string(a) : "unknown error";
-            archive_read_free(a);
-            throw DockerError("extract_tar: archive_read_next_header failed: " + err);
+            fail("archive_read_next_header");
         }
 
         TarEntry out;
@@ -575,21 +578,17 @@ std::vector<TarEntry> extract_tar(const std::string& tar_bytes) {
         if (out.is_regular_file) {
             char buf[4096];
             la_ssize_t n = 0;
-            while ((n = archive_read_data(a, buf, sizeof(buf))) > 0) {
+            while ((n = archive_read_data(a.get(), buf, sizeof(buf))) > 0) {
                 out.body.append(buf, static_cast<std::size_t>(n));
             }
             if (n < 0) {
-                const std::string err =
-                    archive_error_string(a) ? archive_error_string(a) : "unknown error";
-                archive_read_free(a);
-                throw DockerError("extract_tar: archive_read_data failed: " + err);
+                fail("archive_read_data");
             }
         }
 
         entries.push_back(std::move(out));
     }
 
-    archive_read_free(a);
     return entries;
 }
 

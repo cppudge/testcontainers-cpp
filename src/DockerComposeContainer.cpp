@@ -2,6 +2,7 @@
 
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
+#include "WaitStrategies.hpp"
 #include "compose/ComposeClients.hpp"
 #include "compose/ComposeCommand.hpp"
 #include "docker/Ports.hpp"
@@ -9,10 +10,6 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
-
-#include <boost/asio/connect.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -26,9 +23,6 @@
 namespace testcontainers {
 
 namespace {
-
-namespace asio = boost::asio;
-using asio::ip::tcp;
 
 /// The default containerised ambassador image: a long-lived `docker:cli`
 /// container drives `docker compose` (v2) via exec. (Was `docker/compose:1.29.2`
@@ -237,13 +231,17 @@ DockerComposeContainer&
 DockerComposeContainer::operator=(DockerComposeContainer&&) noexcept = default;
 DockerComposeContainer::~DockerComposeContainer() { stop(); }
 
+// Each rvalue (&&) overload delegates to its lvalue twin, so every setter has
+// ONE body. The && variants themselves must stay: the handle is move-only, so
+// chaining on a temporary — `auto c = from_yaml(y).with_exposed_service(...)`
+// — needs an rvalue to move from, which the & overload cannot provide.
+
 DockerComposeContainer& DockerComposeContainer::with_client(ComposeClientKind kind) & {
     client_kind_ = kind;
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_client(ComposeClientKind kind) && {
-    client_kind_ = kind;
-    return std::move(*this);
+    return std::move(with_client(kind));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_exposed_service(std::string service,
@@ -253,8 +251,7 @@ DockerComposeContainer& DockerComposeContainer::with_exposed_service(std::string
 }
 DockerComposeContainer&& DockerComposeContainer::with_exposed_service(std::string service,
                                                                       ContainerPort port) && {
-    exposed_services_.emplace_back(std::move(service), port);
-    return std::move(*this);
+    return std::move(with_exposed_service(std::move(service), port));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_project_name(std::string name) & {
@@ -262,8 +259,7 @@ DockerComposeContainer& DockerComposeContainer::with_project_name(std::string na
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_project_name(std::string name) && {
-    project_ = std::move(name);
-    return std::move(*this);
+    return std::move(with_project_name(std::move(name)));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_compose_image(std::string image) & {
@@ -271,8 +267,7 @@ DockerComposeContainer& DockerComposeContainer::with_compose_image(std::string i
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_compose_image(std::string image) && {
-    compose_image_ = std::move(image);
-    return std::move(*this);
+    return std::move(with_compose_image(std::move(image)));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_env(std::string key, std::string value) & {
@@ -280,8 +275,7 @@ DockerComposeContainer& DockerComposeContainer::with_env(std::string key, std::s
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_env(std::string key, std::string value) && {
-    env_[std::move(key)] = std::move(value);
-    return std::move(*this);
+    return std::move(with_env(std::move(key), std::move(value)));
 }
 
 DockerComposeContainer&
@@ -293,10 +287,7 @@ DockerComposeContainer::with_env_vars(std::map<std::string, std::string> env) & 
 }
 DockerComposeContainer&&
 DockerComposeContainer::with_env_vars(std::map<std::string, std::string> env) && {
-    for (auto& [key, value] : env) {
-        env_[key] = std::move(value);
-    }
-    return std::move(*this);
+    return std::move(with_env_vars(std::move(env)));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_build(bool build) & {
@@ -304,8 +295,7 @@ DockerComposeContainer& DockerComposeContainer::with_build(bool build) & {
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_build(bool build) && {
-    build_ = build;
-    return std::move(*this);
+    return std::move(with_build(build));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_pull(bool pull) & {
@@ -313,8 +303,7 @@ DockerComposeContainer& DockerComposeContainer::with_pull(bool pull) & {
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_pull(bool pull) && {
-    pull_ = pull;
-    return std::move(*this);
+    return std::move(with_pull(pull));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_wait(bool wait) & {
@@ -322,8 +311,7 @@ DockerComposeContainer& DockerComposeContainer::with_wait(bool wait) & {
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_wait(bool wait) && {
-    wait_ = wait;
-    return std::move(*this);
+    return std::move(with_wait(wait));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_wait_timeout(std::chrono::seconds timeout) & {
@@ -332,8 +320,7 @@ DockerComposeContainer& DockerComposeContainer::with_wait_timeout(std::chrono::s
 }
 DockerComposeContainer&&
 DockerComposeContainer::with_wait_timeout(std::chrono::seconds timeout) && {
-    wait_timeout_ = timeout;
-    return std::move(*this);
+    return std::move(with_wait_timeout(timeout));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_remove_volumes(bool remove) & {
@@ -341,8 +328,7 @@ DockerComposeContainer& DockerComposeContainer::with_remove_volumes(bool remove)
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_remove_volumes(bool remove) && {
-    remove_volumes_ = remove;
-    return std::move(*this);
+    return std::move(with_remove_volumes(remove));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_remove_images(bool remove) & {
@@ -350,8 +336,7 @@ DockerComposeContainer& DockerComposeContainer::with_remove_images(bool remove) 
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_remove_images(bool remove) && {
-    remove_images_ = remove;
-    return std::move(*this);
+    return std::move(with_remove_images(remove));
 }
 
 void DockerComposeContainer::start() {
@@ -413,36 +398,30 @@ void DockerComposeContainer::start() {
     active_ = std::move(stack);
 
     // 4) Extra guarantee on top of compose's `--wait`: wait for each exposed
-    //    service's published host port to accept a TCP connection (mirrors the
-    //    Reaper connect-retry loop). This confirms the port is actually open
-    //    even for services without a healthcheck.
+    //    service's published host port to accept a TCP connection (the Port
+    //    wait strategy's probe; each attempt is bounded — see probe_budget —
+    //    so a black-holed connect cannot overshoot the wait timeout). This
+    //    confirms the port is actually open even for services without a
+    //    healthcheck.
     for (const auto& [service, port] : exposed_services_) {
         const std::uint16_t host_port = get_service_port(service, port);
         const std::string host = get_service_host(service);
 
-        asio::io_context io;
-        boost::system::error_code ec;
         // The same user-configurable timeout that governs compose's --wait.
         const auto deadline = std::chrono::steady_clock::now() + wait_timeout_;
         bool connected = false;
         while (std::chrono::steady_clock::now() < deadline) {
-            tcp::resolver resolver(io);
-            const auto endpoints = resolver.resolve(host, std::to_string(host_port), ec);
-            if (!ec) {
-                tcp::socket socket(io);
-                asio::connect(socket, endpoints, ec);
-                if (!ec) {
-                    connected = true;
-                    break;
-                }
+            if (detail::tcp_probe(host, host_port, detail::probe_budget(deadline))) {
+                connected = true;
+                break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         if (!connected) {
-            throw StartupTimeoutError(
-                "Compose service '" + service + "' host port " + std::to_string(host_port) +
-                    " did not accept a connection within the wait timeout: " + ec.message(),
-                service);
+            throw StartupTimeoutError("Compose service '" + service + "' host port " +
+                                          std::to_string(host_port) +
+                                          " did not accept a connection within the wait timeout",
+                                      service);
         }
     }
 }

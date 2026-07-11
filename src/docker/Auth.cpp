@@ -143,20 +143,34 @@ std::string resolve_registry(const std::string& image) {
     return kDockerHub;
 }
 
-std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_json,
-                                                    const std::string& registry) {
-    nlohmann::json root;
+namespace {
+
+/// Parse best-effort JSON input (a config file, a helper's stdout) as a JSON
+/// OBJECT: nullopt for invalid JSON or a non-object top level — the caller
+/// treats both as "nothing configured".
+std::optional<nlohmann::json> parse_json_object(const std::string& text) {
     try {
-        root = nlohmann::json::parse(config_json);
+        nlohmann::json root = nlohmann::json::parse(text);
+        if (!root.is_object()) {
+            return std::nullopt;
+        }
+        return root;
     } catch (const nlohmann::json::parse_error&) {
         return std::nullopt;
     }
-    if (!root.is_object()) {
+}
+
+} // namespace
+
+std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_json,
+                                                    const std::string& registry) {
+    const std::optional<nlohmann::json> root = parse_json_object(config_json);
+    if (!root) {
         return std::nullopt;
     }
 
-    const auto auths = root.find("auths");
-    if (auths == root.end() || !auths->is_object()) {
+    const auto auths = root->find("auths");
+    if (auths == root->end() || !auths->is_object()) {
         // No plaintext "auths" map — there is nothing for THIS pure lookup to
         // return. A credential helper (credsStore / credHelpers), if configured,
         // is resolved by select_credential_helper / auth_from_credential_helper.
@@ -204,20 +218,15 @@ std::optional<RegistryAuth> auth_from_docker_config(const std::string& config_js
 
 std::optional<std::string> select_credential_helper(const std::string& config_json,
                                                     const std::string& registry) {
-    nlohmann::json root;
-    try {
-        root = nlohmann::json::parse(config_json);
-    } catch (const nlohmann::json::parse_error&) {
-        return std::nullopt;
-    }
-    if (!root.is_object()) {
+    const std::optional<nlohmann::json> root = parse_json_object(config_json);
+    if (!root) {
         return std::nullopt;
     }
 
     // A per-registry credHelpers entry wins over the global credsStore. For
     // Docker Hub also try the legacy "https://index.docker.io/v1/" key.
-    if (const auto helpers = root.find("credHelpers");
-        helpers != root.end() && helpers->is_object()) {
+    if (const auto helpers = root->find("credHelpers");
+        helpers != root->end() && helpers->is_object()) {
         auto entry = helpers->find(registry);
         if (entry == helpers->end() && registry == kDockerHub) {
             entry = helpers->find(kDockerHubAuthKey);
@@ -227,8 +236,8 @@ std::optional<std::string> select_credential_helper(const std::string& config_js
         }
     }
 
-    if (const auto store = root.find("credsStore");
-        store != root.end() && store->is_string() && !store->get<std::string>().empty()) {
+    if (const auto store = root->find("credsStore");
+        store != root->end() && store->is_string() && !store->get<std::string>().empty()) {
         return store->get<std::string>();
     }
 
@@ -237,26 +246,21 @@ std::optional<std::string> select_credential_helper(const std::string& config_js
 
 std::optional<RegistryAuth> parse_credential_helper_output(const std::string& helper_json,
                                                            const std::string& registry) {
-    nlohmann::json root;
-    try {
-        root = nlohmann::json::parse(helper_json);
-    } catch (const nlohmann::json::parse_error&) {
-        return std::nullopt;
-    }
-    if (!root.is_object()) {
+    const std::optional<nlohmann::json> root = parse_json_object(helper_json);
+    if (!root) {
         return std::nullopt;
     }
 
     std::string username;
     std::string secret;
     std::string server_url;
-    if (const auto user = root.find("Username"); user != root.end() && user->is_string()) {
+    if (const auto user = root->find("Username"); user != root->end() && user->is_string()) {
         username = user->get<std::string>();
     }
-    if (const auto sec = root.find("Secret"); sec != root.end() && sec->is_string()) {
+    if (const auto sec = root->find("Secret"); sec != root->end() && sec->is_string()) {
         secret = sec->get<std::string>();
     }
-    if (const auto url = root.find("ServerURL"); url != root.end() && url->is_string()) {
+    if (const auto url = root->find("ServerURL"); url != root->end() && url->is_string()) {
         server_url = url->get<std::string>();
     }
 

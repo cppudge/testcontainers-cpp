@@ -322,7 +322,9 @@ the config file itself is still re-read per pull.
 to the host `docker compose` CLI, the one documented exception to the library's "no docker CLI"
 rule), Containerised (a long-lived `docker:26.1-cli` ambassador with the host socket
 bind-mounted), and Auto (probe, then fall back). Readiness = compose v2 `--wait
---wait-timeout` PLUS a TCP probe per `with_exposed_service` (phases budgeted separately).
+--wait-timeout` PLUS a TCP probe per `with_exposed_service` (phases budgeted separately; the
+probe is the Port wait strategy's — since 2026-07-11 each attempt is bounded, so a black-holed
+connect cannot overshoot the wait timeout).
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running

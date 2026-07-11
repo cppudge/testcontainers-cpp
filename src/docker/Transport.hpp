@@ -61,6 +61,22 @@ public:
     /// Receives one arriving chunk of an exchange(); return false to stop.
     using ChunkSink = std::function<bool(const char* data, std::size_t size)>;
 
+    /// Write ALL of `data` to `t`, mapping a 0-byte no-error write to
+    /// broken_pipe (it would spin forever). `ec` is empty iff everything went
+    /// out. Shared by the sequential exchange() fallback below and the
+    /// non-upgraded exec stdin feed.
+    static void write_all(ITransport& t, std::string_view data, boost::system::error_code& ec) {
+        ec = {};
+        std::size_t sent = 0;
+        while (sent < data.size() && !ec) {
+            const std::size_t n = t.write_some(data.data() + sent, data.size() - sent, ec);
+            if (n == 0 && !ec) {
+                ec = boost::asio::error::broken_pipe;
+            }
+            sent += n;
+        }
+    }
+
     /// Full-duplex exchange on a hijacked stream (the exec-attach pump): send
     /// all of `input` — half-closing after it when `eof_after_input` — while
     /// delivering every arriving chunk to `on_chunk`, until the peer ends the
@@ -85,14 +101,7 @@ public:
                           boost::system::error_code& ec) {
         ec = {};
         boost::system::error_code send_ec;
-        std::size_t sent = 0;
-        while (sent < input.size() && !send_ec) {
-            const std::size_t n = write_some(input.data() + sent, input.size() - sent, send_ec);
-            if (n == 0 && !send_ec) {
-                send_ec = boost::asio::error::broken_pipe; // a 0-byte success would spin
-            }
-            sent += n;
-        }
+        write_all(*this, input, send_ec);
         if (!send_ec && eof_after_input) {
             shutdown_send();
         }

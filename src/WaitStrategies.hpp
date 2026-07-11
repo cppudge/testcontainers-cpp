@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,6 +61,25 @@ inline ClampedWaitPlan clamped_wait_plan(std::chrono::steady_clock::time_point n
     const std::chrono::steady_clock::time_point wake = now + value;
     return {wake < deadline ? wake : deadline, wake > deadline};
 }
+
+/// Per-probe deadline: the time left until `deadline`, capped at 5s and
+/// floored at 1ms. A port that ACCEPTS the connection but never answers is an
+/// ordinary startup state (listener up, application not serving yet) — an
+/// unbounded probe there would hang the whole wait past its own deadline.
+///
+/// The cap must absorb Windows' refused-connect retry: "localhost" resolves to
+/// [::1, 127.0.0.1] and Docker Desktop's proxy listens on IPv4 only, so every
+/// probe first burns ~2s on the ::1 attempt (WinSock retries a refused
+/// loopback SYN) before 127.0.0.1 succeeds — a 2s cap made every probe time
+/// out mid-range-connect and the wait never became ready.
+std::chrono::milliseconds probe_budget(std::chrono::steady_clock::time_point deadline);
+
+/// One TCP probe, bounded by `budget`: resolve host:port and open a
+/// connection. Returns true on a successful connect (the caller treats that as
+/// "ready"), false on any refusal/unreachable/timeout (treated as "not ready
+/// yet"). Shared by the Port wait strategy and the compose published-port
+/// wait.
+bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::milliseconds budget);
 
 /// Run each readiness condition in `waits` in order, under a single shared
 /// deadline (`timeout` from the moment this is called). Throws

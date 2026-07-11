@@ -529,9 +529,7 @@ void DockerClient::build_image(const std::string& context_tar, const docker::Bui
 void DockerClient::build_image(const docker::BodyProducer& context,
                                const docker::BuildOptions& options,
                                const docker::BuildLogConsumer& consumer) {
-    const std::string target =
-        versioned("/build" + docker::build_build_query(
-                                 options, [](const std::string& v) { return url_encode(v); }));
+    const std::string target = versioned("/build" + docker::build_build_query(options, url_encode));
     const std::string ctx = "build_image('" + options.tag + "')";
 
     // Stream both directions: the context goes out in chunks as it is
@@ -603,9 +601,7 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
                                            const std::optional<RegistryAuth>& auth) {
     const std::string body = docker::build_create_body(spec).dump();
     const std::string target =
-        versioned("/containers/create" + docker::build_create_query(spec, [](const std::string& v) {
-                      return url_encode(v);
-                  }));
+        versioned("/containers/create" + docker::build_create_query(spec, url_encode));
     const std::vector<std::pair<std::string, std::string>> headers = {
         {"Content-Type", "application/json"}};
 
@@ -894,23 +890,13 @@ void exec_start(docker::ITransport& transport, docker::TransportStream& stream,
 /// intermediaries (Docker Desktop's named-pipe proxy loses both the data and
 /// the EOF; the docker CLI also reads the response header before streaming
 /// stdin). On a write error, closes `transport` and throws.
-void feed_stdin(docker::ITransport& transport, docker::TransportStream& stream,
-                const std::string& exec_id, const ExecOptions& opts) {
+void feed_stdin(docker::ITransport& transport, const std::string& exec_id,
+                const ExecOptions& opts) {
     if (!opts.stdin_data) {
         return;
     }
     boost::system::error_code ec;
-    const std::string& in = *opts.stdin_data;
-    std::size_t sent = 0;
-    while (sent < in.size() && !ec) {
-        const std::size_t n =
-            stream.write_some(boost::asio::const_buffer(in.data() + sent, in.size() - sent), ec);
-        if (n == 0 && !ec) {
-            // Defensive: a 0-byte write without an error would spin forever.
-            ec = boost::asio::error::broken_pipe;
-        }
-        sent += n;
-    }
+    docker::ITransport::write_all(transport, *opts.stdin_data, ec);
     if (ec) {
         transport.close();
         docker::throw_transport_error(
@@ -1065,7 +1051,7 @@ DockerClient::exec_stream_impl(const std::string& id, const std::vector<std::str
     } else if (arm_streaming_deadline(*transport, deadline)) {
         // No stdin on this path (or a daemon that ignored the upgrade, where
         // stdin — when any — goes in sequentially; see feed_stdin).
-        feed_stdin(*transport, stream, exec_id, opts);
+        feed_stdin(*transport, exec_id, opts);
         if (parser.get().result_int() == 101) {
             // Upgraded (the normal path): raw stream, not an HTTP body (see the
             // non-streaming overload).

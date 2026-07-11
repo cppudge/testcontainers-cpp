@@ -1,6 +1,7 @@
 #include "testcontainers/GenericBuildableImage.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -11,6 +12,7 @@
 #include "Reaper.hpp"
 #include "docker/DockerIgnore.hpp"
 #include "docker/Tar.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/docker/BuildOptions.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -38,24 +40,44 @@ void append_dir_context(std::vector<docker::TarFile>& files, const std::filesyst
 
     const bool root_mapped = target.empty();
     const std::filesystem::path base(target);
-    for (const auto& it : std::filesystem::recursive_directory_iterator(src)) {
-        if (!it.is_regular_file()) {
-            continue;
+    const std::size_t first_appended = files.size();
+    try {
+        for (const auto& it : std::filesystem::recursive_directory_iterator(src)) {
+            if (!it.is_regular_file()) {
+                continue;
+            }
+            // u8string keeps entry names UTF-8 regardless of the host code
+            // page (same reasoning as the tar walk in docker/Tar.cpp;
+            // generic_string would re-encode through the ANSI page on
+            // Windows).
+            const std::filesystem::path rel_path = it.path().lexically_relative(src);
+            const std::u8string rel8 = rel_path.generic_u8string();
+            const std::string rel(rel8.begin(), rel8.end());
+            if (root_mapped && rel == "Dockerfile" && skip_dockerfile) {
+                continue;
+            }
+            const bool always_shipped =
+                root_mapped && (rel == ".dockerignore" || rel == "Dockerfile");
+            if (!always_shipped && !patterns.empty() &&
+                docker::dockerignore_excludes(patterns, rel)) {
+                continue;
+            }
+            docker::TarFile file;
+            const std::u8string name8 = (base / rel_path).generic_u8string();
+            file.name = std::string(name8.begin(), name8.end());
+            file.path = it.path();
+            file.mode = mode;
+            files.push_back(std::move(file));
         }
-        const std::string rel = it.path().lexically_relative(src).generic_string();
-        if (root_mapped && rel == "Dockerfile" && skip_dockerfile) {
-            continue;
-        }
-        const bool always_shipped = root_mapped && (rel == ".dockerignore" || rel == "Dockerfile");
-        if (!always_shipped && !patterns.empty() && docker::dockerignore_excludes(patterns, rel)) {
-            continue;
-        }
-        docker::TarFile file;
-        file.name = (base / rel).generic_string();
-        file.path = it.path();
-        file.mode = mode;
-        files.push_back(std::move(file));
+    } catch (const std::filesystem::filesystem_error& e) {
+        throw DockerError("build context: cannot walk host directory '" + src.string() +
+                          "': " + e.what());
     }
+    // Directory iteration order is unspecified; sort this source's expansion
+    // so the context tar — and any digest of it — is deterministic across
+    // rebuilds (mirrors the copy-to tar walk).
+    std::sort(files.begin() + static_cast<std::ptrdiff_t>(first_appended), files.end(),
+              [](const docker::TarFile& a, const docker::TarFile& b) { return a.name < b.name; });
 }
 
 } // namespace

@@ -53,6 +53,18 @@ std::map<std::string, std::string> read_string_map(const nlohmann::json& json, c
     return out;
 }
 
+/// The emit-side mirror of read_string_map: a JSON object from key/value
+/// pairs (a duplicate key keeps the LAST value, like the loops this
+/// replaced). Every caller skips empty inputs entirely (an absent map reads
+/// as empty), so this never needs to emit `{}`.
+nlohmann::json json_object_from(const std::vector<std::pair<std::string, std::string>>& pairs) {
+    nlohmann::json out = nlohmann::json::object();
+    for (const auto& [key, value] : pairs) {
+        out[key] = value;
+    }
+    return out;
+}
+
 /// Read an array of strings at `key`. Absent / null become an empty vector
 /// (Docker emits `null` for an empty Entrypoint / RepoTags / ...).
 std::vector<std::string> read_string_array(const nlohmann::json& json, const char* key) {
@@ -90,11 +102,7 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         body["Tty"] = true;
     }
     if (!spec.labels.empty()) {
-        nlohmann::json labels = nlohmann::json::object();
-        for (const auto& [key, value] : spec.labels) {
-            labels[key] = value;
-        }
-        body["Labels"] = std::move(labels);
+        body["Labels"] = json_object_from(spec.labels);
     }
     if (!spec.exposed_ports.empty()) {
         nlohmann::json exposed = nlohmann::json::object();
@@ -170,11 +178,7 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         host_config["DnsOptions"] = spec.dns_options;
     }
     if (!spec.sysctls.empty()) {
-        nlohmann::json sysctls = nlohmann::json::object();
-        for (const auto& [key, value] : spec.sysctls) {
-            sysctls[key] = value;
-        }
-        host_config["Sysctls"] = std::move(sysctls);
+        host_config["Sysctls"] = json_object_from(spec.sysctls);
     }
     if (!spec.devices.empty()) {
         nlohmann::json devices = nlohmann::json::array();
@@ -305,18 +309,10 @@ nlohmann::json build_network_create_body(const NetworkCreateSpec& spec) {
         body["EnableIPv6"] = true;
     }
     if (!spec.options.empty()) {
-        nlohmann::json options = nlohmann::json::object();
-        for (const auto& [key, value] : spec.options) {
-            options[key] = value;
-        }
-        body["Options"] = std::move(options);
+        body["Options"] = json_object_from(spec.options);
     }
     if (!spec.labels.empty()) {
-        nlohmann::json labels = nlohmann::json::object();
-        for (const auto& [key, value] : spec.labels) {
-            labels[key] = value;
-        }
-        body["Labels"] = std::move(labels);
+        body["Labels"] = json_object_from(spec.labels);
     }
     if (spec.subnet || spec.gateway) {
         nlohmann::json config = nlohmann::json::object();
@@ -342,18 +338,10 @@ nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec) {
         body["Driver"] = *spec.driver;
     }
     if (!spec.driver_opts.empty()) {
-        nlohmann::json opts = nlohmann::json::object();
-        for (const auto& [key, value] : spec.driver_opts) {
-            opts[key] = value;
-        }
-        body["DriverOpts"] = std::move(opts);
+        body["DriverOpts"] = json_object_from(spec.driver_opts);
     }
     if (!spec.labels.empty()) {
-        nlohmann::json labels = nlohmann::json::object();
-        for (const auto& [key, value] : spec.labels) {
-            labels[key] = value;
-        }
-        body["Labels"] = std::move(labels);
+        body["Labels"] = json_object_from(spec.labels);
     }
 
     return body;
@@ -775,18 +763,10 @@ std::string build_build_query(const BuildOptions& options,
         append("target", options.target);
     }
     if (!options.build_args.empty()) {
-        nlohmann::json args = nlohmann::json::object();
-        for (const auto& [key, value] : options.build_args) {
-            args[key] = value;
-        }
-        append("buildargs", args.dump());
+        append("buildargs", json_object_from(options.build_args).dump());
     }
     if (!options.labels.empty()) {
-        nlohmann::json labels = nlohmann::json::object();
-        for (const auto& [key, value] : options.labels) {
-            labels[key] = value;
-        }
-        append("labels", labels.dump());
+        append("labels", json_object_from(options.labels).dump());
     }
     return query;
 }
