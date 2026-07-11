@@ -146,6 +146,7 @@ endif()
 # ===== Library =====
 add_library(testcontainers
     src/version.cpp
+    src/Config.cpp
     src/docker/DockerHost.cpp
     src/docker/Transport.cpp
     src/docker/ApiMapping.cpp
@@ -243,6 +244,7 @@ if(BUILD_TESTING)
     # Unit tests — no Docker required.
     add_executable(tc_unit_tests
         tests/unit/version_test.cpp
+        tests/unit/ConfigTest.cpp
         tests/unit/DockerHostTest.cpp
         tests/unit/HostResolveTest.cpp
         tests/unit/ResponseTest.cpp

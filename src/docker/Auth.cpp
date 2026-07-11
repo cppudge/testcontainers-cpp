@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Config.hpp"
 #include "Env.hpp"
 #include "FileRead.hpp"
 #include "Process.hpp"
@@ -404,11 +405,9 @@ std::string apply_hub_image_prefix(const std::string& image, const std::string& 
 }
 
 std::string substitute_image_name(const std::string& image) {
-    std::string prefix;
-    if (const char* p = std::getenv("TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX"); p && *p) {
-        prefix = p;
-    }
-    return apply_hub_image_prefix(image, prefix);
+    const auto prefix = testcontainers::detail::config_value("TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX",
+                                                             "hub.image.name.prefix");
+    return apply_hub_image_prefix(image, prefix.value_or(std::string{}));
 }
 
 } // namespace testcontainers::docker

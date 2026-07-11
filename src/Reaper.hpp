@@ -25,7 +25,9 @@ const std::string& session_id();
 /// When Ryuk is disabled, the session-id label is omitted (no reaper uses it).
 std::vector<std::pair<std::string, std::string>> testcontainers_labels();
 
-/// True if `TESTCONTAINERS_RYUK_DISABLED` is set to a truthy value ("1"/"true").
+/// True if `TESTCONTAINERS_RYUK_DISABLED` is set to a truthy value ("1"/"true"),
+/// else if ~/.testcontainers.properties sets `ryuk.disabled=true` (value
+/// case-insensitive, java Boolean.parseBoolean parity).
 bool ryuk_disabled();
 
 /// The newline-terminated filter line Ryuk expects on its control socket:
@@ -41,8 +43,10 @@ struct RyukEndpoint {
     std::uint16_t port = 0;
 };
 
-/// Start a Ryuk container (image `testcontainers/ryuk`, docker.sock bind-mounted,
-/// 8080/tcp published) and return its endpoint, WITHOUT registering any filter.
+/// Start a Ryuk container (image `testcontainers/ryuk`, overridable via env
+/// TESTCONTAINERS_RYUK_CONTAINER_IMAGE / properties key `ryuk.container.image`;
+/// docker.sock bind-mounted, 8080/tcp published) and return its endpoint,
+/// WITHOUT registering any filter.
 /// The caller owns the returned container (must remove it). Blocks until the
 /// container is running and its control port has been resolved; does NOT wait
 /// for the port to accept connections (the caller's connect-retry does that).

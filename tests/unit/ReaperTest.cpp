@@ -19,6 +19,7 @@
 #include "CannedHttpServer.hpp"
 #include "LoopbackServer.hpp"
 #include "Reaper.hpp"
+#include "TempHome.hpp"
 #include "TestEnv.hpp"
 #include "TestSupport.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -28,7 +29,8 @@
 //   Reaper.RyukFilterLine - ryuk_filter_line builds the "label=<key>=<value>\n" line Ryuk expects.
 //   Reaper.LabelsContainManagedBy - testcontainers_labels() always carries the managed-by label.
 //   Reaper.LabelsContainSessionIdWhenEnabled - testcontainers_labels() carries the session-id label (== session_id()) unless Ryuk is disabled.
-//   Reaper.PerDaemonMapBootsDedupsAndSkips - against canned daemons + fake Ryuks: each daemon boots its own Ryuk exactly once (session filter ACKed there), repeat ensure_started calls add no traffic, register_filter reaches the ENVIRONMENT daemon's Ryuk (once, dedup across repeats, visible via registered_filters), and a Windows-mode daemon is skipped entirely (no create; register_filter a no-op).
+//   ReaperFile.PerDaemonMapBootsDedupsAndSkips - against canned daemons + fake Ryuks (under a temp HOME so a real ryuk.container.image/ryuk.disabled cannot bleed in): each daemon boots its own Ryuk exactly once (session filter ACKed there), repeat ensure_started calls add no traffic, register_filter reaches the ENVIRONMENT daemon's Ryuk (once, dedup across repeats, visible via registered_filters), and a Windows-mode daemon is skipped entirely (no create; register_filter a no-op).
+//   Reaper.RyukImageOverrideViaEnv - TESTCONTAINERS_RYUK_CONTAINER_IMAGE replaces the default ryuk image in start_ryuk's create request.
 
 using namespace testcontainers::detail;
 
@@ -207,9 +209,15 @@ TEST(Reaper, LabelsContainSessionIdWhenEnabled) {
     }
 }
 
-TEST(Reaper, PerDaemonMapBootsDedupsAndSkips) {
+// The boot path reads the user config (ryuk.container.image / ryuk.disabled),
+// so this test runs on the shared temp-HOME fixture: a developer's real
+// ~/.testcontainers.properties must not change the create request (line
+// asserting the default image) or skip the boot outright.
+using ReaperFile = tcunit::TempHomeTest;
+
+TEST_F(ReaperFile, PerDaemonMapBootsDedupsAndSkips) {
     if (ryuk_disabled()) {
-        GTEST_SKIP(); // the boot path under test is disabled in this environment
+        GTEST_SKIP(); // TESTCONTAINERS_RYUK_DISABLED is set in this environment
     }
 
     // ONE test covers the whole map behavior so every canned endpoint is alive
@@ -276,4 +284,21 @@ TEST(Reaper, PerDaemonMapBootsDedupsAndSkips) {
         EXPECT_TRUE(reaper.registered_filters().empty());
         EXPECT_EQ(daemon3.requests().size(), 2u);
     }
+}
+
+TEST(Reaper, RyukImageOverrideViaEnv) {
+    const tctest::ScopedEnv image("TESTCONTAINERS_RYUK_CONTAINER_IMAGE",
+                                  "mirror.example.com/testcontainers/ryuk:0.11.0");
+    // start_ryuk directly (not through the per-daemon registry): create, start,
+    // inspect against a canned daemon — no control-port connection to fake.
+    tcunit::CannedHttpServer daemon(std::vector<std::string>{
+        tcunit::ping_ok(), tcunit::created("ryuk-under-test"), no_content(), inspect_ryuk(45678)});
+    testcontainers::DockerClient client{daemon.host()};
+
+    const RyukEndpoint endpoint = start_ryuk(client);
+    EXPECT_EQ(endpoint.container_id, "ryuk-under-test");
+    ASSERT_EQ(daemon.requests().size(), 4u); // ping, create, start, inspect
+    EXPECT_NE(daemon.requests()[1].find("mirror.example.com/testcontainers/ryuk"),
+              std::string::npos)
+        << daemon.requests()[1];
 }

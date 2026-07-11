@@ -1,5 +1,6 @@
 #include "testcontainers/docker/DockerHost.hpp"
 
+#include "Config.hpp"
 #include "Env.hpp"
 #include "FileRead.hpp"
 #include "Strings.hpp"
@@ -12,7 +13,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -154,32 +154,6 @@ std::string sha256_hex(const std::string& data) {
     return out;
 }
 
-std::optional<std::string> docker_host_from_properties(const std::string& properties_body) {
-    using detail::trim;
-
-    std::istringstream stream(properties_body);
-    std::string line;
-    while (std::getline(stream, line)) {
-        const std::string trimmed = trim(line);
-        if (trimmed.empty() || trimmed.front() == '#' || trimmed.front() == '!') {
-            continue; // blank or comment line ('#' and '!' both start comments)
-        }
-        const std::size_t eq = trimmed.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        if (trim(trimmed.substr(0, eq)) == "docker.host") {
-            // Not const: a const local disables the automatic move into the
-            // returned optional.
-            std::string value = trim(trimmed.substr(eq + 1));
-            if (!value.empty()) {
-                return value;
-            }
-        }
-    }
-    return std::nullopt;
-}
-
 std::optional<std::string> current_context_from_config(const std::string& config_json) {
     try {
         const nlohmann::json root = nlohmann::json::parse(config_json);
@@ -264,18 +238,11 @@ DockerHost DockerHost::parse(const std::string& url) {
 
 namespace {
 
-// Step 2: docker.host from ~/.testcontainers.properties. nullopt on
-// absent/unreadable/missing-key (never throws).
+// Step 2: docker.host from ~/.testcontainers.properties (read once per
+// process, via the shared config cache). nullopt on absent/unreadable/
+// missing-key (never throws).
 std::optional<DockerHost> resolve_from_properties() {
-    const std::string home = detail::home_dir();
-    if (home.empty()) {
-        return std::nullopt;
-    }
-    const std::string body = detail::read_file(home + "/.testcontainers.properties");
-    if (body.empty()) {
-        return std::nullopt;
-    }
-    const auto host = docker::docker_host_from_properties(body);
+    const auto host = detail::user_property("docker.host");
     if (!host) {
         return std::nullopt;
     }

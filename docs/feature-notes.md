@@ -62,8 +62,20 @@ per-instance state — same "one instance, one thread" rule as sessions.
 testcontainers order, first hit wins: `DOCKER_HOST` → `docker.host` in
 `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT` / `currentContext`) →
 platform default (rootless socket fallbacks on Linux; named pipe on Windows). Steps 2–4 never
-throw on a malformed file. Only the endpoint is consumed: docker-context TLS materials and
-other properties keys are not read (see TODO).
+throw on a malformed file. Only the endpoint is consumed: docker-context TLS materials are
+not read (see TODO).
+
+**Configuration switches** (`src/Config.*`, 2026-07-11) — library switches read an env var
+first, then a key of `~/.testcontainers.properties` (under HOME, else USERPROFILE; the file is
+read ONCE per process). Keys: `docker.host`, `docker.tls.verify`, `docker.cert.path`,
+`hub.image.name.prefix`, `ryuk.disabled`, `ryuk.container.image`, `testcontainers.reuse.enable`.
+A SET (non-empty) env var decides even when it decides "off" — an explicit env `false`
+overrides a file-enabled switch (Java's `getEnvVarOrProperty` parity). Because the file is
+shared with testcontainers-java, parsing mirrors it where the two could diverge: `#`/`!`
+comment lines, last duplicate key wins, and boolean values follow `Boolean.parseBoolean`
+(case-insensitive `true`; `1` is false) — except `docker.tls.verify`, where docker-java also
+accepts `1`. Deliberate simplifications: `=` is the only separator; no escapes or line
+continuations.
 
 **Error model** (`include/testcontainers/Error.hpp`) — `DockerError` carries `status_code()`
 (nullopt for transport failures) and `resource_id()` (best-effort; names the primary resource).
@@ -94,9 +106,9 @@ persistent (reuse) handle — and its exceptions are swallowed.
 
 **Reaper (Ryuk)** — containers, networks, named volumes, and built images carry the session
 label; compose stacks are covered by an extra per-project filter registered over the same
-control connection (each line ACKed). Pinned to `testcontainers/ryuk:0.11.0`, skipped on the
-Windows engine and via
-`TESTCONTAINERS_RYUK_DISABLED`. Per-daemon: reapers are keyed by endpoint URL, so
+control connection (each line ACKed). Pinned to `testcontainers/ryuk:0.11.0` (overridable via
+`TESTCONTAINERS_RYUK_CONTAINER_IMAGE` / `ryuk.container.image`), skipped on the Windows engine
+and via `TESTCONTAINERS_RYUK_DISABLED` / `ryuk.disabled`. Per-daemon: reapers are keyed by endpoint URL, so
 `run(client, request)` against a second daemon boots a second Ryuk there and every daemon's
 resources are crash-swept (two URL spellings of one daemon — e.g. `tcp://localhost` vs
 `tcp://127.0.0.1` — count as two endpoints and get two harmless reapers). A daemon where Ryuk
@@ -318,9 +330,9 @@ reverse-declaration order.
 
 **Image pull policy + name substitution** — `ImagePullPolicy::Default` (lazy: pull on a create
 404) / `Always` (pull before every create); substitution via
-`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX` or a custom `with_image_name_substitutor` (replaces the
-default). Applied at the `GenericImage` layer only — not for builds, compose, or raw
-`DockerClient` calls.
+`TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX` (or the `hub.image.name.prefix` properties key) or a
+custom `with_image_name_substitutor` (replaces the default). Applied at the `GenericImage`
+layer only — not for builds, compose, or raw `DockerClient` calls.
 
 **Pull retry** (2026-07-10) — `pull_image` retries an HTTP 5xx reply to `POST /images/create`
 (the daemon relaying transient registry trouble, e.g. its auth-token endpoint answering

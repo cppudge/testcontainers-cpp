@@ -108,8 +108,9 @@ std::optional<RegistryAuth> resolve_auth_for_image(const std::string& image);
 /// Mirrors testcontainers' PrefixingImageNameSubstitutor.
 std::string apply_hub_image_prefix(const std::string& image, const std::string& prefix);
 
-/// Read TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX and apply it via apply_hub_image_prefix.
-/// (The env read is the only impurity; keep apply_hub_image_prefix pure.)
+/// Read TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX (else the `hub.image.name.prefix`
+/// key of ~/.testcontainers.properties) and apply it via apply_hub_image_prefix.
+/// (The config read is the only impurity; keep apply_hub_image_prefix pure.)
 std::string substitute_image_name(const std::string& image);
 
 } // namespace testcontainers::docker

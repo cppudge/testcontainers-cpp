@@ -1,7 +1,9 @@
 #include "docker/Transport.hpp"
 
 #include "AsioRun.hpp"
+#include "Config.hpp"
 #include "Env.hpp"
+#include "Strings.hpp"
 #include "docker/DuplexExchange.hpp"
 #include "docker/TlsConfig.hpp"
 #include "testcontainers/Error.hpp"
@@ -642,6 +644,9 @@ std::string docker_cert_path() {
     if (const char* path = std::getenv("DOCKER_CERT_PATH"); path && *path) {
         return path;
     }
+    if (const auto prop = testcontainers::detail::user_property("docker.cert.path")) {
+        return *prop;
+    }
     // Docker's documented fallback: when verification is on but no explicit cert
     // path is set, look in ~/.docker.
     if (docker_tls_verify()) {
@@ -652,7 +657,16 @@ std::string docker_cert_path() {
     return {};
 }
 
-bool docker_tls_verify() { return testcontainers::detail::env_truthy("DOCKER_TLS_VERIFY"); }
+bool docker_tls_verify() {
+    if (const char* v = std::getenv("DOCKER_TLS_VERIFY"); v && *v) {
+        return testcontainers::detail::env_truthy("DOCKER_TLS_VERIFY");
+    }
+    // docker-java parses the shared docker.tls.verify key as "1" OR
+    // Boolean.parseBoolean, so both spellings must count as true here (unlike
+    // the testcontainers-namespaced boolean keys, which are parseBoolean-only).
+    const auto prop = testcontainers::detail::user_property("docker.tls.verify");
+    return prop && (*prop == "1" || testcontainers::detail::to_lower(*prop) == "true");
+}
 
 void throw_transport_error(const std::string& message, const boost::system::error_code& ec) {
     if (ec == asio::error::timed_out) {

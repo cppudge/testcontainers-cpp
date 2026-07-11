@@ -1,7 +1,7 @@
 #include "Reaper.hpp"
 
 #include "AsioRun.hpp"
-#include "Env.hpp"
+#include "Config.hpp"
 #include "RandomHex.hpp"
 #include "docker/Ports.hpp"
 #include "docker/Transport.hpp" // throw_transport_error
@@ -34,9 +34,16 @@ namespace {
 namespace asio = boost::asio;
 using asio::ip::tcp;
 
-/// The Ryuk image. Pinned to a known-good tag; see README roadmap notes.
+/// The default Ryuk image, pinned to a known-good tag. Overridable via env
+/// TESTCONTAINERS_RYUK_CONTAINER_IMAGE / properties key ryuk.container.image
+/// (the testcontainers-java spellings) for mirrors and airgapped registries.
 constexpr const char* kRyukImage = "testcontainers/ryuk:0.11.0";
 constexpr const char* kRyukPort = "8080/tcp";
+
+std::string ryuk_image() {
+    return config_value("TESTCONTAINERS_RYUK_CONTAINER_IMAGE", "ryuk.container.image")
+        .value_or(kRyukImage);
+}
 
 constexpr const char* kManagedByLabel = "org.testcontainers.managed-by";
 constexpr const char* kSessionIdLabel = "org.testcontainers.session-id";
@@ -49,7 +56,7 @@ const std::string& session_id() {
     return id;
 }
 
-bool ryuk_disabled() { return env_truthy("TESTCONTAINERS_RYUK_DISABLED"); }
+bool ryuk_disabled() { return config_truthy("TESTCONTAINERS_RYUK_DISABLED", "ryuk.disabled"); }
 
 std::vector<std::pair<std::string, std::string>> testcontainers_labels() {
     std::vector<std::pair<std::string, std::string>> labels;
@@ -68,7 +75,7 @@ std::string ryuk_filter_line(const std::string& key, const std::string& value) {
 
 RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove) {
     CreateContainerSpec spec;
-    spec.image = kRyukImage;
+    spec.image = ryuk_image();
     spec.exposed_ports = {kRyukPort};
     spec.publish_all_ports = true;
     // Ryuk talks to the daemon over the Linux docker socket. Even on Windows

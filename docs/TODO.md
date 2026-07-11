@@ -115,11 +115,13 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   the PowerShell TcpListener in servercore covers listening_port only), bind mounts, and
   the stopping hook (see public-api-test-coverage.md for the full matrix).
 - **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
-  are not consumed, only the `Host` endpoint; only `docker.host` is read from
-  `~/.testcontainers.properties`; a `tcp://` host does NOT upgrade to TLS under
+  are not consumed, only the `Host` endpoint; a `tcp://` host does NOT upgrade to TLS under
   `DOCKER_TLS_VERIFY` the way the docker CLI treats it — this library needs the explicit
   `https://` spelling (bit the tls-e2e CI job: our env and the CLI's must differ).
-  (`src/docker/HostResolve.hpp`, `src/docker/DockerHost.cpp`)
+  `~/.testcontainers.properties` keys beyond the supported set (`docker.host`,
+  `docker.tls.verify`, `docker.cert.path`, `hub.image.name.prefix`, `ryuk.disabled`,
+  `ryuk.container.image`, `testcontainers.reuse.enable`, since 2026-07-11) are ignored.
+  (`src/docker/HostResolve.hpp`, `src/docker/DockerHost.cpp`, `src/Config.cpp`)
 - **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
   time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.

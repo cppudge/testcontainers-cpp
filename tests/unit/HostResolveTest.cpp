@@ -9,10 +9,6 @@
 //   HostResolve.Sha256EmptyVector - sha256_hex("") matches the standard empty-string digest.
 //   HostResolve.Sha256AbcVector - sha256_hex("abc") matches the standard "abc" digest.
 //   HostResolve.Sha256IsLowercaseHex64 - sha256_hex output is always 64 lowercase-hex characters.
-//   HostResolve.PropertiesReadsDockerHost - docker.host is extracted from a simple properties body.
-//   HostResolve.PropertiesToleratesCommentsBlanksSpaces - comments, blank lines, and spaces around '=' are handled.
-//   HostResolve.PropertiesAbsentIsNullopt - a body without docker.host yields nullopt.
-//   HostResolve.PropertiesCommentedOutIsNullopt - a commented-out docker.host line yields nullopt.
 //   HostResolve.ConfigReadsCurrentContext - currentContext is read from a config.json body.
 //   HostResolve.ConfigAbsentIsNullopt - a config without currentContext yields nullopt.
 //   HostResolve.ConfigInvalidJsonIsNullopt - invalid JSON yields nullopt instead of throwing.
@@ -21,7 +17,6 @@
 
 using testcontainers::docker::current_context_from_config;
 using testcontainers::docker::docker_host_from_context_meta;
-using testcontainers::docker::docker_host_from_properties;
 using testcontainers::docker::sha256_hex;
 
 TEST(HostResolve, Sha256EmptyVector) {
@@ -37,31 +32,6 @@ TEST(HostResolve, Sha256IsLowercaseHex64) {
     const std::string digest = sha256_hex("my-ctx");
     EXPECT_EQ(digest.size(), 64u);
     EXPECT_TRUE(tcunit::is_lower_hex(digest));
-}
-
-TEST(HostResolve, PropertiesReadsDockerHost) {
-    const auto host = docker_host_from_properties("docker.host=tcp://1.2.3.4:2375\n");
-    ASSERT_TRUE(host.has_value());
-    EXPECT_EQ(*host, "tcp://1.2.3.4:2375");
-}
-
-TEST(HostResolve, PropertiesToleratesCommentsBlanksSpaces) {
-    const std::string body = "# a comment\n"
-                             "\n"
-                             "  docker.host =  tcp://5.6.7.8:2375  \n"
-                             "other.key=ignored\n";
-    const auto host = docker_host_from_properties(body);
-    ASSERT_TRUE(host.has_value());
-    EXPECT_EQ(*host, "tcp://5.6.7.8:2375");
-}
-
-TEST(HostResolve, PropertiesAbsentIsNullopt) {
-    EXPECT_FALSE(docker_host_from_properties("foo=bar\nbaz=qux\n").has_value());
-}
-
-TEST(HostResolve, PropertiesCommentedOutIsNullopt) {
-    EXPECT_FALSE(docker_host_from_properties("#docker.host=tcp://1.2.3.4:2375\n").has_value());
-    EXPECT_FALSE(docker_host_from_properties("!docker.host=tcp://1.2.3.4:2375\n").has_value());
 }
 
 TEST(HostResolve, ConfigReadsCurrentContext) {

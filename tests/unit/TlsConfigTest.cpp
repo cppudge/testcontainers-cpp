@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 
+#include "TempHome.hpp"
 #include "TestEnv.hpp"
 #include "docker/TlsConfig.hpp"
 
@@ -11,9 +12,11 @@
 //   TlsConfig.ResolveTlsFilesUsesDockerFixedNames - resolve_tls_files names ca.pem / cert.pem / key.pem inside the cert dir.
 //   TlsConfig.ResolveTlsFilesEmptyDirIsAllEmpty - an empty cert dir yields all-empty file paths.
 //   TlsConfig.DockerTlsVerifyTruthyValues - DOCKER_TLS_VERIFY in {1,true,TRUE,True} is truthy.
-//   TlsConfig.DockerTlsVerifyFalsyValues - empty / unset / "0" / "false" DOCKER_TLS_VERIFY is falsy.
+//   TlsConfigFile.DockerTlsVerifyFalsyValues - empty / unset / "0" / "false" DOCKER_TLS_VERIFY is falsy (under a temp HOME: unset/empty now fall through to the properties file).
 //   TlsConfig.DockerCertPathReturnsEnvWhenSet - docker_cert_path returns DOCKER_CERT_PATH verbatim when set.
-//   TlsConfig.DockerCertPathEmptyWhenUnsetAndNoVerify - no DOCKER_CERT_PATH and no verify -> empty.
+//   TlsConfigFile.DockerCertPathEmptyWhenUnsetAndNoVerify - no DOCKER_CERT_PATH, no properties key, and no verify -> empty.
+//   TlsConfigFile.TlsVerifyPropertiesAcceptsOneAndTrue - without the env var, docker.tls.verify decides: "1" and case-insensitive "true" are truthy (docker-java parity), "0" is not, and a set env var still wins.
+//   TlsConfigFile.CertPathPropertiesFallback - without DOCKER_CERT_PATH the docker.cert.path key supplies the dir; the env var beats it.
 
 using testcontainers::docker::docker_cert_path;
 using testcontainers::docker::docker_tls_verify;
@@ -30,6 +33,12 @@ std::string basename_of(const std::string& path) {
 }
 
 } // namespace
+
+// Everything whose env var is unset/empty falls through to the properties
+// file, so those tests run on the shared temp-HOME fixture — a developer's
+// real ~/.testcontainers.properties (docker.tls.verify / docker.cert.path)
+// must not bleed into them.
+using TlsConfigFile = tcunit::TempHomeTest;
 
 TEST(TlsConfig, ResolveTlsFilesUsesDockerFixedNames) {
     const TlsFiles files = resolve_tls_files("/certs");
@@ -57,13 +66,13 @@ TEST(TlsConfig, DockerTlsVerifyTruthyValues) {
     }
 }
 
-TEST(TlsConfig, DockerTlsVerifyFalsyValues) {
+TEST_F(TlsConfigFile, DockerTlsVerifyFalsyValues) {
     {
         ScopedEnv env("DOCKER_TLS_VERIFY", std::string(""));
         EXPECT_FALSE(docker_tls_verify());
     }
     {
-        ScopedEnv env("DOCKER_TLS_VERIFY", std::nullopt); // unset
+        ScopedEnv env("DOCKER_TLS_VERIFY", std::nullopt); // unset -> properties (absent here)
         EXPECT_FALSE(docker_tls_verify());
     }
     {
@@ -83,8 +92,40 @@ TEST(TlsConfig, DockerCertPathReturnsEnvWhenSet) {
     EXPECT_EQ(docker_cert_path(), "/my/certs");
 }
 
-TEST(TlsConfig, DockerCertPathEmptyWhenUnsetAndNoVerify) {
-    ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt);    // unset
-    ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt); // unset -> no ~/.docker fallback
+TEST_F(TlsConfigFile, DockerCertPathEmptyWhenUnsetAndNoVerify) {
+    ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt);    // unset -> properties (absent here)
+    ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt); // unset + no properties -> verify off,
+                                                         // so no ~/.docker fallback either
     EXPECT_TRUE(docker_cert_path().empty());
+}
+
+TEST_F(TlsConfigFile, TlsVerifyPropertiesAcceptsOneAndTrue) {
+    const ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt); // unset -> properties decide
+
+    // docker-java parses this shared key as "1" OR Boolean.parseBoolean, so
+    // BOTH spellings must verify here (unlike the parseBoolean-only
+    // testcontainers keys, where "1" is false).
+    for (const char* on : {"1", "true", "TRUE"}) {
+        set_properties(std::string("docker.tls.verify=") + on + "\n");
+        EXPECT_TRUE(docker_tls_verify()) << on;
+    }
+    set_properties("docker.tls.verify=0\n");
+    EXPECT_FALSE(docker_tls_verify());
+
+    // A set env var decides over a file-enabled switch.
+    set_properties("docker.tls.verify=true\n");
+    const ScopedEnv env_off("DOCKER_TLS_VERIFY", std::string("false"));
+    EXPECT_FALSE(docker_tls_verify());
+}
+
+TEST_F(TlsConfigFile, CertPathPropertiesFallback) {
+    set_properties("docker.cert.path=/props/certs\n");
+    {
+        const ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt); // unset -> properties
+        EXPECT_EQ(docker_cert_path(), "/props/certs");
+    }
+    {
+        const ScopedEnv cert("DOCKER_CERT_PATH", std::string("/env/certs"));
+        EXPECT_EQ(docker_cert_path(), "/env/certs");
+    }
 }
