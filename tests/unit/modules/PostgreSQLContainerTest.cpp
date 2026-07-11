@@ -14,7 +14,7 @@
 // Tests in this file (unit; no Docker daemon — the module's rendering rules
 // via to_generic()):
 //   PostgreSQLModuleConfig.DefaultRendersPinPortTrioAndTcpProbe - the default config renders the pinned image, exposes 5432/tcp, appends the test/test/test env trio, installs the pg_isready TCP probe with interpolated -U/-d, and leaves cmd untouched.
-//   PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv - a raw with_env("POSTGRES_USER", ...) duplicate is kept but the module's trio lands after it (the daemon applies the last occurrence).
+//   PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv - a raw with_env("POSTGRES_USER", ...) duplicate is kept but the module's trio lands after it (the image's bash entrypoint applies the last occurrence).
 //   PostgreSQLModuleConfig.EmptyPasswordSkipsEnvKeyUnderTrust - with trust auth an empty password renders no POSTGRES_PASSWORD key at all.
 //   PostgreSQLModuleConfig.ConfigOptionsRenderPostgresDashC - config options render cmd {"postgres","-c","k=v",...} in registration order; no options leave cmd empty.
 //   PostgreSQLModuleConfig.InitScriptsKeepRegistrationOrderAndModes - init scripts land under /docker-entrypoint-initdb.d with 0000-/0001- prefixes in registration order (beating name order), .sh gets mode 0755, .sql stays 0644, bytes are carried verbatim.
@@ -79,7 +79,8 @@ TEST(PostgreSQLModuleConfig, CredentialTrioAppendedLastWinsOverRawEnv) {
 
     const GenericImage generic = cfg.to_generic();
     // The raw duplicate is kept, but the module's entry comes AFTER it — the
-    // daemon applies the last occurrence, so the getters cannot desync.
+    // image's bash entrypoint applies the last occurrence, so the getters
+    // cannot desync.
     EXPECT_NE(env_index(generic, "POSTGRES_USER"), static_cast<std::size_t>(-1));
     EXPECT_EQ(env_last_value(generic, "POSTGRES_USER"), "app");
     EXPECT_EQ(env_last_value(generic, "POSTGRES_DB"), "orders");

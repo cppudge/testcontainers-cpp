@@ -212,7 +212,8 @@ GenericImage PostgreSQLContainer::to_generic() const {
         throw Error("PostgreSQL database name must not be empty (with_database)");
     }
     if (password_.empty()) {
-        // Last occurrence wins, matching how the daemon applies the Env list.
+        // Last occurrence wins, matching how the image's bash entrypoint
+        // resolves the Env list.
         std::string auth_method;
         for (const auto& [key, value] : image_.env()) {
             if (key == "POSTGRES_HOST_AUTH_METHOD") {
@@ -230,10 +231,11 @@ GenericImage PostgreSQLContainer::to_generic() const {
     // accumulate state in the config.
     GenericImage generic = image_;
 
-    // The credential trio is appended AFTER any pass-through env (the daemon
-    // applies the last duplicate in the Env list), so the getters, the DSNs,
-    // and the probe's -U/-d can never desynchronize from the server. An empty
-    // password (trust mode, validated above) appends no POSTGRES_PASSWORD.
+    // The credential trio is appended AFTER any pass-through env (the image's
+    // bash entrypoint applies the last duplicate in the Env list), so the
+    // getters, the DSNs, and the probe's -U/-d can never desynchronize from
+    // the server. An empty password (trust mode, validated above) appends no
+    // POSTGRES_PASSWORD.
     generic.with_env("POSTGRES_USER", username_);
     if (!password_.empty()) {
         generic.with_env("POSTGRES_PASSWORD", password_);

@@ -237,6 +237,9 @@ endif()
 # connection getters. Consumed as testcontainers::modules.
 if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
+        src/modules/MySqlFamily.cpp
+        src/modules/MySQLContainer.cpp
+        src/modules/MariaDBContainer.cpp
         src/modules/PostgreSQLContainer.cpp
         src/modules/RedisContainer.cpp
     )
@@ -341,6 +344,7 @@ if(BUILD_TESTING)
         # unit suite everywhere it runs; the TUs exist only when the modules
         # target does.
         target_sources(tc_unit_tests PRIVATE
+            tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/PostgreSQLContainerTest.cpp
             tests/unit/modules/RedisContainerTest.cpp
         )
@@ -411,6 +415,8 @@ if(BUILD_TESTING)
         # apart from the core suite.
         if(TC_BUILD_MODULES)
             add_executable(tc_module_tests
+                tests/integration/modules/MariaDBModuleTest.cpp
+                tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp
             )

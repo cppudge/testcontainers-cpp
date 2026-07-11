@@ -59,11 +59,11 @@ GenericImage RedisContainer::to_generic() const {
         generic.with_cmd(std::move(cmd));
     }
     if (!password_.empty()) {
-        // Set after the base image's env (the daemon applies the last
-        // duplicate in the Env list) and before the customizers run: the
-        // module overrides the image, a customizer can still override the
-        // module. In-container redis-cli — the readiness probe and user execs
-        // — reads it and authenticates without an -a flag on its command line.
+        // Container-level env: in-container redis-cli — the readiness probe
+        // and user execs — reads it and authenticates without an -a flag on
+        // its command line. The module emits this key exactly once
+        // (duplicate-key resolution is process-dependent: bash entrypoints
+        // see the last occurrence, exec'd glibc processes the first).
         generic.with_env("REDISCLI_AUTH", password_);
     }
     // Customizers last: what the escape hatch sets wins over the module's

@@ -355,6 +355,15 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `PostgreSQLContainer::with_customizer` / `to_generic` | ✅ | n/a | ✅ PostgreSQLModule.CustomizerReachesCreateBody | n/a |
 | `StartedPostgreSQL::host` / `port` / `connection_string` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
 | `StartedPostgreSQL::exec_sql` | ✅ | n/a | ✅ every PostgreSQLModule test | n/a |
+| `MySQLContainer()` defaults + `start()` | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect | n/a |
+| `MySQLContainer::with_username/password/database` (incl. root modes) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts, MySQLModule.RootOnlyModes | n/a |
+| `MySQLContainer::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts | n/a |
+| `MySQLContainer::with_command_arg` | ✅ | n/a | ✅ MySQLModule.CharsetCommandArg | n/a |
+| `MySQLContainer::with_config_file` | ✅ | n/a | ❌ (unit-tested staging: MySqlFamilyConfig.InitScriptsAndConfigFilesStageOrderedAndValidated; the copy mechanics are MariaDB-integration-tested — shared core) | n/a |
+| `MariaDBContainer()` defaults + `start()` (healthcheck.sh wait) | ✅ | n/a | ✅ MariaDBModule.DefaultsBootAndConnect | n/a |
+| `MariaDBContainer::with_init_script` / `with_config_file` | ✅ | n/a | ✅ MariaDBModule.InitScriptAndConfigFile | n/a |
+| MySQL/MariaDB `with_wait` / `with_env` / other pass-throughs / `with_customizer` / `to_generic` | ✅ | n/a | ❌ (unit-tested: MySqlFamilyConfig.* — shared rendering core; thin forwards integration-tested under GenericImage above) | n/a |
+| `StartedMySQL` / `StartedMariaDB` getters + `connection_string` (mysql:// both) | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect, MySQLModule.RootOnlyModes, MariaDBModule.DefaultsBootAndConnect | n/a |
 
 ---
 

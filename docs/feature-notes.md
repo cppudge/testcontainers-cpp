@@ -486,6 +486,36 @@ password keyword omitted when empty) beside the URI `connection_string(scheme)`,
 Curated pass-throughs (env / label / network / alias / reuse / timeout / attempts) forward
 to the embedded builder; everything else rides `with_customizer`.
 
+**MySQL + MariaDB modules** (2026-07-12, `modules::MySQLContainer` / `MariaDBContainer` →
+`StartedMySQL` / `StartedMariaDB`) — two flat public classes over one shared core
+(`src/modules/MySqlFamily.*`: the boot matrix, init-script staging, probes, rendering, URL —
+everything that must not fork), keyed by a small flavor table (env-contract names, probe).
+Pins: `mysql:8.4` / `mariadb:11`; both default to a 120s startup budget (a first boot
+initializes the datadir). The root-password boot matrix guarantees every start carries a
+root decision: a non-root user shares its password with root (a known superuser on every
+path), `with_username("root")` (case-insensitive) switches to root-only provisioning and
+deliberately emits no `*_USER` key (both images refuse user=root), root+empty password
+emits the flavor's allow-empty key, and non-root+empty fails fast at render (the images'
+own failure mode is an entrypoint error plus the full wait budget). Readiness: both images'
+first boot runs a TEMPORARY socket-only bootstrap server (--skip-networking) that
+provisions credentials and runs /docker-entrypoint-initdb.d before the real TCP server
+starts — the log line prints for BOTH acts, so the probes force TCP: MySQL exec
+`mysqladmin ping -h127.0.0.1 -u<user> [-p<pw>]` (exits 0 even on access-denied — it
+measures liveness, immune to credential edge cases), MariaDB the image's own
+`healthcheck.sh --connect --innodb_initialized` (credential-free, and it sidesteps the
+image's renamed client binaries — `mariadb`/`mariadb-admin`, not the deprecated mysql-*
+names). 500ms poll (each attempt is a fresh exec connection; 200ms is churn against a boot
+measured in tens of seconds). Init scripts and `.cnf` drop-ins reuse the PostgreSQL
+staging rules (NNNN- registration-order prefix, extension whitelist, .sh 0755;
+`/etc/mysql/conf.d` names must end in .cnf — the include glob skips others silently).
+`with_command_arg` values become the container cmd verbatim (the entrypoints forward
+'-'-prefixed args to the server binary). Both `connection_string()`s emit the **mysql://**
+scheme — MariaDB speaks the MySQL wire protocol and URL-parsing clients widely reject
+"mariadb://"; `root_password()` documents the root≡user invariant at call sites. Known
+limit (recipe in the `with_command_arg` header note, not module-fixable): MySQL 8.4
+disables the `mysql_native_password` plugin by default, so pre-8.0-era client stacks need
+`with_command_arg("--mysql-native-password=ON")` plus an ALTER USER init script.
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

@@ -44,7 +44,9 @@ jobs:
     # Fork-only PR guard (see the pull_request note under `on:` above).
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # 60, not 45: this job also pulls and boots the module images (mysql,
+    # mariadb, postgres, ... on top of the core suite's pulls).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -88,10 +90,10 @@ jobs:
       # The ecosystem-module suite (its own exe: module image pulls grow as
       # modules accumulate, so they stay out of the core suite's budget).
       # This job is the one place the module containers really run on CI.
-      # Budget note: the job cap is 45 min total — grow this step's cap only
-      # together with the job's as pull-heavy modules land.
+      # The cap covers cold pulls (mysql ~170MB, mariadb ~120MB, postgres,
+      # redis) plus first boots measured in tens of seconds.
       - name: Module tests
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: ./build/ninja/bin/tc_module_tests
 
   # The feature knob under test: TC_TLS=OFF + TC_HOST_PORT_FORWARDING=OFF must
