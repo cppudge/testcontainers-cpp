@@ -112,6 +112,12 @@ struct VolumeInspect {
     std::map<std::string, std::string> options; ///< Options (null -> empty)
 };
 
+/// The daemon's report from `POST /volumes/prune`.
+struct VolumePruneResult {
+    std::vector<std::string> deleted; ///< VolumesDeleted (null -> empty)
+    std::int64_t space_reclaimed = 0; ///< SpaceReclaimed, bytes
+};
+
 /// One attached container's endpoint on a network (a `Containers` map entry in
 /// `GET /networks/{id}`).
 struct NetworkEndpoint {

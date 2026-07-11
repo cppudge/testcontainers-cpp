@@ -37,6 +37,15 @@ nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec);
 /// null Labels/Options object (both become empty maps).
 VolumeInspect parse_volume_inspect(const std::string& body);
 
+/// Parse the response of `GET /volumes` (the `{"Volumes": [...]}` wrapper)
+/// into one VolumeInspect per entry. A null / absent / non-array `Volumes`
+/// parses as empty; non-object entries are skipped.
+std::vector<VolumeInspect> parse_volume_list(const std::string& body);
+
+/// Parse the response of `POST /volumes/prune` into VolumePruneResult.
+/// Tolerates null / absent VolumesDeleted and SpaceReclaimed.
+VolumePruneResult parse_volume_prune(const std::string& body);
+
 /// Parse the response of `GET /networks/{id}` into NetworkInspect. Tolerates
 /// null / absent Labels, Options, Containers, and IPAM.Config (all become
 /// empty containers).
@@ -61,7 +70,7 @@ std::string parse_server_os(const std::string& version_json);
 /// The newest Engine API version this client is written against. Every request
 /// is pinned to at most this version so daemon upgrades cannot silently change
 /// endpoint behavior underneath us. 1.44 covers everything the library uses
-/// (the newest-needed feature, `?platform=` on container create, is 1.41) and
+/// (the newest-needed feature, the `all` filter on volume prune, is 1.42) and
 /// is the negotiation floor of daemons that have dropped the older versions.
 inline constexpr std::string_view kClientApiVersion = "1.44";
 

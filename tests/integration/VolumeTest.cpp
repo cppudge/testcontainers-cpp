@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <exception>
 #include <string>
 
@@ -21,6 +22,8 @@
 //   Volumes.CreateInspectRemove - Volume::create makes a real volume whose inspect() reports a matching name, "local" driver, and non-empty mountpoint; remove() succeeds and a later inspect_volume on the name throws the typed NotFoundError.
 //   Volumes.RaiiRemovesOnDrop - a Volume removes its backing volume at scope exit, so inspect_volume on the captured name throws NotFoundError afterward.
 //   Volumes.BuilderSetsNameAndLabels - Volume::builder() name + labels land on the created volume (asserted via inspect()).
+//   Volumes.ListVolumesFindsByLabel - list_volumes with a label filter returns exactly the matching volume (name/labels/mountpoint); the name filter finds it too (substring match daemon-side, exact match post-filtered by the caller).
+//   Volumes.PruneRemovesUnusedByLabel - prune_volumes with a label filter (+ {"all","true"} for named volumes on API 1.42+) reports both unused volumes deleted and they are actually gone (inspect throws NotFoundError).
 //   Volumes.PopulateThenReadBack - populate() seeds a file into the volume via a helper container; a fresh container mounting the volume reads the seeded content back, proving it persisted in the volume.
 //   Volumes.PopulateDirSource - populate() with a host_dir source seeds a whole tree into the volume (nested file readable from a fresh container mounting it).
 //   WindowsVolumes.CreateInspectRemove - the same create/inspect/remove round-trip against a Windows daemon (the RAII variant is client-side logic and needs no per-engine mirror).
@@ -85,6 +88,94 @@ TEST_F(Volumes, BuilderSetsNameAndLabels) {
     EXPECT_EQ(label->second, "yes");
 
     // RAII removes the volume at scope exit.
+}
+
+TEST_F(Volumes, ListVolumesFindsByLabel) {
+    // A unique label value so stale resources from earlier runs can't collide.
+    const std::string marker = "list-it-" + tcit::random_suffix();
+    Volume tagged = Volume::builder()
+                        .with_name("tc-list-vol-" + tcit::random_suffix())
+                        .with_label("tc-list-marker", marker)
+                        .create();
+    // An unmarked volume alive at the same time: the filter must EXCLUDE it.
+    Volume other = Volume::create();
+
+    DockerClient dc = DockerClient::from_environment();
+    const auto by_label = dc.list_volumes({{"label", "tc-list-marker=" + marker}});
+    ASSERT_EQ(by_label.size(), 1u);
+    EXPECT_EQ(by_label[0].name, tagged.name());
+    EXPECT_EQ(by_label[0].labels.at("tc-list-marker"), marker);
+    EXPECT_FALSE(by_label[0].mountpoint.empty()); // list entries carry the full shape
+
+    // The name filter matches substrings daemon-side; exact-name callers
+    // post-filter.
+    const auto by_name = dc.list_volumes({{"name", tagged.name()}});
+    bool found = false;
+    for (const auto& v : by_name) {
+        found = found || v.name == tagged.name();
+    }
+    EXPECT_TRUE(found) << "name filter did not return the volume";
+
+    // Both volumes are removed by RAII at scope exit.
+}
+
+TEST_F(Volumes, PruneRemovesUnusedByLabel) {
+    // Client-made volumes without RAII handles: prune is the remover under test.
+    const std::string marker = "prune-it-" + tcit::random_suffix();
+    DockerClient dc = DockerClient::from_environment();
+
+    const std::string name_a = "tc-prune-a-" + tcit::random_suffix();
+    const std::string name_b = "tc-prune-b-" + tcit::random_suffix();
+
+    // Armed from before the first create: raw create_volume carries no
+    // session labels, so Ryuk would never sweep a leak — any failure between
+    // here and the verified prune must remove whatever was created (removing
+    // a never-created name just throws NotFoundError, swallowed).
+    struct Cleanup {
+        DockerClient& dc;
+        const std::string& a;
+        const std::string& b;
+        bool armed = true;
+        ~Cleanup() {
+            if (!armed) {
+                return;
+            }
+            try {
+                dc.remove_volume(a, true);
+            } catch (...) {
+                // Best-effort: the test failure matters more.
+            }
+            try {
+                dc.remove_volume(b, true);
+            } catch (...) {
+                // Best-effort: the test failure matters more.
+            }
+        }
+    } cleanup{dc, name_a, name_b};
+
+    VolumeCreateSpec spec;
+    spec.name = name_a;
+    spec.labels = {{"tc-prune-marker", marker}};
+    ASSERT_EQ(dc.create_volume(spec), name_a);
+    spec.name = name_b;
+    ASSERT_EQ(dc.create_volume(spec), name_b);
+
+    // The label filter narrows the sweep to just ours; named volumes also
+    // need {"all","true"} on API 1.42+ daemons (anonymous-only default).
+    const VolumePruneResult report =
+        dc.prune_volumes({{"label", "tc-prune-marker=" + marker}, {"all", "true"}});
+
+    // Both (unused) volumes are reported deleted — and are actually gone.
+    EXPECT_EQ(std::count(report.deleted.begin(), report.deleted.end(), name_a), 1);
+    EXPECT_EQ(std::count(report.deleted.begin(), report.deleted.end(), name_b), 1);
+    EXPECT_THROW(dc.inspect_volume(name_a), NotFoundError);
+    EXPECT_THROW(dc.inspect_volume(name_b), NotFoundError);
+
+    // Only a fully verified prune disarms the guard: on any failed expectation
+    // above, teardown still removes the leftovers.
+    if (!::testing::Test::HasFailure()) {
+        cleanup.armed = false;
+    }
 }
 
 TEST_F(Volumes, PopulateThenReadBack) {

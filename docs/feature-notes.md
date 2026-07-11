@@ -305,8 +305,12 @@ body's env (readable via inspect — by someone who already has daemon access; J
 **Named volumes** — `Volume` RAII handle + builder, session-labeled for Ryuk;
 `populate(sources)` seeds data through a throwaway helper container (`alpine:3.20` by default,
 started before the archive PUT — not every daemon materializes writes on a created-only
-container's mountpoint). No list/prune; the RAII drop fails (409) while a container still
-mounts the volume — tear down in reverse-declaration order.
+container's mountpoint). `DockerClient::list_volumes(filters)` lists volumes (label/name
+filters; names match by substring) and `prune_volumes(filters)` batch-removes unused ones,
+returning the daemon's deleted-names + reclaimed-bytes report (2026-07-11) — API 1.42+
+daemons prune only ANONYMOUS unused volumes unless the `{"all","true"}` filter is passed.
+The RAII drop fails (409) while a container still mounts the volume — tear down in
+reverse-declaration order.
 
 **Image pull policy + name substitution** — `ImagePullPolicy::Default` (lazy: pull on a create
 404) / `Always` (pull before every create); substitution via

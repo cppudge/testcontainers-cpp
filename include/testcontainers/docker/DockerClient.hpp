@@ -477,11 +477,12 @@ public:
 
     /// `GET /networks?filters=...` — list networks, one NetworkInspect per
     /// entry (the daemon leaves the attached-containers detail unpopulated in
-    /// list responses). Each `filters` pair is {category, expression} and they
-    /// AND together, e.g. {"label", "key=value"} or {"name", "my-net"} — the
-    /// daemon matches network names by SUBSTRING, so callers wanting an exact
-    /// name must compare `.name` on the results. Throws DockerError on any
-    /// non-200.
+    /// list responses). Each `filters` pair is {category, expression}, e.g.
+    /// {"label", "key=value"} or {"name", "my-net"}. Distinct categories AND
+    /// together; repeated `label` expressions also AND, while repeated `name`
+    /// expressions OR (any-match). The daemon matches network names by
+    /// SUBSTRING, so callers wanting an exact name must compare `.name` on
+    /// the results. Throws DockerError on any non-200.
     std::vector<NetworkInspect>
     list_networks(const std::vector<std::pair<std::string, std::string>>& filters = {});
 
@@ -520,6 +521,27 @@ public:
     /// `GET /volumes/{name}` — inspect a volume (200 expected). Throws DockerError
     /// on any non-200 (in particular 404 when the volume does not exist).
     VolumeInspect inspect_volume(const std::string& name);
+
+    /// `GET /volumes?filters=...` — list volumes, one VolumeInspect per entry.
+    /// Each `filters` pair is {category, expression}, e.g. {"label",
+    /// "key=value"}, {"name", "my-vol"} (a substring match daemon-side), or
+    /// {"dangling", "true"}. Distinct categories AND together; repeated
+    /// `label` expressions also AND, while repeated `name` expressions OR
+    /// (any-match). Throws DockerError on any non-200.
+    std::vector<VolumeInspect>
+    list_volumes(const std::vector<std::pair<std::string, std::string>>& filters = {});
+
+    /// `POST /volumes/prune?filters=...` — batch-remove unused volumes,
+    /// returning the daemon's report (deleted names + reclaimed bytes).
+    /// Filters as in `list_volumes`; {"label", "key=value"} restricts the
+    /// sweep. Daemons at API 1.42+ prune only ANONYMOUS unused volumes by
+    /// default — add {"all", "true"} to sweep named volumes too (pre-1.42
+    /// daemons reject that filter with a 400; their default prune already
+    /// swept named volumes). A label-only filter therefore never removes
+    /// named volumes on 1.42+ daemons. Throws DockerError on any non-200
+    /// (e.g. 409 while another prune runs).
+    VolumePruneResult
+    prune_volumes(const std::vector<std::pair<std::string, std::string>>& filters = {});
 
     /// `DELETE /volumes/{name}?force=<bool>` — remove a volume (204 expected).
     /// Throws DockerError on any non-204 (404 if absent, 409 if still in use).

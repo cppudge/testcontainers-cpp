@@ -49,6 +49,23 @@ std::string url_encode(std::string_view value) {
     return out;
 }
 
+/// Docker's `filters` query parameter (percent-encoded), or "" when there are
+/// no filters. The filters JSON maps each category to an array of expressions;
+/// each pair is {category, expression}, e.g. {"label", "key=value"} or
+/// {"name", "my-net"}. `sep` is '?' or '&', depending on the query assembled
+/// so far.
+std::string filters_query(char sep,
+                          const std::vector<std::pair<std::string, std::string>>& filters) {
+    if (filters.empty()) {
+        return "";
+    }
+    nlohmann::json encoded = nlohmann::json::object();
+    for (const auto& [category, expression] : filters) {
+        encoded[category].push_back(expression);
+    }
+    return sep + ("filters=" + url_encode(encoded.dump()));
+}
+
 /// A request carrying the headers every Docker call shares (Host, User-Agent)
 /// with keep-alive off (one connection per request for now).
 template <class Body>
@@ -644,16 +661,7 @@ DockerClient::list_containers(const std::vector<std::pair<std::string, std::stri
                               bool all) {
     std::string target = versioned("/containers/json?all=");
     target += all ? "1" : "0";
-    if (!label_filters.empty()) {
-        // Docker's filters map each category (here "label") to an array of values;
-        // a label filter's value is the "key=value" equality expression. Each pair
-        // is {category, expression}, e.g. {"label", "com.docker.compose.project=tc1"}.
-        nlohmann::json filters = nlohmann::json::object();
-        for (const auto& [category, expression] : label_filters) {
-            filters[category].push_back(expression);
-        }
-        target += "&filters=" + url_encode(filters.dump());
-    }
+    target += filters_query('&', label_filters);
 
     const Response res = request("GET", target);
     if (res.status_code != 200) {
@@ -1329,19 +1337,7 @@ std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
 
 std::vector<NetworkInspect>
 DockerClient::list_networks(const std::vector<std::pair<std::string, std::string>>& filters) {
-    std::string target = versioned("/networks");
-    if (!filters.empty()) {
-        // Docker's filters map each category to an array of expressions; each
-        // pair is {category, expression}, e.g. {"label", "key=value"} or
-        // {"name", "my-net"} (a substring match daemon-side).
-        nlohmann::json encoded = nlohmann::json::object();
-        for (const auto& [category, expression] : filters) {
-            encoded[category].push_back(expression);
-        }
-        target += "?filters=" + url_encode(encoded.dump());
-    }
-
-    const Response res = request("GET", target);
+    const Response res = request("GET", versioned("/networks") + filters_query('?', filters));
     if (res.status_code != 200) {
         throw_status_error("list_networks", res);
     }
@@ -1419,6 +1415,26 @@ VolumeInspect DockerClient::inspect_volume(const std::string& name) {
         throw_status_error("inspect_volume('" + name + "')", res, name);
     }
     return docker::parse_volume_inspect(res.body);
+}
+
+std::vector<VolumeInspect>
+DockerClient::list_volumes(const std::vector<std::pair<std::string, std::string>>& filters) {
+    const Response res = request("GET", versioned("/volumes") + filters_query('?', filters));
+    if (res.status_code != 200) {
+        throw_status_error("list_volumes", res);
+    }
+    return docker::parse_volume_list(res.body);
+}
+
+VolumePruneResult
+DockerClient::prune_volumes(const std::vector<std::pair<std::string, std::string>>& filters) {
+    const Response res = request("POST", versioned("/volumes/prune") + filters_query('?', filters));
+    if (res.status_code != 200) {
+        // A concurrent prune surfaces as 409 ("a prune operation is already
+        // running") through the generic status error.
+        throw_status_error("prune_volumes", res);
+    }
+    return docker::parse_volume_prune(res.body);
 }
 
 void DockerClient::remove_volume(const std::string& name, bool force) {

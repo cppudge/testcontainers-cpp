@@ -50,6 +50,8 @@
 //   ApiMapping.BuildVolumeCreateBodyMinimal - a VolumeCreateSpec with only a name emits just Name and no Driver/DriverOpts/Labels.
 //   ApiMapping.ParseVolumeInspect - GET /volumes/{name} JSON parses Name/Driver/Mountpoint/Scope and the Labels/Options maps.
 //   ApiMapping.ParseVolumeInspectNullMaps - null Labels/Options parse into empty maps.
+//   ApiMapping.ParseVolumeList - the GET /volumes {"Volumes":[...]} wrapper parses into one VolumeInspect per object entry (non-object entries skipped); null Volumes / a null body parse as an empty list.
+//   ApiMapping.ParseVolumePrune - POST /volumes/prune JSON parses VolumesDeleted + SpaceReclaimed; null/absent fields parse as empty/0.
 //   ApiMapping.ParseNetworkInspect - GET /networks/{id} JSON parses id/name/driver/scope, the Internal/Attachable/EnableIPv6 flags, IPAM pools (Subnet/Gateway/IPRange + name-sorted AuxiliaryAddresses), Options/Labels maps, and the Containers endpoint map.
 //   ApiMapping.ParseNetworkInspectNullsAndGarbage - null/absent Labels/Options/Containers/IPAM.Config parse into empty containers with false flags; a non-JSON body throws DockerError.
 //   ApiMapping.ParseNetworkList - a GET /networks array parses into one NetworkInspect per object entry (non-object entries skipped); a null body parses as an empty list.
@@ -113,6 +115,8 @@ using testcontainers::docker::parse_network_inspect;
 using testcontainers::docker::parse_network_list;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::parse_volume_inspect;
+using testcontainers::docker::parse_volume_list;
+using testcontainers::docker::parse_volume_prune;
 using testcontainers::docker::split_image;
 using testcontainers::docker::throw_if_pull_error;
 
@@ -625,6 +629,52 @@ TEST(ApiMapping, ParseVolumeInspectNullMaps) {
     EXPECT_EQ(info.name, "plain-vol");
     EXPECT_TRUE(info.labels.empty());
     EXPECT_TRUE(info.options.empty());
+}
+
+TEST(ApiMapping, ParseVolumeList) {
+    // GET /volumes wraps its array (unlike GET /networks): each entry is the
+    // same Volume shape as the single inspect.
+    const std::string body = R"({
+        "Volumes": [
+            {"Name": "vol-a", "Driver": "local",
+             "Mountpoint": "/var/lib/docker/volumes/vol-a/_data", "Scope": "local",
+             "Labels": {"tc-mark": "yes"}},
+            {"Name": "vol-b", "Driver": "local", "Labels": null},
+            "not-an-object"
+        ],
+        "Warnings": null
+    })";
+
+    const auto volumes = parse_volume_list(body);
+    ASSERT_EQ(volumes.size(), 2u); // the non-object entry is skipped
+    EXPECT_EQ(volumes[0].name, "vol-a");
+    EXPECT_EQ(volumes[0].driver, "local");
+    EXPECT_EQ(volumes[0].labels.at("tc-mark"), "yes");
+    EXPECT_EQ(volumes[1].name, "vol-b");
+    EXPECT_TRUE(volumes[1].labels.empty());
+
+    // A null Volumes field (the daemon's "no volumes"), a null body, and a
+    // bare-array body (no wrapper) all parse as an empty list, not a crash.
+    EXPECT_TRUE(parse_volume_list(R"({"Volumes": null, "Warnings": null})").empty());
+    EXPECT_TRUE(parse_volume_list("null").empty());
+    EXPECT_TRUE(parse_volume_list("[]").empty());
+}
+
+TEST(ApiMapping, ParseVolumePrune) {
+    const auto full =
+        parse_volume_prune(R"({"VolumesDeleted": ["vol-a", "vol-b"], "SpaceReclaimed": 4096})");
+    ASSERT_EQ(full.deleted.size(), 2u);
+    EXPECT_EQ(full.deleted[0], "vol-a");
+    EXPECT_EQ(full.deleted[1], "vol-b");
+    EXPECT_EQ(full.space_reclaimed, 4096);
+
+    // Nothing pruned: the daemon may emit null instead of [] (and older
+    // daemons omitted fields entirely) — both fields tolerate null AND absent.
+    const auto empty = parse_volume_prune(R"({"VolumesDeleted": null, "SpaceReclaimed": null})");
+    EXPECT_TRUE(empty.deleted.empty());
+    EXPECT_EQ(empty.space_reclaimed, 0);
+    EXPECT_TRUE(parse_volume_prune("{}").deleted.empty());
+    EXPECT_EQ(parse_volume_prune("{}").space_reclaimed, 0);
 }
 
 TEST(ApiMapping, ParseNetworkInspect) {

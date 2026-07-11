@@ -370,21 +370,59 @@ nlohmann::json build_volume_create_body(const VolumeCreateSpec& spec) {
     return body;
 }
 
+static VolumeInspect volume_inspect_from_json(const nlohmann::json& json);
+
 VolumeInspect parse_volume_inspect(const std::string& body) {
-    return guard_parse("inspect_volume", body, [&] {
+    return guard_parse("inspect_volume", body,
+                       [&] { return volume_inspect_from_json(nlohmann::json::parse(body)); });
+}
+
+std::vector<VolumeInspect> parse_volume_list(const std::string& body) {
+    return guard_parse("list_volumes", body, [&] {
         const nlohmann::json json = nlohmann::json::parse(body);
 
-        VolumeInspect info;
-        info.name = json.value("Name", std::string{});
-        info.driver = json.value("Driver", std::string{});
-        info.mountpoint = json.value("Mountpoint", std::string{});
-        info.scope = json.value("Scope", std::string{});
-
-        info.labels = read_string_map(json, "Labels");
-        info.options = read_string_map(json, "Options");
-
-        return info;
+        std::vector<VolumeInspect> out;
+        // Unlike GET /networks, GET /volumes wraps its array:
+        // {"Volumes": [...], "Warnings": [...]}; Volumes is null when empty.
+        const auto volumes = json.find("Volumes");
+        if (volumes == json.end() || !volumes->is_array()) {
+            return out;
+        }
+        for (const auto& entry : *volumes) {
+            if (entry.is_object()) {
+                out.push_back(volume_inspect_from_json(entry));
+            }
+        }
+        return out;
     });
+}
+
+VolumePruneResult parse_volume_prune(const std::string& body) {
+    return guard_parse("prune_volumes", body, [&] {
+        const nlohmann::json json = nlohmann::json::parse(body);
+
+        VolumePruneResult result;
+        result.deleted = read_string_array(json, "VolumesDeleted");
+        if (const auto it = json.find("SpaceReclaimed"); it != json.end() && it->is_number()) {
+            result.space_reclaimed = it->get<std::int64_t>();
+        }
+        return result;
+    });
+}
+
+/// The from-json core shared by the single inspect and the list endpoint (a
+/// `GET /volumes` entry is the same Volume shape as `GET /volumes/{name}`).
+static VolumeInspect volume_inspect_from_json(const nlohmann::json& json) {
+    VolumeInspect info;
+    info.name = json.value("Name", std::string{});
+    info.driver = json.value("Driver", std::string{});
+    info.mountpoint = json.value("Mountpoint", std::string{});
+    info.scope = json.value("Scope", std::string{});
+
+    info.labels = read_string_map(json, "Labels");
+    info.options = read_string_map(json, "Options");
+
+    return info;
 }
 
 static NetworkInspect network_inspect_from_json(const nlohmann::json& json);

@@ -379,6 +379,8 @@ Network / Volume) on Windows.
 | `create_volume(spec)` | ✅ | ✅ | ✅ via Volume (Volumes.*) | ✅ via Volume (WindowsVolumes.*) |
 | `inspect_volume(name)` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove (direct + via handle) | ✅ WindowsVolumes.CreateInspectRemove |
 | `remove_volume(name, force)` | ✅ | ✅ | ✅ via Volume (Volumes.*) | ✅ via Volume (WindowsVolumes.*) |
+| `list_volumes(filters)` | ✅ | ✅ | ✅ Volumes.ListVolumesFindsByLabel | ❌ (Linux-only, as with `list_containers`) |
+| `prune_volumes(filters)` | ✅ | ✅ | ✅ Volumes.PruneRemovesUnusedByLabel | ❌ (same wire path) |
 | `Response::header/ok` | ✅ | ✅ | ✅ ReaperTest, HostAccess (status_code) | ✅ WindowsEngine |
 
 Notes:
