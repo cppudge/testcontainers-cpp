@@ -77,12 +77,31 @@ upgrades; `ssh://` context endpoints remain unsupported.
 **Configuration switches** (`src/Config.*`, 2026-07-11) — library switches read an env var
 first, then a key of `~/.testcontainers.properties` (under HOME, else USERPROFILE; the file is
 read ONCE per process). Keys: `docker.host`, `docker.tls.verify`, `docker.cert.path`,
-`hub.image.name.prefix`, `ryuk.disabled`, `ryuk.container.image`, `sshd.container.image`,
-`socat.container.image`, `compose.container.image`, `testcontainers.reuse.enable` (env names =
-`TESTCONTAINERS_` + the key upper-cased with dots as underscores, with two exceptions: the
-`docker.*` trio keeps its standard `DOCKER_*` names, and a key already starting
-`testcontainers.` is not doubled — `testcontainers.reuse.enable` ↔ `TESTCONTAINERS_REUSE_ENABLE`,
-exactly like java's mapping).
+`hub.image.name.prefix`, `host.override`, `ryuk.disabled`, `ryuk.container.image`,
+`sshd.container.image`, `socat.container.image`, `compose.container.image`,
+`testcontainers.reuse.enable` (env names = `TESTCONTAINERS_` + the key upper-cased with dots as
+underscores, with two exceptions: the `docker.*` trio keeps its standard `DOCKER_*` names, and
+a key already starting `testcontainers.` is not doubled — `testcontainers.reuse.enable` ↔
+`TESTCONTAINERS_REUSE_ENABLE`, exactly like java's mapping).
+
+**Host override** (2026-07-11, `detail::resolved_host_address`) — the address handed out for
+reaching published ports: `TESTCONTAINERS_HOST_OVERRIDE` / `host.override` when set (any
+scheme); else the daemon hostname for tcp/https; else "localhost" for a local socket/pipe —
+unless the test process itself runs inside a Linux container (`/.dockerenv` exists, java's
+`IN_A_CONTAINER` check), where "localhost" would be the container itself: the default
+gateway parsed from `/proc/net/route` (the docker bridge address — java shells out to
+`ip route` for the same answer) is returned instead. Consumed by `Container::host()`, the
+HTTP/port wait probes, `DockerComposeContainer::get_service_host` (and its exposed-service
+TCP probe), and the Ryuk registration endpoint — the transport's own Host header stays on
+`DockerHost::http_host()`. This is the DinD/Testcontainers-Cloud enabler: with the socket
+mounted into a CI container, set nothing (the gateway kicks in); with a remote agent, set
+the override. Podman's `/run/.containerenv` is not probed (java parity).
+
+**ConnectionString** (2026-07-11) — a small public builder assembling
+`scheme://[user[:password]@]host[:port][/database][?k=v&…]` with per-component
+percent-encoding (an IPv6 host is bracketed; the database is a single encoded path segment;
+parameters keep insertion order). The DSN building block for the upcoming Tier-4 module
+getters; deliberately NOT a URL parser — render-only.
 A SET (non-empty) env var decides even when it decides "off" — an explicit env `false`
 overrides a file-enabled switch (Java's `getEnvVarOrProperty` parity). Because the file is
 shared with testcontainers-java, parsing mirrors it where the two could diverge: `#`/`!`

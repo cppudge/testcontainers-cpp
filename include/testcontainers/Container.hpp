@@ -102,9 +102,14 @@ public:
     /// case its log stream is raw/unframed (no separate stderr channel).
     bool has_tty() const noexcept { return tty_; }
 
-    /// The address a client on this host should connect to ("localhost" for a
-    /// unix socket / named pipe, otherwise the daemon hostname).
-    std::string host() const { return client_.host().http_host(); }
+    /// The address a client in THIS process should connect to for the
+    /// container's published ports: `TESTCONTAINERS_HOST_OVERRIDE` (or the
+    /// `host.override` property) when set; the daemon hostname for a tcp:// /
+    /// https:// daemon; otherwise "localhost" — unless the test process
+    /// itself runs inside a Linux container, where the docker bridge gateway
+    /// is returned instead (localhost there would be the container, not the
+    /// host the ports are published on).
+    std::string host() const;
 
     /// The host port Docker published for the given container port. Prefers the
     /// IPv4 binding, falling back to the first (e.g. IPv6-only) binding. Throws

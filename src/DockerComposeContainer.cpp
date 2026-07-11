@@ -1,6 +1,7 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
 #include "Config.hpp"
+#include "HostAddress.hpp"
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
 #include "WaitStrategies.hpp"
@@ -628,7 +629,9 @@ void DockerComposeContainer::start() {
 std::string DockerComposeContainer::get_service_host(const std::string& service) const {
     (void)get_service_container_id(service); // validate the service is known
     DockerClient client = DockerClient::from_environment();
-    return client.host().http_host(); // "localhost" for a named pipe / unix socket
+    // Container::host()'s reachability rule (override / in-container gateway
+    // / daemon hostname) — the exposed-service TCP probe dials this too.
+    return detail::resolved_host_address(client.host());
 }
 
 std::uint16_t DockerComposeContainer::get_service_port(const std::string& service,

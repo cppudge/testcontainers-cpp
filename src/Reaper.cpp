@@ -2,6 +2,7 @@
 
 #include "AsioRun.hpp"
 #include "Config.hpp"
+#include "HostAddress.hpp"
 #include "RandomHex.hpp"
 #include "docker/Auth.hpp" // substitute_image_name (hub prefix for the ryuk image)
 #include "docker/Ports.hpp"
@@ -113,7 +114,10 @@ RyukEndpoint start_ryuk(DockerClient& client, bool auto_remove) {
 
     RyukEndpoint ep;
     ep.container_id = id;
-    ep.host = client.host().http_host(); // "localhost" for a named pipe / unix socket
+    // The same client-side reachability rule as Container::host(): the
+    // override / in-container gateway applies to reaching Ryuk's published
+    // port too.
+    ep.host = detail::resolved_host_address(client.host());
     ep.port = *host_port;
     return ep;
 }

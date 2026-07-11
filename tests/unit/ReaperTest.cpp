@@ -221,6 +221,12 @@ TEST_F(ReaperFile, PerDaemonMapBootsDedupsAndSkips) {
         GTEST_SKIP(); // TESTCONTAINERS_RYUK_DISABLED is set in this environment
     }
 
+    // start_ryuk resolves the registration endpoint via resolved_host_address,
+    // which honors TESTCONTAINERS_HOST_OVERRIDE — pin it unset so a
+    // developer's exported value cannot redirect the Ryuk handshake away from
+    // the FakeRyuks on 127.0.0.1.
+    const tctest::ScopedEnv no_host_override("TESTCONTAINERS_HOST_OVERRIDE", std::nullopt);
+
     // ONE test covers the whole map behavior so every canned endpoint is alive
     // (and therefore port-distinct) at once: the process-global registry keys
     // daemons by endpoint URL, and a recycled port would alias a dead entry.

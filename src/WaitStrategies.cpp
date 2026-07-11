@@ -16,6 +16,7 @@
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
 
+#include "HostAddress.hpp"
 #include "docker/Ports.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Error.hpp"
@@ -356,7 +357,7 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port, const
 /// Connection errors are non-fatal. Throw on the deadline.
 void wait_for_http(DockerClient& client, const std::string& id, const wait_for::Http& cond,
                    Clock::time_point deadline) {
-    const std::string host = client.host().http_host();
+    const std::string host = resolved_host_address(client.host());
     const std::uint16_t port = mapped_host_port(client, id, cond.port);
 
     const std::chrono::milliseconds interval =
@@ -388,7 +389,7 @@ void wait_for_http(DockerClient& client, const std::string& id, const wait_for::
 /// the deadline.
 void wait_for_port(DockerClient& client, const std::string& id, const wait_for::Port& cond,
                    Clock::time_point deadline) {
-    const std::string host = client.host().http_host();
+    const std::string host = resolved_host_address(client.host());
     const std::uint16_t port = mapped_host_port(client, id, cond.port);
 
     const std::chrono::milliseconds interval =

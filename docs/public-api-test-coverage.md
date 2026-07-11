@@ -143,7 +143,7 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `id()` | ✅ | ✅ | ✅ RedisMvp, Reuse, Networks | ✅ WindowsNetworks.* (`srv.id()`) |
 | `is_persistent()` | ✅ | ✅ | ✅ Reuse.ReuseAdoptsRunningContainer | ❌ |
 | `has_tty()` | ✅ | ✅ | ❌ (unit path via logs) | ❌ |
-| `host()` | ✅ | ✅ | ✅ RedisMvp.StartsConnectsAndAutoRemoves | ❌ |
+| `host()` | ✅ | ✅ | ✅ RedisMvp.StartsConnectsAndAutoRemoves (override/gateway resolution unit-tested: HostAddress.* / HostOverrideFile.*) | ❌ |
 | `get_host_port` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.*, PortGetters.* | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
 | `get_host_port_ipv4` | ✅ | ✅ | ✅ PortGetters.Ipv4AndDefaultAgree | ✅ WindowsPortGetters.PublishedPortResolvesMappedPort |
 | `get_host_port_ipv6` | ? (daemon-dependent) | ? | ✅ PortGetters.Ipv4AndDefaultAgree (tolerant: resolves or throws) | ❌ |
@@ -299,7 +299,7 @@ Notes:
 
 ---
 
-## Healthcheck / Mount / CopyToContainer / ExecOptions / ExecResult (value types)
+## Healthcheck / Mount / CopyToContainer / ExecOptions / ExecResult / ConnectionString (value types)
 
 These are copyable value types; their behavior is verified through the modules
 that consume them (rows above). Summary of where each is exercised:
@@ -319,6 +319,7 @@ that consume them (rows above). Summary of where each is exercised:
 | `ExecOptions.privileged` | ✅ Exec.PrivilegedExecExpandsCapabilities | ❌ |
 | `ExecOptions.detach` | ✅ Exec.DetachedRunsInBackground, Exec.DetachedDoesNotWaitForCompletion (+ unit ExecWire.Detach*) | ✅ WindowsExec.DetachedRunsInBackground, WindowsExec.DetachedDoesNotWaitForCompletion |
 | `ExecResult` (stdout/stderr/exit_code) | ✅ Exec.* | ✅ WindowsExec.* |
+| `ConnectionString` (DSN builder) | ❌ (unit-tested: ConnectionString.* — pure string assembly, no daemon involved) | ❌ |
 
 Bind mounts, copy modes, and privileged exec are now Linux-covered; none of the
 three has a Windows-mode test (file modes and privileged exec are Unix concepts

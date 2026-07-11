@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "HostAddress.hpp"
 #include "docker/Ports.hpp"
 #include "docker/Tar.hpp"
 #include "testcontainers/Error.hpp"
@@ -33,6 +34,8 @@ std::uint16_t host_port_or_throw(DockerClient& client, const std::string& id, Co
 }
 
 } // namespace
+
+std::string Container::host() const { return detail::resolved_host_address(client_.host()); }
 
 std::uint16_t Container::get_host_port(ContainerPort port) const {
     return host_port_or_throw(client_, id_, port, docker::HostPortFamily::Any, "published");
