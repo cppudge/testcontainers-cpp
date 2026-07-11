@@ -5,13 +5,14 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 9 of the agreed batch order (2026-07-10; batches 1–8 landed — see
-[feature-notes.md](feature-notes.md) and the git history): environment config —
-docker-context TLS materials, more `~/.testcontainers.properties` keys (both
-landed 2026-07-11), substitutor scope (buildable/compose/raw), a time-based
-pull policy. (Batch 8 —
-compose `--profile`, `--scale` + per-instance accessors, per-service logs, and
-the socat ambassador for unpublished ports — landed in full 2026-07-11.)
+Batch 10 — the last of the agreed batch order (2026-07-10; batches 1–9 landed —
+see [feature-notes.md](feature-notes.md) and the git history): Tier-4 ecosystem
+modules for the flagship 0.2.0 — first the two foundations (an exec-based wait
+strategy and a `host()` override), then Postgres/Redis → MySQL → Kafka, each a
+composition over `GenericImage`. (Batch 9 — environment config: the
+properties-key set behind every env switch, docker-context TLS materials +
+the tcp://→TLS upgrade, hub-prefix/config coverage for every utility image,
+and the age-based pull policy — landed in full 2026-07-11.)
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -129,8 +130,8 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   (the daemon resolves `FROM`), compose YAML services (the file is the user's), and raw
   `DockerClient` calls. The custom `with_image_name_substitutor` remains `GenericImage`-only.
   Utility-image overrides take `name[:tag]` references — digest (`@sha256:...`) spellings
-  don't fit the sshd sidecar's name:tag builder. No time-based ("pull if older than N")
-  policy; `Always` re-pulls on every `start()`.
+  don't fit the sshd sidecar's name:tag builder. The age-based pull policy (2026-07-11)
+  applies to `GenericImage` runs only (utility images and compose stay Default/explicit).
 - **Host access residuals** — remote forwards are never cancelled once added; the
   tunnel pump wakes every 100ms even when idle (fine for test traffic).
   (`src/HostPortForwarding.cpp`)

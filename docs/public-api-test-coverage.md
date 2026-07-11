@@ -89,6 +89,7 @@ suite.
 | `with_exposed_host_port` disabled build (`TC_HOST_PORT_FORWARDING=OFF`) | ✅ | ✅ (same refusal) | ✅ HostAccess.DisabledBuildThrowsClearError (CI: linux-minimal job) | n/a |
 | `with_create_body_patch` | ✅ | ✅ | ❌ | ❌ |
 | `with_image_pull_policy` | ✅ | ✅ | ✅ ContainerConfig.AlwaysPullPolicyStarts | ❌ |
+| `with_image_pull_policy(max_age)` + `pull_max_age()` | ✅ | ✅ | ❌ (unit-tested: Runner.PullMaxAge* — stale pulls / fresh skips / unreadable pulls / missing stays lazy; GenericImage.PullPolicyOverloadsReplaceEachOther) | ❌ |
 | `with_reuse` | ✅ | ✅ | ✅ Reuse.ReuseAdoptsRunningContainer, Reuse.ReuseDisabledCreatesFresh | ❌ |
 | `with_image_name_substitutor` | ✅ | ✅ | ✅ ContainerConfig.CustomSubstitutorRewritesImage | ❌ |
 | `with_created_hook` | ✅ | ✅ | ✅ Lifecycle.HooksFireInOrder | ✅ WindowsLifecycle.HooksFireInOrder |

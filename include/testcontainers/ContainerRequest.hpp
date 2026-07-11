@@ -67,6 +67,15 @@ struct ContainerRequest {
 
     ImagePullPolicy pull_policy = ImagePullPolicy::Default;
 
+    /// Age budget for the LOCAL image under `ImagePullPolicy::Default`: when
+    /// set, the run pulls first if the local copy's Created timestamp is
+    /// older than this — or cannot be read. A missing image needs no pull
+    /// here (create fetches it lazily), and `Always` makes this moot (it
+    /// pulls regardless). Caveat: Created is the image's BUILD time, not the
+    /// pull time, so an image built long ago re-pulls on every start even
+    /// when the registry holds the same bytes.
+    std::optional<std::chrono::seconds> pull_max_age;
+
     /// Opt-in container reuse; only effective when reuse is also enabled
     /// globally (see `GenericImage::with_reuse` for the full semantics).
     bool reuse = false;

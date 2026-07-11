@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -64,6 +66,8 @@
 //   ApiMapping.BuildCreateQueryPlatform - a spec with a platform yields "?platform=<encoded>" (slash percent-encoded).
 //   ApiMapping.BuildCreateQueryNameAndPlatform - a spec with both name and platform joins them with '&'.
 //   ApiMapping.ParseServerOs - GET /version JSON parses the Os field ("windows"/"linux"), defaulting to "" when absent.
+//   ApiMapping.ParseRfc3339KnownInstants - parse_rfc3339 matches known epoch offsets: the epoch itself, a known date, fractional seconds truncated, ±HH:MM offsets applied, and Go's zero time parsing (far before the epoch).
+//   ApiMapping.ParseRfc3339RejectsMalformed - missing zone, bad separators, short fields, out-of-range values, an empty fraction, and trailing garbage all yield nullopt.
 //   ApiMapping.BuildExecCreateBody - the exec-create body carries Cmd and AttachStdout/AttachStderr set true.
 //   ApiMapping.BuildExecCreateBodyDefaultsOmitOptions - with default ExecOptions the body sets Tty=false and omits AttachStdin/Env/WorkingDir/User/Privileged.
 //   ApiMapping.BuildExecCreateBodyWithOptions - env/working_dir/user/privileged/tty map to Env/WorkingDir/User/Privileged/Tty.
@@ -113,6 +117,7 @@ using testcontainers::docker::parse_image_inspect;
 using testcontainers::docker::parse_inspect;
 using testcontainers::docker::parse_network_inspect;
 using testcontainers::docker::parse_network_list;
+using testcontainers::docker::parse_rfc3339;
 using testcontainers::docker::parse_server_os;
 using testcontainers::docker::parse_volume_inspect;
 using testcontainers::docker::parse_volume_list;
@@ -939,6 +944,52 @@ TEST(ApiMapping, ParseServerOs) {
     EXPECT_EQ(parse_server_os(R"({"Os":"linux"})"), "linux");
     // Missing Os field defaults to "".
     EXPECT_EQ(parse_server_os(R"({"Version":"24.0.0"})"), "");
+}
+
+TEST(ApiMapping, ParseRfc3339KnownInstants) {
+    // The seconds-resolution rep is read directly — converting through the
+    // clock's native duration would overflow the extreme vectors below on
+    // nanosecond-clock stdlibs (the exact bug the return type avoids).
+    const auto epoch_seconds = [](const std::string& text) -> std::optional<std::int64_t> {
+        const auto parsed = parse_rfc3339(text);
+        if (!parsed) {
+            return std::nullopt;
+        }
+        return parsed->time_since_epoch().count();
+    };
+
+    EXPECT_EQ(epoch_seconds("1970-01-01T00:00:00Z"), 0);
+    // date -u -d '2024-01-15T10:30:00Z' +%s
+    EXPECT_EQ(epoch_seconds("2024-01-15T10:30:00Z"), 1705314600);
+    // Fractional seconds truncate (the daemon emits nanoseconds); 'z' works.
+    EXPECT_EQ(epoch_seconds("2024-01-15T10:30:00.999999999Z"), 1705314600);
+    EXPECT_EQ(epoch_seconds("2024-01-15t10:30:00z"), 1705314600);
+    // A +02:00 civil time is two hours EARLIER as an instant; -05:30 later.
+    EXPECT_EQ(epoch_seconds("2024-01-15T10:30:00+02:00"), 1705314600 - 7200);
+    EXPECT_EQ(epoch_seconds("2024-01-15T10:30:00-05:30"), 1705314600 + 19800);
+    // Go's zero time (an image with no Created) parses to far before the
+    // epoch — an age check then always calls it stale, which is the point.
+    const auto go_zero = epoch_seconds("0001-01-01T00:00:00Z");
+    ASSERT_TRUE(go_zero.has_value());
+    EXPECT_LT(*go_zero, -60000000000LL); // ~1900 years before 1970
+}
+
+TEST(ApiMapping, ParseRfc3339RejectsMalformed) {
+    for (const char* text : {
+             "",                             // empty
+             "2024-01-15T10:30:00",          // zone designator required
+             "2024-01-15 10:30:00Z",         // ' ' is not a date/time separator
+             "2024/01/15T10:30:00Z",         // wrong date separators
+             "2024-1-15T10:30:00Z",          // fields are fixed-width
+             "2024-13-15T10:30:00Z",         // month out of range
+             "2024-01-15T24:30:00Z",         // hour out of range
+             "2024-01-15T10:30:00.Z",        // empty fraction
+             "2024-01-15T10:30:00+02",       // offset needs HH:MM
+             "2024-01-15T10:30:00Z-trailer", // trailing garbage
+             "not a timestamp",
+         }) {
+        EXPECT_FALSE(parse_rfc3339(text).has_value()) << text;
+    }
 }
 
 TEST(ApiMapping, BuildExecCreateBody) {

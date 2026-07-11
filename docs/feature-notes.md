@@ -343,7 +343,15 @@ The RAII drop fails (409) while a container still mounts the volume — tear dow
 reverse-declaration order.
 
 **Image pull policy + name substitution** — `ImagePullPolicy::Default` (lazy: pull on a create
-404) / `Always` (pull before every create); substitution via
+404) / `Always` (pull before every create) / age-based
+(`with_image_pull_policy(std::chrono::seconds)`, 2026-07-11, java `PullPolicy.ageBased`
+parity): under `Default` with an age budget the run inspects the local image and re-pulls
+when its `Created` timestamp is older than the budget or unreadable (Go's zero time and
+garbage both count as stale — the safe default is a refresh); a missing image stays on
+create's lazy path. The shared caveat: `Created` is the image's BUILD time, not the pull
+time, so an old image re-pulls every start even when the registry holds the same bytes
+(docker records no pull time). The RFC 3339 parsing is a pure helper
+(`docker::parse_rfc3339`, integer math, no timegm). Substitution via
 `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX` (or the `hub.image.name.prefix` properties key) or a
 custom `with_image_name_substitutor` (replaces the default, `GenericImage`-scoped). Since
 2026-07-11 the hub prefix reaches EVERY internal utility image — ryuk, the socat ambassador,

@@ -29,6 +29,7 @@
 //   GenericImage.ToRequestSnapshotsBuilderState - to_request() carries the translated create spec (image ref, "K=V" env, "port/proto" strings, publish-all) plus every orchestration field, one-to-one with the builders.
 //   GenericImage.ExposedHostPortsDefaultEmpty - a freshly constructed image exposes no host ports.
 //   GenericImage.ExposedHostPortsAccumulateAndSnapshot - with_exposed_host_port accumulates in call order, chains on an rvalue, and to_request() carries the ports without touching the create spec (no ExtraHosts entry until run()).
+//   GenericImage.PullPolicyOverloadsReplaceEachOther - the age overload sets Default + pull_max_age (carried into to_request), the enum overload clears a previously-set budget, and a fresh image has no budget.
 
 using namespace testcontainers;
 
@@ -335,4 +336,22 @@ TEST(GenericImage, ExposedHostPortsAccumulateAndSnapshot) {
     // The alias's ExtraHosts entry depends on the run (the sidecar's IP), so
     // the snapshot must NOT have touched the create spec.
     EXPECT_TRUE(req.spec.extra_hosts.empty());
+}
+
+TEST(GenericImage, PullPolicyOverloadsReplaceEachOther) {
+    GenericImage img("redis");
+    EXPECT_FALSE(img.pull_max_age().has_value()); // no budget by default
+
+    img.with_image_pull_policy(std::chrono::hours(24));
+    EXPECT_EQ(img.image_pull_policy(), ImagePullPolicy::Default); // age implies Default
+    ASSERT_TRUE(img.pull_max_age().has_value());
+    EXPECT_EQ(*img.pull_max_age(), std::chrono::hours(24));
+    EXPECT_EQ(img.to_request().pull_max_age, std::chrono::seconds(std::chrono::hours(24)));
+
+    // "Each call replaces the whole policy": the enum overload clears the
+    // budget it did not set.
+    img.with_image_pull_policy(ImagePullPolicy::Always);
+    EXPECT_EQ(img.image_pull_policy(), ImagePullPolicy::Always);
+    EXPECT_FALSE(img.pull_max_age().has_value());
+    EXPECT_FALSE(img.to_request().pull_max_age.has_value());
 }

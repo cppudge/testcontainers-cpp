@@ -1,6 +1,7 @@
 #include "Runner.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -12,6 +13,7 @@
 #include "Reuse.hpp"
 #include "WaitStrategies.hpp"
 #include "docker/ApiMapping.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -103,6 +105,30 @@ Container Runner::run(DockerClient& client, const ContainerRequest& request) {
     // locally; Default relies on create's lazy pull-on-404 path.
     if (request.pull_policy == ImagePullPolicy::Always) {
         client.pull_image(spec.image, request.registry_auth);
+    } else if (request.pull_max_age) {
+        // Age-based (java PullPolicy.ageBased parity): refresh when the LOCAL
+        // image's Created timestamp is older than the budget — or unreadable
+        // (the safe default is a pull; worst case it fetches the same bytes).
+        try {
+            const ImageInspect info = client.inspect_image(spec.image);
+            const auto created = docker::parse_rfc3339(info.created);
+            // Compare at seconds resolution: converting the parsed point to
+            // the clock's native duration would re-overflow extreme dates
+            // (Go's zero time) on nanosecond-clock stdlibs. The age is the
+            // bounded difference `now - created` — shifting `created` by the
+            // budget instead would overflow for a seconds::max()-style
+            // "never re-pull" budget and invert its meaning.
+            const auto now =
+                std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+            if (!created || now - *created > *request.pull_max_age) {
+                client.pull_image(spec.image, request.registry_auth);
+            }
+        } catch (const NotFoundError&) {
+            // Only the 404 is swallowed (best-effort there: absent locally is
+            // not an error — create's lazy pull-on-404 fetches the image
+            // below); any other inspect failure propagates like every other
+            // daemon call.
+        }
     }
 
     // Host-port exposure: make sure the sshd sidecar + SSH forwards are up and

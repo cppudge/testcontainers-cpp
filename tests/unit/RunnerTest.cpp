@@ -33,6 +33,10 @@
 //   Runner.RetryCreatesFreshContainer - with startup_attempts=2 a failed first attempt is removed and a brand-new container is created and returned.
 //   Runner.RetryExhaustionRethrowsLast - when every attempt fails, the LAST attempt's error propagates (each partial container removed).
 //   Runner.PullPolicyAlwaysPullsBeforeCreate - ImagePullPolicy::Always issues POST /images/create before the container create.
+//   Runner.PullMaxAgeStaleImagePullsFirst - with pull_max_age set, a local image whose Created is older than the budget is inspected then re-pulled before create.
+//   Runner.PullMaxAgeFreshImageSkipsPull - a local image younger than the budget is inspected but NOT pulled.
+//   Runner.PullMaxAgeUnreadableCreatedPulls - an unparseable Created timestamp counts as stale (safe default: refresh).
+//   Runner.PullMaxAgeMissingImageUsesLazyCreatePath - a 404 on the inspect issues no explicit pull; create's own lazy-pull path covers a missing image.
 //   Runner.WaitTimeoutRemovesContainerAndConsumesAttempts - a readiness timeout surfaces as StartupTimeoutError, force-removes the partial container, and consumes a startup attempt (it IS retried).
 //   Runner.ReuseAdoptsRunningMatch - with reuse enabled, a running hash-match is adopted (no create, not retried) and the handle is persistent (no DELETE on drop).
 //   Runner.ReuseCreateBodyCarriesHashNotSessionLabel - with reuse enabled and no match, the fresh container's create body carries the reuse-hash label and NEVER the session-id label (Ryuk must not reap it); the handle is persistent.
@@ -481,5 +485,108 @@ TEST(Runner, PullPolicyAlwaysPullsBeforeCreate) {
     const auto requests = server.requests();
     ASSERT_EQ(requests.size(), 5u);
     EXPECT_TRUE(request_is(requests[1], "POST /images/create")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /containers/create")) << requests[2];
+}
+
+namespace {
+
+/// A canned `GET /images/{ref}/json` body with the given Created timestamp.
+std::string image_inspect_created(const std::string& created) {
+    return http_response(200, "OK", R"({"Id":"sha256:abc","Created":")" + created + R"("})");
+}
+
+/// A busybox request with an age-based pull policy and pull-safe (empty)
+/// credentials — the unit test must not shell out to credential helpers.
+ContainerRequest max_age_request(std::chrono::seconds max_age) {
+    ContainerRequest request = busybox_request();
+    request.pull_max_age = max_age;
+    request.registry_auth = testcontainers::RegistryAuth{};
+    return request;
+}
+
+} // namespace
+
+TEST(Runner, PullMaxAgeStaleImagePullsFirst) {
+    CannedHttpServer server({
+        ping_ok(),
+        image_inspect_created("2000-01-01T00:00:00Z"), // decades older than any budget
+        http_response(200, "OK", "{\"status\":\"Pulling from library/busybox\"}\n"),
+        created("abc123"),
+        started(),
+        removed(),
+    });
+    {
+        testcontainers::DockerClient client{server.host()};
+        const Container c = Runner::run(client, max_age_request(std::chrono::hours(24)));
+        EXPECT_EQ(c.id(), "abc123");
+    }
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 6u);
+    EXPECT_TRUE(request_is(requests[1], "GET /images/")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /images/create")) << requests[2];
+    EXPECT_TRUE(request_is(requests[3], "POST /containers/create")) << requests[3];
+}
+
+TEST(Runner, PullMaxAgeFreshImageSkipsPull) {
+    CannedHttpServer server({
+        ping_ok(),
+        // Far in the future: younger than any budget however slow the suite is.
+        image_inspect_created("2999-01-01T00:00:00Z"),
+        created("abc123"),
+        started(),
+        removed(),
+    });
+    {
+        testcontainers::DockerClient client{server.host()};
+        const Container c = Runner::run(client, max_age_request(std::chrono::hours(24)));
+        EXPECT_EQ(c.id(), "abc123");
+    }
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 5u); // ping, inspect, create, start, drop-DELETE
+    EXPECT_TRUE(request_is(requests[1], "GET /images/")) << requests[1];
+    EXPECT_TRUE(request_is(requests[2], "POST /containers/create")) << requests[2];
+}
+
+TEST(Runner, PullMaxAgeUnreadableCreatedPulls) {
+    CannedHttpServer server({
+        ping_ok(),
+        image_inspect_created("not a timestamp"),
+        http_response(200, "OK", "{\"status\":\"Pulling from library/busybox\"}\n"),
+        created("abc123"),
+        started(),
+        removed(),
+    });
+    {
+        testcontainers::DockerClient client{server.host()};
+        const Container c = Runner::run(client, max_age_request(std::chrono::hours(24)));
+        EXPECT_EQ(c.id(), "abc123");
+    }
+
+    const auto requests = server.requests();
+    ASSERT_EQ(requests.size(), 6u); // unreadable age -> the safe default is a refresh
+    EXPECT_TRUE(request_is(requests[2], "POST /images/create")) << requests[2];
+}
+
+TEST(Runner, PullMaxAgeMissingImageUsesLazyCreatePath) {
+    CannedHttpServer server({
+        ping_ok(),
+        http_response(404, "Not Found", R"({"message":"no such image"})"),
+        created("abc123"),
+        started(),
+        removed(),
+    });
+    {
+        testcontainers::DockerClient client{server.host()};
+        const Container c = Runner::run(client, max_age_request(std::chrono::hours(24)));
+        EXPECT_EQ(c.id(), "abc123");
+    }
+
+    const auto requests = server.requests();
+    // No explicit pull between the inspect 404 and the create: a missing image
+    // is create's own lazy-pull business (here the canned create just succeeds).
+    ASSERT_EQ(requests.size(), 5u);
+    EXPECT_TRUE(request_is(requests[1], "GET /images/")) << requests[1];
     EXPECT_TRUE(request_is(requests[2], "POST /containers/create")) << requests[2];
 }

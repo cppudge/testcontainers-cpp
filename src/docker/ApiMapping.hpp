@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -66,6 +67,19 @@ ImageInspect parse_image_inspect(const std::string& body);
 /// "windows"). Returns "" if the field is missing. Pure, daemon-free helper so
 /// the engine-OS detection in DockerClient can be unit-tested.
 std::string parse_server_os(const std::string& version_json);
+
+/// Parse an RFC 3339 timestamp — "2024-01-15T10:30:00.123456789Z", the shape
+/// the daemon emits for image/container Created fields — into a
+/// SECONDS-resolution system_clock time point (Unix epoch based, C++20
+/// guarantee). Seconds, not the clock's native duration, deliberately: that
+/// is nanoseconds on libstdc++, whose int64 rep spans only ±292 years — Go's
+/// zero time "0001-01-01T00:00:00Z" (the daemon's "no Created") would
+/// overflow it. Accepts an optional fractional-seconds part (truncated:
+/// sub-second precision is irrelevant for age checks) and either 'Z'/'z' or
+/// a ±HH:MM offset. nullopt for anything malformed. Pure; all integer math
+/// (no timegm).
+std::optional<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>>
+parse_rfc3339(const std::string& text);
 
 /// The newest Engine API version this client is written against. Every request
 /// is pinned to at most this version so daemon upgrades cannot silently change

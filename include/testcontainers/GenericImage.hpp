@@ -378,9 +378,23 @@ public:
 
     /// Control whether the image is pulled before create. `Default` keeps the
     /// lazy behavior (pull only on a create 404); `Always` pulls before create
-    /// even when the image is already present locally.
+    /// even when the image is already present locally. Each call REPLACES the
+    /// whole pull policy — an age budget set earlier is cleared.
     GenericImage& with_image_pull_policy(ImagePullPolicy policy) {
         request_.pull_policy = policy;
+        request_.pull_max_age = std::nullopt;
+        return *this;
+    }
+
+    /// Age-based pull: pull before create when the LOCAL image's Created
+    /// timestamp is older than `max_age` — or cannot be read; a missing image
+    /// is still fetched lazily by create itself. Caveat: Created is the
+    /// image's BUILD time, not the pull time, so an image built long ago
+    /// re-pulls on every start even when the registry holds the same bytes.
+    /// Each call replaces the whole pull policy.
+    GenericImage& with_image_pull_policy(std::chrono::seconds max_age) {
+        request_.pull_policy = ImagePullPolicy::Default;
+        request_.pull_max_age = max_age;
         return *this;
     }
 
@@ -519,6 +533,9 @@ public:
         return request_.spec.create_body_patch;
     }
     ImagePullPolicy image_pull_policy() const noexcept { return request_.pull_policy; }
+    const std::optional<std::chrono::seconds>& pull_max_age() const noexcept {
+        return request_.pull_max_age;
+    }
     bool reuse() const noexcept { return request_.reuse; }
     const std::function<std::string(const std::string&)>& image_name_substitutor() const noexcept {
         return substitutor_;

@@ -2,7 +2,9 @@
 
 #include "testcontainers/Error.hpp"
 
+#include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -542,6 +544,110 @@ std::string parse_server_os(const std::string& version_json) {
         const nlohmann::json json = nlohmann::json::parse(version_json);
         return json.value("Os", std::string{});
     });
+}
+
+std::optional<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>>
+parse_rfc3339(const std::string& text) {
+    // Strict field-by-field parse of YYYY-MM-DDTHH:MM:SS[.frac](Z|±HH:MM).
+    const char* p = text.data();
+    const char* const end = text.data() + text.size();
+
+    const auto read_int = [&](int digits, int min, int max) -> std::optional<int> {
+        if (end - p < digits) {
+            return std::nullopt;
+        }
+        int value = 0;
+        const auto [parsed_end, ec] = std::from_chars(p, p + digits, value);
+        if (ec != std::errc{} || parsed_end != p + digits || value < min || value > max) {
+            return std::nullopt;
+        }
+        p = parsed_end;
+        return value;
+    };
+    const auto expect = [&](char c) {
+        if (p < end && *p == c) {
+            ++p;
+            return true;
+        }
+        return false;
+    };
+
+    const auto year = read_int(4, 0, 9999);
+    if (!year || !expect('-')) {
+        return std::nullopt;
+    }
+    const auto month = read_int(2, 1, 12);
+    if (!month || !expect('-')) {
+        return std::nullopt;
+    }
+    const auto day = read_int(2, 1, 31);
+    if (!day || (!expect('T') && !expect('t'))) {
+        return std::nullopt;
+    }
+    const auto hour = read_int(2, 0, 23);
+    if (!hour || !expect(':')) {
+        return std::nullopt;
+    }
+    const auto minute = read_int(2, 0, 59);
+    if (!minute || !expect(':')) {
+        return std::nullopt;
+    }
+    // 60 admits a (theoretical) leap second, clamped below.
+    const auto second = read_int(2, 0, 60);
+    if (!second) {
+        return std::nullopt;
+    }
+
+    if (expect('.')) { // fractional seconds: at least one digit, truncated
+        const char* frac_begin = p;
+        while (p < end && *p >= '0' && *p <= '9') {
+            ++p;
+        }
+        if (p == frac_begin) {
+            return std::nullopt;
+        }
+    }
+
+    std::int64_t offset_seconds = 0;
+    if (expect('Z') || expect('z')) {
+        // UTC, no offset.
+    } else if (p < end && (*p == '+' || *p == '-')) {
+        const bool negative = *p == '-';
+        ++p;
+        const auto off_hour = read_int(2, 0, 23);
+        if (!off_hour || !expect(':')) {
+            return std::nullopt;
+        }
+        const auto off_minute = read_int(2, 0, 59);
+        if (!off_minute) {
+            return std::nullopt;
+        }
+        offset_seconds = (std::int64_t{*off_hour} * 60 + *off_minute) * 60;
+        if (negative) {
+            offset_seconds = -offset_seconds;
+        }
+    } else {
+        return std::nullopt; // a zone designator is required
+    }
+    if (p != end) {
+        return std::nullopt; // trailing garbage
+    }
+
+    // Civil date -> days since the Unix epoch (Howard Hinnant's civil_from_days
+    // inverse; proleptic Gregorian, pure integer math — no timegm, portable).
+    std::int64_t y = *year;
+    const int m = *month;
+    y -= static_cast<std::int64_t>(m <= 2);
+    const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const std::int64_t yoe = y - era * 400;
+    const std::int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + *day - 1;
+    const std::int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const std::int64_t days = era * 146097 + doe - 719468;
+
+    const std::int64_t total = days * 86400 + std::int64_t{*hour} * 3600 +
+                               std::int64_t{*minute} * 60 + std::min(*second, 59) - offset_seconds;
+    return std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>{
+        std::chrono::seconds{total}};
 }
 
 std::string negotiate_api_version(std::string_view daemon_reported) {
