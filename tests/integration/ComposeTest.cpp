@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Reaper.hpp"
@@ -19,11 +21,12 @@
 // Tests in this file (integration; require a Linux Docker daemon):
 //   Compose.LocalClientBringsUpRedis - the LOCAL client (host `docker compose` CLI; default) brings up redis from a temp YAML, the published host port answers a raw TCP PING with PONG, and stop() removes every container carrying the project label. Skipped if the host has no `docker compose`.
 //   Compose.ContainerisedClientBringsUpRedis - the CONTAINERISED client (long-lived docker:26.1-cli + exec) brings up redis (pulling docker:26.1-cli on first run), PING/PONG succeeds, and teardown leaves nothing.
-//   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.RestartKeepsProjectAlive - start() on an already-started handle tears the OLD run down first, so the fresh containers survive (the shared project label makes teardown-after-up remove the new run's containers).
 //   Compose.ProfileGatesService - a service behind `profiles:` stays down without with_profile and comes up with it; the profile-aware teardown leaves no container behind.
 //   Compose.ScaleRunsTwoInstances - with_scale("redis", 2) runs two discoverable instances with distinct containers and distinct ephemeral host ports (both answer PING); the plain accessor picks instance 1; an out-of-range instance throws.
+//   Compose.ServiceLogsDeliverRedisStartup - follow_service_logs (deadline-bounded) sees redis's startup marker and stops via the consumer; the snapshot and its instance-1 form then both contain it.
 //   Compose.ProjectFilterRegisteredWithReaper - start() hands the session's Ryuk an extra `label=com.docker.compose.project=<project>` filter (crash-safe reaping of the stack), exactly once across a restart.
+//   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 
 using namespace testcontainers;
 
@@ -229,6 +232,41 @@ TEST_F(Compose, ScaleRunsTwoInstances) {
     const auto leftovers = client.list_containers(
         {{"label", "com.docker.compose.project=" + project_name}}, /*all*/ true);
     EXPECT_TRUE(leftovers.empty());
+}
+
+TEST_F(Compose, ServiceLogsDeliverRedisStartup) {
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP(); // host `docker compose` CLI is not available
+    }
+    DockerComposeContainer compose =
+        DockerComposeContainer::from_yaml(kRedisYaml).with_exposed_service("redis", tcp(6379));
+    ASSERT_NO_THROW(compose.start());
+
+    // The deadline-bounded follow replays the existing log (tail=all) and then
+    // streams, so it sees redis's startup marker no matter how start() raced
+    // it; the consumer stops the stream at that point.
+    constexpr const char* kReadyMarker = "Ready to accept connections";
+    std::string streamed;
+    const FollowEnd end = compose.follow_service_logs(
+        "redis",
+        [&](LogSource source, std::string_view data) {
+            // stdout only — the same stream the snapshot asserts below pin.
+            if (source == LogSource::Stdout) {
+                streamed.append(data);
+            }
+            return streamed.find(kReadyMarker) == std::string::npos;
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(30));
+    EXPECT_EQ(end, FollowEnd::ConsumerStopped);
+    EXPECT_NE(streamed.find(kReadyMarker), std::string::npos);
+
+    // The marker has certainly been written by now: the snapshot — and its
+    // explicit instance-1 form — must both carry it.
+    EXPECT_NE(compose.get_service_logs("redis").stdout_data.find(kReadyMarker), std::string::npos);
+    EXPECT_NE(compose.get_service_logs("redis", 1).stdout_data.find(kReadyMarker),
+              std::string::npos);
+
+    ASSERT_NO_THROW(compose.stop());
 }
 
 TEST_F(Compose, ProjectFilterRegisteredWithReaper) {

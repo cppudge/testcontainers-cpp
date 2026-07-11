@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
+#include "testcontainers/docker/Logs.hpp"
 
 namespace testcontainers {
 
@@ -202,6 +203,46 @@ public:
     /// The running instance numbers of `service`, ascending (a single-instance
     /// service yields {1}). Throws if the service is unknown.
     std::vector<int> service_instances(const std::string& service) const;
+
+    /// A snapshot of `service`'s stdout / stderr logs — the first
+    /// (lowest-numbered) instance's. A service whose YAML sets `tty: true`
+    /// writes a raw/unframed stream: set `opts.tty` to read it. Throws if the
+    /// service is unknown.
+    ///
+    /// Pass options as a spelled-out `LogOptions{...}` (or omit them) in every
+    /// log accessor: a bare `{}` in the options slot reads as `int` 0 to
+    /// overload resolution and selects the instance form here — and is
+    /// ambiguous against the deadline in the follow forms.
+    ContainerLogs get_service_logs(const std::string& service, const LogOptions& opts = {}) const;
+
+    /// The log snapshot of instance `instance` (numbered from 1) of a scaled
+    /// `service`.
+    ContainerLogs get_service_logs(const std::string& service, int instance,
+                                   const LogOptions& opts = {}) const;
+
+    /// Stream `service`'s logs (first instance) to `consumer` until the
+    /// container stops or the consumer returns false. Blocking — run on your
+    /// own thread for background consumption. See DockerClient::follow_logs.
+    void follow_service_logs(const std::string& service, const LogConsumer& consumer,
+                             const LogOptions& opts = {}) const;
+
+    /// The instance-selecting form of the blocking stream above.
+    void follow_service_logs(const std::string& service, int instance, const LogConsumer& consumer,
+                             const LogOptions& opts = {}) const;
+
+    /// Deadline-bounded stream of `service`'s logs (first instance): also stops
+    /// when `deadline` passes, returning why the stream ended instead of
+    /// blocking until the container stops. See the DockerClient overload for
+    /// the deadline mechanics.
+    FollowEnd follow_service_logs(const std::string& service, const LogConsumer& consumer,
+                                  std::chrono::steady_clock::time_point deadline,
+                                  const LogOptions& opts = {}) const;
+
+    /// The instance-selecting form of the deadline-bounded stream above.
+    FollowEnd follow_service_logs(const std::string& service, int instance,
+                                  const LogConsumer& consumer,
+                                  std::chrono::steady_clock::time_point deadline,
+                                  const LogOptions& opts = {}) const;
 
     /// Tear the stack down (compose `down`) and remove leftovers by the project
     /// label. Idempotent; the destructor calls it best-effort.

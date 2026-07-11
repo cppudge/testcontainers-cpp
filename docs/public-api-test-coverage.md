@@ -258,6 +258,8 @@ row's Windows column is n/a for that reason.
 | `get_service_port` (+ per-instance overload) | ✅ | n/a | ✅ Compose.* (per-instance: ScaleRunsTwoInstances) | n/a |
 | `get_service_container_id` (+ per-instance overload) | ✅ | n/a | ✅ Compose.RestartKeepsProjectAlive, Compose.ScaleRunsTwoInstances | n/a |
 | `service_instances` | ✅ | n/a | ✅ Compose.ScaleRunsTwoInstances | n/a |
+| `get_service_logs` (+ per-instance overload) | ✅ | n/a | ✅ Compose.ServiceLogsDeliverRedisStartup (both forms) | n/a |
+| `follow_service_logs` (blocking + deadline, per-instance forms) | ✅ | n/a | ✅ Compose.ServiceLogsDeliverRedisStartup (deadline form; blocking form delegates to the same impl) | n/a |
 | `project_name()` | ✅ | n/a | ✅ Compose.* | n/a |
 | getters (`compose_files`, `client_kind`, …) | ✅ | n/a | unit-tested | n/a |
 

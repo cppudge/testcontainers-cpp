@@ -548,6 +548,53 @@ std::vector<int> DockerComposeContainer::service_instances(const std::string& se
     return numbers;
 }
 
+ContainerLogs DockerComposeContainer::get_service_logs(const std::string& service,
+                                                       const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service);
+    DockerClient client = DockerClient::from_environment();
+    return client.logs(id, opts);
+}
+
+ContainerLogs DockerComposeContainer::get_service_logs(const std::string& service, int instance,
+                                                       const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service, instance);
+    DockerClient client = DockerClient::from_environment();
+    return client.logs(id, opts);
+}
+
+void DockerComposeContainer::follow_service_logs(const std::string& service,
+                                                 const LogConsumer& consumer,
+                                                 const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service);
+    DockerClient client = DockerClient::from_environment();
+    client.follow_logs(id, opts, consumer);
+}
+
+void DockerComposeContainer::follow_service_logs(const std::string& service, int instance,
+                                                 const LogConsumer& consumer,
+                                                 const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service, instance);
+    DockerClient client = DockerClient::from_environment();
+    client.follow_logs(id, opts, consumer);
+}
+
+FollowEnd
+DockerComposeContainer::follow_service_logs(const std::string& service, const LogConsumer& consumer,
+                                            std::chrono::steady_clock::time_point deadline,
+                                            const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service);
+    DockerClient client = DockerClient::from_environment();
+    return client.follow_logs(id, opts, consumer, deadline);
+}
+
+FollowEnd DockerComposeContainer::follow_service_logs(
+    const std::string& service, int instance, const LogConsumer& consumer,
+    std::chrono::steady_clock::time_point deadline, const LogOptions& opts) const {
+    const std::string id = get_service_container_id(service, instance);
+    DockerClient client = DockerClient::from_environment();
+    return client.follow_logs(id, opts, consumer, deadline);
+}
+
 const std::map<int, std::string>&
 DockerComposeContainer::find_service_instances(const std::string& service) const {
     if (active_) {

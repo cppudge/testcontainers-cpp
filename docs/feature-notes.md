@@ -356,7 +356,11 @@ label, so `get_service_port`/`get_service_container_id` take an optional instanc
 number (1..n; the plain forms mean the lowest-numbered instance),
 `service_instances` lists the running numbers, and `with_exposed_service` can
 probe a specific instance. Scaling past 1 requires ephemeral host ports (a
-fixed one collides across instances).
+fixed one collides across instances). Per-service logs (2026-07-11):
+`get_service_logs` (snapshot) and `follow_service_logs` (blocking or
+deadline-bounded, per-instance forms included) delegate to the Engine-API log
+endpoints over the discovered container id, so they work identically under
+every client mode.
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running

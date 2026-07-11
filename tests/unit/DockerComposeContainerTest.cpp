@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,7 +25,7 @@
 //   DockerComposeContainer.ProfilesAccumulateInOrder - profiles() is empty by default; with_profile appends in call order (rvalue chaining included).
 //   DockerComposeContainer.ScalesLastValueWinsPerService - scales() is empty by default; with_scale records per service and the last value wins.
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
-//   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws, on the plain, indexed, and instance-list accessors alike.
+//   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws, on the plain, indexed, instance-list, and log accessors alike.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
 //   DockerComposeContainer.MoveAssignReleasesTargetsOldTempFile - move-assigning over a handle releases (deletes) the temp file the target owned before.
@@ -163,6 +164,11 @@ TEST(DockerComposeContainer, UnknownServiceThrows) {
     EXPECT_ANY_THROW(compose.get_service_container_id("redis"));
     EXPECT_ANY_THROW(compose.get_service_container_id("redis", 2));
     EXPECT_ANY_THROW(compose.service_instances("redis"));
+    // The log accessors resolve the container id first, so they throw the same
+    // way — before any client is even constructed.
+    EXPECT_ANY_THROW(compose.get_service_logs("redis"));
+    EXPECT_ANY_THROW(
+        compose.follow_service_logs("redis", [](LogSource, std::string_view) { return true; }));
 }
 
 TEST(DockerComposeContainer, MoveConstructTransfersTempFileOwnership) {

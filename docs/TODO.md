@@ -102,8 +102,8 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   helper keep-alive bounds a seed (~30s Linux `sleep`, ~5min Windows `ping`) — a copy
   outrunning it can read as success (the attached exec's exit settles to 0 on a vanished
   helper); lift the budgets if a giant fixture ever bites.
-- **Compose gaps** — per-service log streaming and a socat ambassador for UNPUBLISHED ports
-  are still unsupported (`--profile` and `--scale` + indexed accessors landed 2026-07-11).
+- **Compose gaps** — a socat ambassador for UNPUBLISHED ports is still unsupported
+  (`--profile`, `--scale` + indexed accessors, and per-service logs landed 2026-07-11).
 - **Windows containers** — `Volume::populate` seeds Windows volumes via
   stage-then-in-container-copy (2026-07-11); the default helper is nanoserver:ltsc2022, so
   process-isolation daemons need a build-matched `helper_image` passed explicitly.
