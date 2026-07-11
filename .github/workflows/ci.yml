@@ -241,6 +241,25 @@ jobs:
           ./build/ninja/bin/tc_integration_tests
           --gtest_filter='-Compose.*:ContainerConfig.BindMountReadOnly'
 
+      # The same daemon through a docker CONTEXT with NO DOCKER_* connection
+      # env at all: resolve() must find the context by name, read its
+      # meta.json endpoint, pick the TLS materials out of the context store
+      # (sha256-named directories), and upgrade the tcp:// spelling to TLS —
+      # the exact path a `docker context use` user hits. A short suite proves
+      # the mutual-TLS handshake plus a full container lifecycle.
+      - name: Integration smoke through a docker context
+        timeout-minutes: 10
+        run: |
+          export HOME="$PWD/ctx-home"
+          ctx=tc-dind
+          sha=$(printf '%s' "$ctx" | sha256sum | cut -d' ' -f1)
+          mkdir -p "$HOME/.docker/contexts/meta/$sha" "$HOME/.docker/contexts/tls/$sha/docker"
+          printf '{"Name":"%s","Endpoints":{"docker":{"Host":"tcp://docker:2376","SkipTLSVerify":false}}}' "$ctx" \
+            > "$HOME/.docker/contexts/meta/$sha/meta.json"
+          cp dind-certs/client/ca.pem dind-certs/client/cert.pem dind-certs/client/key.pem \
+            "$HOME/.docker/contexts/tls/$sha/docker/"
+          DOCKER_CONTEXT=$ctx ./build/ninja/bin/tc_integration_tests --gtest_filter='Lifecycle.*'
+
       - name: dind daemon log (on failure)
         if: failure()
         run: docker logs dind 2>&1 | tail -100

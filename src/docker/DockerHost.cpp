@@ -5,6 +5,7 @@
 #include "FileRead.hpp"
 #include "Strings.hpp"
 #include "docker/HostResolve.hpp"
+#include "docker/TlsConfig.hpp" // docker_tls_verify (the tcp:// -> https upgrade)
 
 #include "testcontainers/Error.hpp"
 
@@ -13,6 +14,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -169,13 +172,13 @@ std::optional<std::string> current_context_from_config(const std::string& config
     return std::nullopt;
 }
 
-std::optional<std::string> docker_host_from_context_meta(const std::string& meta_json) {
+std::optional<ContextEndpoint> endpoint_from_context_meta(const std::string& meta_json) {
     try {
         const nlohmann::json root = nlohmann::json::parse(meta_json);
         if (!root.is_object()) {
             return std::nullopt;
         }
-        // Endpoints.docker.Host
+        // Endpoints.docker.{Host,SkipTLSVerify}
         const auto endpoints = root.find("Endpoints");
         if (endpoints == root.end() || !endpoints->is_object()) {
             return std::nullopt;
@@ -184,18 +187,22 @@ std::optional<std::string> docker_host_from_context_meta(const std::string& meta
         if (dockerep == endpoints->end() || !dockerep->is_object()) {
             return std::nullopt;
         }
+        ContextEndpoint endpoint;
         if (const auto host = dockerep->find("Host");
             host != dockerep->end() && host->is_string()) {
-            // Not const: allows the automatic move into the returned optional.
-            std::string value = host->get<std::string>();
-            if (!value.empty()) {
-                return value;
-            }
+            endpoint.host = host->get<std::string>();
         }
+        if (endpoint.host.empty()) {
+            return std::nullopt;
+        }
+        if (const auto skip = dockerep->find("SkipTLSVerify");
+            skip != dockerep->end() && skip->is_boolean()) {
+            endpoint.skip_tls_verify = skip->get<bool>();
+        }
+        return endpoint;
     } catch (const nlohmann::json::parse_error&) {
         return std::nullopt;
     }
-    return std::nullopt;
 }
 
 } // namespace docker
@@ -238,6 +245,36 @@ DockerHost DockerHost::parse(const std::string& url) {
 
 namespace {
 
+// Rewrite the tcp:// / http:// / scheme-less spellings of a URL to https://
+// (anything else — already-https, unix, npipe — returned unchanged). The
+// scheme compares case-insensitively, exactly like parse() reads it, so an
+// uppercase TCP:// cannot silently dodge the upgrade. Reparsing the rewritten
+// form also moves the default port 2375 -> 2376, like the CLI.
+std::string https_spelling(const std::string& url) {
+    if (const auto sep = url.find("://"); sep != std::string::npos) {
+        const std::string scheme = detail::to_lower(url.substr(0, sep));
+        if (scheme == "tcp" || scheme == "http") {
+            return "https://" + url.substr(sep + 3);
+        }
+        return url;
+    }
+    if (!url.empty() && url.front() != '/' && url.front() != '\\') {
+        return "https://" + url; // bare host:port would otherwise parse as tcp
+    }
+    return url;
+}
+
+// Steps 1-2: the docker CLI dials TLS whenever DOCKER_TLS_VERIFY is on, even
+// for a tcp://-spelled DOCKER_HOST; mirror that (docker_tls_verify also reads
+// the docker.tls.verify properties key). parse() itself never upgrades — an
+// explicit URL keeps its scheme.
+DockerHost upgrade_tcp_when_tls_verify(DockerHost host) {
+    if (host.scheme() != DockerScheme::Tcp || !docker::docker_tls_verify()) {
+        return host;
+    }
+    return DockerHost::parse(https_spelling(host.to_string()));
+}
+
 // Step 2: docker.host from ~/.testcontainers.properties (read once per
 // process, via the shared config cache). nullopt on absent/unreadable/
 // missing-key (never throws).
@@ -253,11 +290,21 @@ std::optional<DockerHost> resolve_from_properties() {
     }
 }
 
+// Step 3's result: the endpoint plus any TLS materials the context stores
+// (attached to the host by resolve() — only it can reach the private field).
+struct ContextResolution {
+    DockerHost host;
+    std::optional<TlsMaterials> materials;
+};
+
 // Step 3: the active docker context's endpoint. The context name is
 // DOCKER_CONTEXT, else "currentContext" in ~/.docker/config.json, else
 // "default". An empty / "default" name resolves nothing (use step 4). nullopt
-// on any missing/unreadable file (never throws).
-std::optional<DockerHost> resolve_from_context() {
+// on any missing/unreadable file (never throws). TLS materials in the
+// context's store (~/.docker/contexts/tls/<sha256>/docker) mean the endpoint
+// speaks TLS: a tcp:// spelling upgrades to https and the file paths ride
+// along; Endpoints.docker.SkipTLSVerify turns server verification off.
+std::optional<ContextResolution> resolve_from_context() {
     const std::string home = detail::home_dir();
 
     std::string context;
@@ -279,18 +326,46 @@ std::optional<DockerHost> resolve_from_context() {
         return std::nullopt; // can't locate the meta directory without a home
     }
 
-    const std::string meta_path =
-        home + "/.docker/contexts/meta/" + docker::sha256_hex(context) + "/meta.json";
-    const std::string meta = detail::read_file(meta_path);
+    const std::string sha = docker::sha256_hex(context);
+    const std::string meta =
+        detail::read_file(home + "/.docker/contexts/meta/" + sha + "/meta.json");
     if (meta.empty()) {
         return std::nullopt;
     }
-    const auto host = docker::docker_host_from_context_meta(meta);
-    if (!host) {
+    const auto endpoint = docker::endpoint_from_context_meta(meta);
+    if (!endpoint) {
         return std::nullopt;
     }
+
+    // `docker context create` writes only the files it was given, so probe
+    // each of docker's fixed names individually.
+    const std::filesystem::path tls_dir =
+        std::filesystem::path(home) / ".docker" / "contexts" / "tls" / sha / "docker";
+    TlsMaterials materials;
+    std::error_code ec;
+    if (std::filesystem::exists(tls_dir / "ca.pem", ec)) {
+        materials.ca_cert = (tls_dir / "ca.pem").string();
+    }
+    if (std::filesystem::exists(tls_dir / "cert.pem", ec)) {
+        materials.client_cert = (tls_dir / "cert.pem").string();
+    }
+    if (std::filesystem::exists(tls_dir / "key.pem", ec)) {
+        materials.client_key = (tls_dir / "key.pem").string();
+    }
+    const bool any_materials = !materials.ca_cert.empty() || !materials.client_cert.empty() ||
+                               !materials.client_key.empty();
+
+    std::string url = endpoint->host;
+    if (any_materials) {
+        url = https_spelling(url);
+        materials.verify = !materials.ca_cert.empty() && !endpoint->skip_tls_verify;
+    }
     try {
-        return DockerHost::parse(*host);
+        ContextResolution resolution{DockerHost::parse(url), std::nullopt};
+        if (any_materials && resolution.host.scheme() == DockerScheme::Https) {
+            resolution.materials = std::move(materials);
+        }
+        return resolution;
     } catch (const DockerError&) {
         return std::nullopt; // malformed endpoint falls through to the next step
     }
@@ -301,17 +376,18 @@ std::optional<DockerHost> resolve_from_context() {
 DockerHost DockerHost::resolve() {
     // 1. DOCKER_HOST env var (a malformed value here still throws via parse).
     if (const char* docker_host = std::getenv("DOCKER_HOST"); docker_host && *docker_host) {
-        return parse(docker_host);
+        return upgrade_tcp_when_tls_verify(parse(docker_host));
     }
 
     // 2. docker.host from ~/.testcontainers.properties.
     if (auto host = resolve_from_properties()) {
-        return *host;
+        return upgrade_tcp_when_tls_verify(std::move(*host));
     }
 
-    // 3. The active Docker context's endpoint.
-    if (auto host = resolve_from_context()) {
-        return *host;
+    // 3. The active Docker context's endpoint (+ its TLS materials).
+    if (auto context = resolve_from_context()) {
+        context->host.tls_materials_ = std::move(context->materials);
+        return std::move(context->host);
     }
 
     // 4. Platform default, with rootless socket fallbacks (non-Windows).

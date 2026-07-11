@@ -7,19 +7,21 @@ should know; the actionable leftovers live in [TODO.md](TODO.md).
 ## Transport & client
 
 **Transports** (`src/docker/Transport.*`) — unix socket / Windows named pipe / TCP / TLS behind
-one `ITransport`; `connect()` picks by scheme. TLS materials resolve from `DOCKER_CERT_PATH`
-(falling back to `~/.docker` under `DOCKER_TLS_VERIFY`) via the pure `TlsConfig` helpers
-(unit-tested). Mutual TLS is verified end to end in CI against a real `--tlsverify` daemon
-(the `tls-e2e` docker:dind job; fixed 2026-07-10 — the SSL context used to be configured
-after the stream was created, so the client certificate was never presented and server
-verification silently stayed fail-open; the ordering is pinned by two in-process
+one `ITransport`; `connect()` picks by scheme. TLS material selection is a per-connection
+`TlsPlan` (`TlsConfig` helpers, unit-tested): a resolved host's docker-context materials are
+used verbatim when present, else `DOCKER_CERT_PATH` / the `docker.cert.path` key (falling back
+to `~/.docker` when TLS verify is on). Mutual TLS is verified end to end in CI against a real
+`--tlsverify` daemon (the `tls-e2e` docker:dind job, which since 2026-07-11 also runs a
+docker-context leg with no `DOCKER_*` connection env; fixed 2026-07-10 — the SSL context used
+to be configured after the stream was created, so the client certificate was never presented
+and server verification silently stayed fail-open; the ordering is pinned by two in-process
 TlsTransportTest cases). The TLS transport is a build option (CMake `TC_TLS` / conan `tls`,
 default ON) — the library's only direct OpenSSL use; with it off, `connect()` for an
-`https://` host throws a `DockerError` naming the option, and the pure `TlsConfig` helpers
-stay available. Note the daemon-host spelling difference: this library takes
-`https://host:port` directly, while the docker CLI spells the same thing
-`tcp://host:port` + `DOCKER_TLS_VERIFY` (a `tcp://` → TLS upgrade is not implemented —
-see TODO's host-resolution entry).
+`https://` host throws a `DockerError` naming the option, and the `TlsConfig` helpers
+stay available. Host spelling: `https://host:port` works directly, and since 2026-07-11
+`resolve()` also upgrades the docker-CLI spelling — `tcp://host:port` + `DOCKER_TLS_VERIFY`
+(or `docker.tls.verify`) — to TLS, moving the default port 2375 → 2376; `parse()` never
+upgrades an explicit URL.
 
 **I/O deadlines** (`docker::TransportTimeouts`) — `connect` budgets the whole establishment
 (resolve + connect + TLS handshake, default 10s); `io` deadlines each read/write (default 60s,
@@ -62,8 +64,15 @@ per-instance state — same "one instance, one thread" rule as sessions.
 testcontainers order, first hit wins: `DOCKER_HOST` → `docker.host` in
 `~/.testcontainers.properties` → active docker context (`DOCKER_CONTEXT` / `currentContext`) →
 platform default (rootless socket fallbacks on Linux; named pipe on Windows). Steps 2–4 never
-throw on a malformed file. Only the endpoint is consumed: docker-context TLS materials are
-not read (see TODO).
+throw on a malformed file. Since 2026-07-11 the context's TLS store
+(`~/.docker/contexts/tls/<sha256>/docker/{ca,cert,key}.pem`) is consumed: its files attach to
+the resolved host (`DockerHost::tls_materials()`), a `tcp://`-spelled endpoint with materials
+dials TLS (CLI parity), and `Endpoints.docker.SkipTLSVerify` turns server verification off
+while still presenting the client pair (verification is also gated on the store holding a
+`ca.pem` — without a trust anchor the client pair is presented unverified). In steps 1–2 a
+`tcp://` host upgrades to TLS under
+`DOCKER_TLS_VERIFY` / `docker.tls.verify` (env certs apply as before). `parse()` never
+upgrades; `ssh://` context endpoints remain unsupported.
 
 **Configuration switches** (`src/Config.*`, 2026-07-11) — library switches read an env var
 first, then a key of `~/.testcontainers.properties` (under HOME, else USERPROFILE; the file is

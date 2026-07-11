@@ -18,8 +18,14 @@ std::string sha256_hex(const std::string& data);
 /// ("currentContext"); nullopt if absent.
 std::optional<std::string> current_context_from_config(const std::string& config_json);
 
-/// The docker endpoint host from a context meta.json body
-/// (Endpoints.docker.Host); nullopt if absent/empty.
-std::optional<std::string> docker_host_from_context_meta(const std::string& meta_json);
+/// One docker-context endpoint parsed from a meta.json body.
+struct ContextEndpoint {
+    std::string host;             ///< Endpoints.docker.Host, verbatim
+    bool skip_tls_verify = false; ///< Endpoints.docker.SkipTLSVerify (absent -> false)
+};
+
+/// The docker endpoint from a context meta.json body; nullopt when
+/// Endpoints.docker.Host is absent/empty (SkipTLSVerify alone resolves nothing).
+std::optional<ContextEndpoint> endpoint_from_context_meta(const std::string& meta_json);
 
 } // namespace testcontainers::docker

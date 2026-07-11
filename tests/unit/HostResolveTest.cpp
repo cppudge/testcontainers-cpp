@@ -12,11 +12,12 @@
 //   HostResolve.ConfigReadsCurrentContext - currentContext is read from a config.json body.
 //   HostResolve.ConfigAbsentIsNullopt - a config without currentContext yields nullopt.
 //   HostResolve.ConfigInvalidJsonIsNullopt - invalid JSON yields nullopt instead of throwing.
-//   HostResolve.ContextMetaReadsDockerHost - Endpoints.docker.Host is read from a realistic meta.json.
-//   HostResolve.ContextMetaMissingEndpointsIsNullopt - a meta.json without Endpoints yields nullopt.
+//   HostResolve.ContextMetaReadsDockerHost - Endpoints.docker.Host is read from a realistic meta.json (SkipTLSVerify defaults to false).
+//   HostResolve.ContextMetaReadsSkipTlsVerify - Endpoints.docker.SkipTLSVerify=true is carried alongside the host.
+//   HostResolve.ContextMetaMissingEndpointsIsNullopt - a meta.json without Endpoints (or without a Host) yields nullopt.
 
 using testcontainers::docker::current_context_from_config;
-using testcontainers::docker::docker_host_from_context_meta;
+using testcontainers::docker::endpoint_from_context_meta;
 using testcontainers::docker::sha256_hex;
 
 TEST(HostResolve, Sha256EmptyVector) {
@@ -51,11 +52,24 @@ TEST(HostResolve, ConfigInvalidJsonIsNullopt) {
 TEST(HostResolve, ContextMetaReadsDockerHost) {
     const std::string meta =
         R"({"Name":"my-ctx","Endpoints":{"docker":{"Host":"unix:///run/user/1000/docker.sock"}}})";
-    const auto host = docker_host_from_context_meta(meta);
-    ASSERT_TRUE(host.has_value());
-    EXPECT_EQ(*host, "unix:///run/user/1000/docker.sock");
+    const auto endpoint = endpoint_from_context_meta(meta);
+    ASSERT_TRUE(endpoint.has_value());
+    EXPECT_EQ(endpoint->host, "unix:///run/user/1000/docker.sock");
+    EXPECT_FALSE(endpoint->skip_tls_verify);
+}
+
+TEST(HostResolve, ContextMetaReadsSkipTlsVerify) {
+    const std::string meta =
+        R"({"Name":"my-ctx","Endpoints":{"docker":{"Host":"tcp://docker:2376","SkipTLSVerify":true}}})";
+    const auto endpoint = endpoint_from_context_meta(meta);
+    ASSERT_TRUE(endpoint.has_value());
+    EXPECT_EQ(endpoint->host, "tcp://docker:2376");
+    EXPECT_TRUE(endpoint->skip_tls_verify);
 }
 
 TEST(HostResolve, ContextMetaMissingEndpointsIsNullopt) {
-    EXPECT_FALSE(docker_host_from_context_meta(R"({"Name":"my-ctx"})").has_value());
+    EXPECT_FALSE(endpoint_from_context_meta(R"({"Name":"my-ctx"})").has_value());
+    // SkipTLSVerify alone (no Host) resolves nothing.
+    EXPECT_FALSE(endpoint_from_context_meta(R"({"Endpoints":{"docker":{"SkipTLSVerify":true}}})")
+                     .has_value());
 }

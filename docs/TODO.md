@@ -7,8 +7,9 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 9 of the agreed batch order (2026-07-10; batches 1–8 landed — see
 [feature-notes.md](feature-notes.md) and the git history): environment config —
-docker-context TLS materials, more `~/.testcontainers.properties` keys,
-substitutor scope (buildable/compose/raw), a time-based pull policy. (Batch 8 —
+docker-context TLS materials, more `~/.testcontainers.properties` keys (both
+landed 2026-07-11), substitutor scope (buildable/compose/raw), a time-based
+pull policy. (Batch 8 —
 compose `--profile`, `--scale` + per-instance accessors, per-service logs, and
 the socat ambassador for unpublished ports — landed in full 2026-07-11.)
 
@@ -114,13 +115,16 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   Remaining Windows-mode test gaps: the http wait (needs a real HTTP server image —
   the PowerShell TcpListener in servercore covers listening_port only), bind mounts, and
   the stopping hook (see public-api-test-coverage.md for the full matrix).
-- **Host resolution** — docker-context TLS materials (the context can carry ca/cert/key paths)
-  are not consumed, only the `Host` endpoint; a `tcp://` host does NOT upgrade to TLS under
-  `DOCKER_TLS_VERIFY` the way the docker CLI treats it — this library needs the explicit
-  `https://` spelling (bit the tls-e2e CI job: our env and the CLI's must differ).
-  `~/.testcontainers.properties` keys beyond the supported set (`docker.host`,
-  `docker.tls.verify`, `docker.cert.path`, `hub.image.name.prefix`, `ryuk.disabled`,
-  `ryuk.container.image`, `testcontainers.reuse.enable`, since 2026-07-11) are ignored.
+- **Host resolution** — `ssh://` daemon endpoints (docker contexts can carry them) are
+  unsupported (`parse` throws, so such a context falls through to the platform default).
+  `DOCKER_TLS_VERIFY` differs from the CLI on garbage values: the CLI treats ANY non-empty
+  value as "verify" (`DOCKER_TLS_VERIFY=0` verifies there!), this library only
+  {1,true,TRUE,True}. Context TLS materials and the `tcp://`→TLS upgrade (both 2026-07-11)
+  apply on the `resolve()` path only — an explicit `DockerHost::parse("tcp://…")` keeps its
+  scheme and env-driven TLS. `~/.testcontainers.properties` keys beyond the supported set
+  (`docker.host`, `docker.tls.verify`, `docker.cert.path`, `hub.image.name.prefix`,
+  `ryuk.disabled`, `ryuk.container.image`, `testcontainers.reuse.enable`, since 2026-07-11)
+  are ignored.
   (`src/docker/HostResolve.hpp`, `src/docker/DockerHost.cpp`, `src/Config.cpp`)
 - **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
   `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No

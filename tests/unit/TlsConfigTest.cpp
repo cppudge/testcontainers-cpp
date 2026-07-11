@@ -17,11 +17,16 @@
 //   TlsConfigFile.DockerCertPathEmptyWhenUnsetAndNoVerify - no DOCKER_CERT_PATH, no properties key, and no verify -> empty.
 //   TlsConfigFile.TlsVerifyPropertiesAcceptsOneAndTrue - without the env var, docker.tls.verify decides: "1" and case-insensitive "true" are truthy (docker-java parity), "0" is not, and a set env var still wins.
 //   TlsConfigFile.CertPathPropertiesFallback - without DOCKER_CERT_PATH the docker.cert.path key supplies the dir; the env var beats it.
+//   TlsConfig.TlsPlanUsesMaterialsVerbatim - context materials become the plan verbatim (paths + verify), no env consulted.
+//   TlsConfigFile.TlsPlanFallsBackToEnvironment - without materials the plan derives from DOCKER_CERT_PATH/DOCKER_TLS_VERIFY (docker's fixed file names); with nothing set it is empty and unverified.
 
+using testcontainers::TlsMaterials;
 using testcontainers::docker::docker_cert_path;
 using testcontainers::docker::docker_tls_verify;
 using testcontainers::docker::resolve_tls_files;
+using testcontainers::docker::tls_plan;
 using testcontainers::docker::TlsFiles;
+using testcontainers::docker::TlsPlan;
 
 namespace {
 
@@ -127,5 +132,44 @@ TEST_F(TlsConfigFile, CertPathPropertiesFallback) {
     {
         const ScopedEnv cert("DOCKER_CERT_PATH", std::string("/env/certs"));
         EXPECT_EQ(docker_cert_path(), "/env/certs");
+    }
+}
+
+TEST(TlsConfig, TlsPlanUsesMaterialsVerbatim) {
+    TlsMaterials materials;
+    materials.ca_cert = "/ctx/ca.pem";
+    materials.client_cert = "/ctx/cert.pem";
+    materials.client_key = "/ctx/key.pem";
+    materials.verify = true;
+
+    const TlsPlan plan = tls_plan(materials);
+    EXPECT_EQ(plan.ca_cert, "/ctx/ca.pem");
+    EXPECT_EQ(plan.client_cert, "/ctx/cert.pem");
+    EXPECT_EQ(plan.client_key, "/ctx/key.pem");
+    EXPECT_TRUE(plan.verify);
+
+    materials.verify = false;
+    EXPECT_FALSE(tls_plan(materials).verify);
+}
+
+TEST_F(TlsConfigFile, TlsPlanFallsBackToEnvironment) {
+    {
+        const ScopedEnv cert("DOCKER_CERT_PATH", std::string("/env/certs"));
+        const ScopedEnv verify("DOCKER_TLS_VERIFY", std::string("1"));
+        const TlsPlan plan = tls_plan(std::nullopt);
+        EXPECT_EQ(basename_of(plan.ca_cert), "ca.pem");
+        EXPECT_EQ(basename_of(plan.client_cert), "cert.pem");
+        EXPECT_EQ(basename_of(plan.client_key), "key.pem");
+        EXPECT_NE(plan.ca_cert.find("certs"), std::string::npos);
+        EXPECT_TRUE(plan.verify);
+    }
+    {
+        const ScopedEnv cert("DOCKER_CERT_PATH", std::nullopt);
+        const ScopedEnv verify("DOCKER_TLS_VERIFY", std::nullopt);
+        const TlsPlan plan = tls_plan(std::nullopt); // nothing anywhere (temp HOME)
+        EXPECT_TRUE(plan.ca_cert.empty());
+        EXPECT_TRUE(plan.client_cert.empty());
+        EXPECT_TRUE(plan.client_key.empty());
+        EXPECT_FALSE(plan.verify);
     }
 }
