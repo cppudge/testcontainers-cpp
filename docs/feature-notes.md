@@ -258,14 +258,21 @@ zero state when unset: 0 / "" / empty; PidsLimit null and 0 both mean "no limit"
 assert a landed limit without parsing `inspect_raw()`. Unset fields emit nothing into the
 create body, so reuse hashes of configs predating these setters are unaffected.
 
-**Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / one
-IPAM subnet+gateway pair / driver options / labels); `GenericImage::with_network` takes the
+**Networks** — `Network` RAII handle + builder (driver / internal / attachable / IPv6 / IPAM
+pools / driver options / labels). IPAM: `with_subnet`/`with_gateway` configure a leading
+shorthand pool; repeatable `with_ipam_pool` (2026-07-11) adds full pools — subnet, IPRange,
+gateway, auxiliary addresses — after it (one IPv4 + one IPv6 pool is the Linux bridge
+driver's maximum; multiple IPv4 pools need a driver that supports them). The IPAM driver
+and its options stay unmodeled (the generic `request()` escape hatch covers them if ever
+needed).
+`GenericImage::with_network` takes the
 handle directly or a name string (the handle overload records `name()` — ownership stays with
 the handle); `with_network_alias` (per-network DNS
 aliases); `with_static_ipv4` (a fixed endpoint address — needs a user-defined network whose
 subnet contains it); `Network::connect` attaches a running container. Inspect: `net.inspect()`
 / the static `Network::inspect(name_or_id)` return a typed `NetworkInspect` (driver, scope,
-internal/attachable/IPv6 flags, IPAM pools, options, labels, and the attached containers'
+internal/attachable/IPv6 flags, IPAM pools incl. IPRange and name-sorted auxiliary
+addresses, options, labels, and the attached containers'
 endpoints — addresses in CIDR form), `net.inspect_raw()` the full JSON (both over
 `DockerClient::inspect_network[_raw]`). `net.keep()` releases removal ownership —
 `Container::keep` semantics, including the Ryuk caveat (the network stays session-labeled, so

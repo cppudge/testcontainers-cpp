@@ -314,16 +314,39 @@ nlohmann::json build_network_create_body(const NetworkCreateSpec& spec) {
     if (!spec.labels.empty()) {
         body["Labels"] = json_object_from(spec.labels);
     }
+    nlohmann::json config = nlohmann::json::array();
     if (spec.subnet || spec.gateway) {
-        nlohmann::json config = nlohmann::json::object();
+        nlohmann::json pool = nlohmann::json::object();
         if (spec.subnet) {
-            config["Subnet"] = *spec.subnet;
+            pool["Subnet"] = *spec.subnet;
         }
         if (spec.gateway) {
-            config["Gateway"] = *spec.gateway;
+            pool["Gateway"] = *spec.gateway;
         }
+        config.push_back(std::move(pool));
+    }
+    // Pools are emitted faithfully — an all-empty pool becomes `{}`, which the
+    // daemon rejects loudly (no Subnet); silently dropping it would turn a
+    // caller bug into a network quietly missing a pool.
+    for (const auto& pool : spec.ipam_pools) {
+        nlohmann::json entry = nlohmann::json::object();
+        if (!pool.subnet.empty()) {
+            entry["Subnet"] = pool.subnet;
+        }
+        if (!pool.ip_range.empty()) {
+            entry["IPRange"] = pool.ip_range;
+        }
+        if (!pool.gateway.empty()) {
+            entry["Gateway"] = pool.gateway;
+        }
+        if (!pool.aux_addresses.empty()) {
+            entry["AuxiliaryAddresses"] = json_object_from(pool.aux_addresses);
+        }
+        config.push_back(std::move(entry));
+    }
+    if (!config.empty()) {
         nlohmann::json ipam = nlohmann::json::object();
-        ipam["Config"] = nlohmann::json::array({std::move(config)});
+        ipam["Config"] = std::move(config);
         body["IPAM"] = std::move(ipam);
     }
 
@@ -389,6 +412,14 @@ NetworkInspect parse_network_inspect(const std::string& body) {
                     NetworkIpamPool parsed;
                     parsed.subnet = pool.value("Subnet", std::string{});
                     parsed.gateway = pool.value("Gateway", std::string{});
+                    parsed.ip_range = pool.value("IPRange", std::string{});
+                    if (const auto aux = pool.find("AuxiliaryAddresses");
+                        aux != pool.end() && aux->is_object()) {
+                        // Sorted by name (nlohmann objects iterate in key order).
+                        for (const auto& [name, ip] : aux->items()) {
+                            parsed.aux_addresses.emplace_back(name, ip.get<std::string>());
+                        }
+                    }
                     info.ipam_pools.push_back(std::move(parsed));
                 }
             }

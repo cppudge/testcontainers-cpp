@@ -43,14 +43,14 @@
 //   ApiMapping.BuildCreateBodyRestartPolicy - each RestartPolicy factory maps to HostConfig.RestartPolicy with Docker's Name spelling and the retry count.
 //   ApiMapping.BuildCreateBodyDnsAndSysctls - dns servers/search/options map to HostConfig Dns/DnsSearch/DnsOptions arrays and sysctl pairs to the Sysctls object.
 //   ApiMapping.BuildCreateBodyDevices - devices map to HostConfig.Devices entries with PathOnHost/PathInContainer/CgroupPermissions (default "rwm").
-//   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, IPAM.Config[0].Subnet/Gateway, Options, and Labels.
+//   ApiMapping.BuildNetworkCreateBody - a full NetworkCreateSpec maps to Name, Driver, Internal, Attachable, EnableIPv6, Options, Labels, and IPAM.Config: the subnet/gateway shorthand pool first, then each ipam_pools entry (Subnet/IPRange/Gateway/AuxiliaryAddresses, empty fields omitted).
 //   ApiMapping.BuildNetworkCreateBodyMinimal - a NetworkCreateSpec with only a name emits just Name and no Driver/IPAM/flags.
 //   ApiMapping.BuildConnectNetworkBody - the connect body carries Container, adding EndpointConfig.Aliases only when aliases are given.
 //   ApiMapping.BuildVolumeCreateBody - a full VolumeCreateSpec maps to Name, Driver, DriverOpts, and Labels.
 //   ApiMapping.BuildVolumeCreateBodyMinimal - a VolumeCreateSpec with only a name emits just Name and no Driver/DriverOpts/Labels.
 //   ApiMapping.ParseVolumeInspect - GET /volumes/{name} JSON parses Name/Driver/Mountpoint/Scope and the Labels/Options maps.
 //   ApiMapping.ParseVolumeInspectNullMaps - null Labels/Options parse into empty maps.
-//   ApiMapping.ParseNetworkInspect - GET /networks/{id} JSON parses id/name/driver/scope, the Internal/Attachable/EnableIPv6 flags, IPAM pools, Options/Labels maps, and the Containers endpoint map.
+//   ApiMapping.ParseNetworkInspect - GET /networks/{id} JSON parses id/name/driver/scope, the Internal/Attachable/EnableIPv6 flags, IPAM pools (Subnet/Gateway/IPRange + name-sorted AuxiliaryAddresses), Options/Labels maps, and the Containers endpoint map.
 //   ApiMapping.ParseNetworkInspectNullsAndGarbage - null/absent Labels/Options/Containers/IPAM.Config parse into empty containers with false flags; a non-JSON body throws DockerError.
 //   ApiMapping.ParseImageInspect - GET /images/{ref}/json JSON parses id/tags/digests/created/arch/os/size and the Config fields (labels, env, cmd, entrypoint, exposed ports, workdir, user).
 //   ApiMapping.ParseImageInspectNullsAndGarbage - null RepoTags (dangling image) and null Config members parse into empty containers, absent Size becomes 0; a non-JSON body throws DockerError.
@@ -495,6 +495,14 @@ TEST(ApiMapping, BuildNetworkCreateBody) {
     spec.enable_ipv6 = true;
     spec.subnet = "172.31.250.0/24";
     spec.gateway = "172.31.250.1";
+    NetworkIpamPool full_pool;
+    full_pool.subnet = "10.77.0.0/16";
+    full_pool.ip_range = "10.77.128.0/17";
+    full_pool.gateway = "10.77.0.1";
+    full_pool.aux_addresses = {{"router", "10.77.0.2"}, {"printer", "10.77.0.3"}};
+    NetworkIpamPool bare_pool;
+    bare_pool.subnet = "fd00:beef::/64";
+    spec.ipam_pools = {full_pool, bare_pool};
     spec.options = {{"com.docker.network.bridge.name", "br-tc"}};
     spec.labels = {{"k", "v"}};
 
@@ -505,11 +513,22 @@ TEST(ApiMapping, BuildNetworkCreateBody) {
     EXPECT_TRUE(body["Attachable"].get<bool>());
     EXPECT_TRUE(body["EnableIPv6"].get<bool>());
 
+    // The shorthand subnet/gateway pool leads; ipam_pools follow in order.
     ASSERT_TRUE(body.contains("IPAM"));
     const auto& config = body["IPAM"]["Config"];
-    ASSERT_EQ(config.size(), 1u);
+    ASSERT_EQ(config.size(), 3u);
     EXPECT_EQ(config[0]["Subnet"], "172.31.250.0/24");
     EXPECT_EQ(config[0]["Gateway"], "172.31.250.1");
+    EXPECT_EQ(config[1]["Subnet"], "10.77.0.0/16");
+    EXPECT_EQ(config[1]["IPRange"], "10.77.128.0/17");
+    EXPECT_EQ(config[1]["Gateway"], "10.77.0.1");
+    EXPECT_EQ(config[1]["AuxiliaryAddresses"]["router"], "10.77.0.2");
+    EXPECT_EQ(config[1]["AuxiliaryAddresses"]["printer"], "10.77.0.3");
+    // Empty pool fields are omitted, not emitted as "".
+    EXPECT_EQ(config[2]["Subnet"], "fd00:beef::/64");
+    EXPECT_FALSE(config[2].contains("IPRange"));
+    EXPECT_FALSE(config[2].contains("Gateway"));
+    EXPECT_FALSE(config[2].contains("AuxiliaryAddresses"));
 
     EXPECT_EQ(body["Options"]["com.docker.network.bridge.name"], "br-tc");
     EXPECT_EQ(body["Labels"]["k"], "v");
@@ -620,7 +639,9 @@ TEST(ApiMapping, ParseNetworkInspect) {
         "IPAM": {
             "Driver": "default",
             "Config": [
-                {"Subnet": "172.31.250.0/24", "Gateway": "172.31.250.1"},
+                {"Subnet": "172.31.250.0/24", "Gateway": "172.31.250.1",
+                 "IPRange": "172.31.250.128/25",
+                 "AuxiliaryAddresses": {"router": "172.31.250.2", "printer": "172.31.250.3"}},
                 {"Subnet": "fd00:beef::/64"}
             ]
         },
@@ -651,8 +672,17 @@ TEST(ApiMapping, ParseNetworkInspect) {
     ASSERT_EQ(info.ipam_pools.size(), 2u);
     EXPECT_EQ(info.ipam_pools[0].subnet, "172.31.250.0/24");
     EXPECT_EQ(info.ipam_pools[0].gateway, "172.31.250.1");
+    EXPECT_EQ(info.ipam_pools[0].ip_range, "172.31.250.128/25");
+    // Aux addresses come back sorted by name (nlohmann object key order).
+    ASSERT_EQ(info.ipam_pools[0].aux_addresses.size(), 2u);
+    EXPECT_EQ(info.ipam_pools[0].aux_addresses[0],
+              (std::pair<std::string, std::string>{"printer", "172.31.250.3"}));
+    EXPECT_EQ(info.ipam_pools[0].aux_addresses[1],
+              (std::pair<std::string, std::string>{"router", "172.31.250.2"}));
     EXPECT_EQ(info.ipam_pools[1].subnet, "fd00:beef::/64");
     EXPECT_TRUE(info.ipam_pools[1].gateway.empty());
+    EXPECT_TRUE(info.ipam_pools[1].ip_range.empty());
+    EXPECT_TRUE(info.ipam_pools[1].aux_addresses.empty());
 
     ASSERT_EQ(info.options.count("com.docker.network.bridge.name"), 1u);
     EXPECT_EQ(info.options.at("com.docker.network.bridge.name"), "br-tc");

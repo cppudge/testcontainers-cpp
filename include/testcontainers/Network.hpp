@@ -19,7 +19,7 @@ namespace testcontainers {
 class Network {
 public:
     /// A copyable builder for a richer user-defined network: driver, internal /
-    /// attachable / IPv6 flags, an IPAM subnet+gateway, driver options, and
+    /// attachable / IPv6 flags, IPAM address pools, driver options, and
     /// labels. Defined in std types only (no Boost/json leak through the header).
     ///
     /// The `with_*` setters mutate in place and return `*this` by reference; a
@@ -64,6 +64,17 @@ public:
             return *this;
         }
 
+        /// Add an IPAM address pool (an `IPAM.Config` entry: subnet, allocation
+        /// range, gateway, auxiliary addresses; empty fields are omitted). Pools
+        /// land after the `with_subnet`/`with_gateway` shorthand pool when that
+        /// is set. More than one IPv4 pool needs a driver that supports it — the
+        /// Linux bridge driver takes one IPv4 pool, plus one IPv6 pool with
+        /// `with_enable_ipv6`.
+        Builder& with_ipam_pool(NetworkIpamPool pool) {
+            ipam_pools_.push_back(std::move(pool));
+            return *this;
+        }
+
         /// Add a driver option (`Options`). Add several to set multiple options.
         Builder& with_option(std::string key, std::string value) {
             options_.emplace_back(std::move(key), std::move(value));
@@ -88,6 +99,7 @@ public:
         bool enable_ipv6_ = false;
         std::optional<std::string> subnet_;
         std::optional<std::string> gateway_;
+        std::vector<NetworkIpamPool> ipam_pools_;
         std::vector<std::pair<std::string, std::string>> options_;
         std::vector<std::pair<std::string, std::string>> labels_;
     };

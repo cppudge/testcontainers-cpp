@@ -62,6 +62,22 @@ struct CreateContainerSpec {
     std::string create_body_patch;
 };
 
+/// One IPAM address pool of a network — an `IPAM.Config` entry, both as sent
+/// by `POST /networks/create` (`NetworkCreateSpec::ipam_pools`) and as read
+/// back by `GET /networks/{id}` (`NetworkInspect::ipam_pools`). An empty
+/// field is absent: omitted from the create body, "" when the daemon returns
+/// nothing.
+struct NetworkIpamPool {
+    std::string subnet;   ///< CIDR, e.g. "172.31.250.0/24" (create: required by the daemon)
+    std::string gateway;  ///< gateway address on the subnet
+    std::string ip_range; ///< IPRange: a sub-CIDR to allocate container addresses from
+    /// AuxiliaryAddresses (name -> IP): addresses on the subnet the IPAM driver
+    /// must not hand out to containers (e.g. an external router). Create emits
+    /// them in order (last wins on a duplicate name); inspect returns them
+    /// sorted by name.
+    std::vector<std::pair<std::string, std::string>> aux_addresses;
+};
+
 /// Options for `POST /networks/create` (richer than just name+labels).
 struct NetworkCreateSpec {
     std::string name;
@@ -69,8 +85,11 @@ struct NetworkCreateSpec {
     bool internal = false;              ///< no external connectivity
     bool attachable = false;            ///< standalone containers can attach
     bool enable_ipv6 = false;           ///< EnableIPv6
-    std::optional<std::string> subnet;  ///< IPAM.Config[0].Subnet, e.g. "172.31.250.0/24"
-    std::optional<std::string> gateway; ///< IPAM.Config[0].Gateway
+    std::optional<std::string> subnet;  ///< shorthand: a leading IPAM pool's Subnet
+    std::optional<std::string> gateway; ///< shorthand: the leading pool's Gateway
+    /// IPAM address pools, emitted after the subnet/gateway shorthand pool
+    /// when that is set (`IPAM.Config` keeps this order).
+    std::vector<NetworkIpamPool> ipam_pools;
     std::vector<std::pair<std::string, std::string>> options; ///< driver Options
     std::vector<std::pair<std::string, std::string>> labels;  ///< network Labels
 };
@@ -91,12 +110,6 @@ struct VolumeInspect {
     std::string scope;                          ///< Scope ("local" / "global")
     std::map<std::string, std::string> labels;  ///< Labels (null -> empty)
     std::map<std::string, std::string> options; ///< Options (null -> empty)
-};
-
-/// One IPAM address pool of a network (`IPAM.Config[i]` in `GET /networks/{id}`).
-struct NetworkIpamPool {
-    std::string subnet;  ///< CIDR, e.g. "172.31.250.0/24"; "" when absent
-    std::string gateway; ///< "" when absent
 };
 
 /// One attached container's endpoint on a network (a `Containers` map entry in

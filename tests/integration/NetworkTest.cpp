@@ -21,6 +21,7 @@
 //   Networks.BuilderCreatesNetwork - Network::builder() with a driver, attachable, and an IPAM subnet creates a real network with a non-empty id/name.
 //   Networks.ConnectAttachesRunningContainerWithAlias - Network::connect attaches an already-running container (started WITHOUT with_network) and its runtime alias resolves from a peer on the network.
 //   Networks.BuilderInternalGatewayAndLabels - builder internal/gateway/label options land in the created network (asserted via the typed Network::inspect()).
+//   Networks.BuilderMultiPoolIpamRoundTrip - with_ipam_pool x2 (a full IPv4 pool with IPRange/aux addresses + an IPv6 pool under with_enable_ipv6) round-trips through the typed inspect, and an attached container's address is drawn from the IPv4 pool's IPRange (the daemon acted on the field, not just echoed it).
 //   Networks.StaticIpv4Assigned - with_static_ipv4 on a subnet-bearing network pins the endpoint to exactly the requested address (asserted via container inspect).
 //   Networks.InspectReportsConfigAndContainers - net.inspect() reflects the created driver/IPAM pool/labels and lists an attached container's endpoint; the static Network::inspect(name) resolves the same network; inspect_raw() returns the raw body.
 //   Networks.KeepReleasesRemovalOwnership - keep() makes the handle persistent (neither remove() nor drop removes the network; cleaned up manually), while keep(false) re-arms removal so the drop removes it after all.
@@ -188,6 +189,48 @@ TEST_F(Networks, BuilderInternalGatewayAndLabels) {
     EXPECT_EQ(info.labels.at("tc-test-label"), "yes");
 
     // RAII removes the network at scope exit.
+}
+
+TEST_F(Networks, BuilderMultiPoolIpamRoundTrip) {
+    // A subnet distinct from every other suite's so shared daemons never collide.
+    NetworkIpamPool v4;
+    v4.subnet = "172.31.247.0/24";
+    v4.ip_range = "172.31.247.128/25";
+    v4.gateway = "172.31.247.1";
+    v4.aux_addresses = {{"router", "172.31.247.2"}};
+    NetworkIpamPool v6;
+    v6.subnet = "fd00:7c47::/64";
+    v6.gateway = "fd00:7c47::1";
+
+    // The bridge driver takes at most one pool per family, so "multiple pools"
+    // on it means IPv4 + IPv6.
+    Network net =
+        Network::builder().with_enable_ipv6().with_ipam_pool(v4).with_ipam_pool(v6).create();
+
+    // Every pool field echoes back through the typed inspect (IPv4 pools come
+    // first in moby's inspect order).
+    const NetworkInspect info = net.inspect();
+    EXPECT_TRUE(info.enable_ipv6);
+    ASSERT_EQ(info.ipam_pools.size(), 2u);
+    EXPECT_EQ(info.ipam_pools[0].subnet, "172.31.247.0/24");
+    EXPECT_EQ(info.ipam_pools[0].ip_range, "172.31.247.128/25");
+    EXPECT_EQ(info.ipam_pools[0].gateway, "172.31.247.1");
+    ASSERT_EQ(info.ipam_pools[0].aux_addresses.size(), 1u);
+    EXPECT_EQ(info.ipam_pools[0].aux_addresses[0].first, "router");
+    EXPECT_EQ(info.ipam_pools[0].aux_addresses[0].second, "172.31.247.2");
+    EXPECT_EQ(info.ipam_pools[1].subnet, "fd00:7c47::/64");
+    EXPECT_EQ(info.ipam_pools[1].gateway, "fd00:7c47::1");
+
+    // The echo proves the field NAMES landed; an attached container drawing its
+    // address from the upper half-subnet proves IPRange took effect.
+    Container c =
+        GenericImage("alpine", "3.20").with_network(net).with_cmd({"sleep", "60"}).start();
+    DockerClient dc = DockerClient::from_environment();
+    const std::string ip = ip_on_network(dc, c.id(), net.name());
+    ASSERT_TRUE(ip.starts_with("172.31.247.")) << ip;
+    EXPECT_GE(std::stoi(ip.substr(ip.rfind('.') + 1)), 128) << ip;
+
+    // The container and the network are torn down by RAII at scope exit.
 }
 
 TEST_F(Networks, StaticIpv4Assigned) {

@@ -34,6 +34,7 @@ Network Network::Builder::create() const {
     spec.enable_ipv6 = enable_ipv6_;
     spec.subnet = subnet_;
     spec.gateway = gateway_;
+    spec.ipam_pools = ipam_pools_;
     spec.options = options_;
     spec.labels = labels_;
     // Tag the network so Ryuk (and tooling) can find it: managed-by + session.
