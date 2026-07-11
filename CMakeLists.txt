@@ -237,6 +237,8 @@ endif()
 # connection getters. Consumed as testcontainers::modules.
 if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
+        src/modules/KafkaDetail.cpp
+        src/modules/KafkaContainer.cpp
         src/modules/MySqlFamily.cpp
         src/modules/MySQLContainer.cpp
         src/modules/MariaDBContainer.cpp
@@ -248,6 +250,9 @@ if(TC_BUILD_MODULES)
     set_target_properties(testcontainers_modules PROPERTIES EXPORT_NAME modules)
     # PUBLIC: the module headers expose core types (GenericImage, Container).
     target_link_libraries(testcontainers_modules PUBLIC testcontainers::testcontainers)
+    # Internal core helpers (e.g. the Kafka hook's OccurrenceCounter from
+    # src/WaitStrategies.hpp).
+    target_include_directories(testcontainers_modules PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     tc_apply_warnings(testcontainers_modules)
 endif()
 
@@ -344,6 +349,7 @@ if(BUILD_TESTING)
         # unit suite everywhere it runs; the TUs exist only when the modules
         # target does.
         target_sources(tc_unit_tests PRIVATE
+            tests/unit/modules/KafkaContainerTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/PostgreSQLContainerTest.cpp
             tests/unit/modules/RedisContainerTest.cpp
@@ -415,6 +421,7 @@ if(BUILD_TESTING)
         # apart from the core suite.
         if(TC_BUILD_MODULES)
             add_executable(tc_module_tests
+                tests/integration/modules/KafkaModuleTest.cpp
                 tests/integration/modules/MariaDBModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp

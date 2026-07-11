@@ -13,9 +13,9 @@ exec-based wait strategy `wait_for::successful_command`; the `host()` override +
 pattern (copyable config builder → move-only Started handle; `with_customizer`
 + `to_generic()` escape hatches), the `testcontainers::modules` target / Conan
 component / `tc_module_tests` suite, and the **Redis**, **PostgreSQL**,
-**MySQL** and **MariaDB** modules. Agreed 0.2.0 module set (2026-07-12, one
-design doc each — decisions recorded in feature-notes as they land):
-remaining **Kafka → RabbitMQ → MongoDB**, in that order.
+**MySQL**, **MariaDB** and **Kafka** modules. Agreed 0.2.0 module set
+(2026-07-12, one design doc each — decisions recorded in feature-notes as
+they land): remaining **RabbitMQ → MongoDB**, in that order.
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer

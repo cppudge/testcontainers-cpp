@@ -516,6 +516,41 @@ limit (recipe in the `with_command_arg` header note, not module-fixable): MySQL 
 disables the `mysql_native_password` plugin by default, so pre-8.0-era client stacks need
 `with_command_arg("--mysql-native-password=ON")` plus an ALTER USER init script.
 
+**Kafka module** (2026-07-12, `modules::KafkaContainer` → `modules::StartedKafka`) — a
+single-node KRaft broker (no ZooKeeper), pinned `apache/kafka:3.9.1` (official ASF image:
+small, ships the CLI tools, the last 3.x line for maximum client-protocol compatibility).
+Kafka cannot be "env + port + wait": the broker must ADVERTISE an address, the host-side
+address contains the mapped port — which does not exist until after start — and listeners
+are read once, at boot. The module runs the classic two-phase boot: the container starts
+with a placeholder command (echo a sentinel, poll for `/tmp/testcontainers_start.sh`, exec
+it), the request-level wait gates on the sentinel, and the STARTED HOOK does the rest —
+resolves host + mapped port (via the same `Container::host()` path the getters use, so the
+advertised host and the user's host can never diverge), writes the starter script
+(exports KAFKA_ADVERTISED_LISTENERS with the real port, then execs the image's launch
+script — apache path, confluent fallback), follows the logs (deadline-bounded, tail=all)
+until "Kafka Server started", and pre-creates `with_topic` topics. A readiness timeout in
+the hook throws StartupTimeoutError carrying the last log lines; a topic-creation failure
+throws DockerError — both abort start() with cleanup and participate in startup retries.
+Three listeners: PLAINTEXT 0.0.0.0:9092 (the only published one; host-side clients),
+BROKER 0.0.0.0:9093 (peers on the docker network + in-container CLI; doubles as the
+inter-broker listener), CONTROLLER 9094 (the node's own quorum — never advertised, KRaft
+rejects that). THE trap the module encodes: in-container clients must bootstrap
+`localhost:9093`, never `:9092` — Kafka's metadata reply carries the advertised address of
+the listener the connection arrived on, and :9092's is the host-side address, unreachable
+from inside. `bootstrap_servers()` returns bare `host:port` (librdkafka rejects a
+PLAINTEXT:// scheme); `internal_bootstrap_servers()` returns `<first alias>:9093` (short
+container id without an alias). The env set is COMPLETE (any user config makes the image
+drop its baked-in defaults) and user `with_env` lands after the module's — user wins on
+duplicates (broker tuning, unlike credential-mirroring DB modules; CLUSTER_ID belongs to
+`with_cluster_id`, validated at render: 22 URL-safe base64 chars, fixed default for reuse
+determinism). Readiness is log-based, not exec-based, on purpose: a command probe spawns a
+JVM per poll and would break `apache/kafka-native` overrides. `with_topic` also renders a
+reuse-visible label (the topic list otherwise lives only in the hook lambda, invisible to
+the reuse hash). `with_startup_timeout` budgets EACH phase (worst case ≈ 2×). Out of
+scope: SASL/TLS listeners, multi-broker quorums, Schema Registry et al. (separate
+modules), confluent images (untested best-effort: the starter script's fallback covers
+the boot only — `with_topic` still execs the apache CLI path).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

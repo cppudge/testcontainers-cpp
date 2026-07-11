@@ -364,6 +364,11 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `MariaDBContainer::with_init_script` / `with_config_file` | ✅ | n/a | ✅ MariaDBModule.InitScriptAndConfigFile | n/a |
 | MySQL/MariaDB `with_wait` / `with_env` / other pass-throughs / `with_customizer` / `to_generic` | ✅ | n/a | ❌ (unit-tested: MySqlFamilyConfig.* — shared rendering core; thin forwards integration-tested under GenericImage above) | n/a |
 | `StartedMySQL` / `StartedMariaDB` getters + `connection_string` (mysql:// both) | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect, MySQLModule.RootOnlyModes, MariaDBModule.DefaultsBootAndConnect | n/a |
+| `KafkaContainer()` defaults + `start()` (two-phase boot) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.AdvertisedListenersCarryMappedPort (the mapped-port money test), KafkaModule.ProduceConsumeRoundTrip | n/a |
+| `KafkaContainer::with_topic` | ✅ | n/a | ✅ KafkaModule.WithTopicPreCreatesPartitions | n/a |
+| `KafkaContainer::with_network` / `with_network_alias` (advertised internal listener) | ✅ | n/a | ✅ KafkaModule.TwoContainersOverNetwork | n/a |
+| `KafkaContainer::with_env` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, cluster-id validation, starter script, placeholder command, topics label) | n/a |
+| `StartedKafka` getters (`bootstrap_servers` bare host:port, `internal_bootstrap_servers`, `cluster_id`) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.TwoContainersOverNetwork | n/a |
 
 ---
 
