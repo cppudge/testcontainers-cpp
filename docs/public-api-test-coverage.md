@@ -277,8 +277,9 @@ covered.
 ## Wait strategies (`WaitFor` / `wait_for::*`)
 
 `WaitFor` is a value type; coverage means a container was actually gated on that
-strategy. Windows coverage now spans exit, log, healthcheck, and listening-port
-(the port test runs a PowerShell `TcpListener` in a servercore container).
+strategy. Windows coverage now spans exit, log, healthcheck, listening-port
+(the port test runs a PowerShell `TcpListener` in a servercore container), and
+the command wait.
 
 | Strategy | Works on Linux | Works on Windows | Integration-tested (Linux) | Integration-tested (Windows) |
 |---|---|---|---|---|
@@ -289,6 +290,7 @@ strategy. Windows coverage now spans exit, log, healthcheck, and listening-port
 | `healthy` (Healthcheck) | ✅ | ✅ | ✅ WaitStrategies.HealthcheckWaitBecomesHealthy | ✅ WindowsWaitStrategies.HealthcheckWaitBecomesHealthy |
 | `http` | ✅ | ✅ [a] | ✅ WaitStrategies.HttpWaitReachesNginx | ❌ [a] |
 | `listening_port` (Port) | ✅ | ✅ | ✅ WaitStrategies.PortWaitReachesRedis | ✅ WindowsWaitStrategies.ListeningPortWaitOnServercore |
+| `successful_command` / `successful_shell_command` (Command) | ✅ | ✅ | ✅ WaitStrategies.CommandWaitReachesRedis / .CommandWaitRetriesUntilFlagAppears / .CommandWaitTimeoutCarriesExitCode (retry/error paths also wire-pinned: CommandWait.* units) | ✅ WindowsWaitStrategies.CommandWaitRetriesUntilFlagAppears |
 
 Notes:
 - [a] The HTTP strategy works against a Windows daemon in principle

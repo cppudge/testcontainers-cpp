@@ -269,6 +269,7 @@ if(BUILD_TESTING)
         tests/unit/ContainerPortTest.cpp
         tests/unit/PortsTest.cpp
         tests/unit/WaitForTest.cpp
+        tests/unit/CommandWaitWireTest.cpp
         tests/unit/HealthcheckTest.cpp
         tests/unit/MountTest.cpp
         tests/unit/GenericImageTest.cpp

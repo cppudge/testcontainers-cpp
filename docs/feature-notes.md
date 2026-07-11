@@ -149,13 +149,27 @@ outlive the process. On a Windows-containers engine no reaper runs at all: a kep
 stays until removed manually.
 
 **Wait strategies** — log message / fixed duration / exit(+code) / healthcheck / HTTP probe /
-listening port, run in order under one shared startup timeout; the inspect-based polls run
-inside a `DockerClient::Session`. The alternative TYPES live in `wait_for::` next to the
-factories (2026-07-05, pre-0.1.0 rename): the former `testcontainers::wait` namespace was
-ambiguous against POSIX `::wait(2)` under `using namespace testcontainers;` on macOS. `wait_for::listening_port` probes the published HOST port
-only (no in-container listen check), so a port published before the process binds could read
-ready early. HTTP/TCP probes are deadline-bounded per probe (min(time left, 5s), which absorbs
-Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost").
+listening port / successful command, run in order under one shared startup timeout; the
+inspect-based polls run inside a `DockerClient::Session`. The alternative TYPES live in
+`wait_for::` next to the factories (2026-07-05, pre-0.1.0 rename): the former
+`testcontainers::wait` namespace was ambiguous against POSIX `::wait(2)` under
+`using namespace testcontainers;` on macOS. `wait_for::listening_port` probes the published
+HOST port only (no in-container listen check), so a port published before the process binds
+could read ready early. HTTP/TCP probes are deadline-bounded per probe (min(time left, 5s),
+which absorbs Windows' ~2s refused-SYN retry on the dead `::1` half of "localhost").
+
+**Command wait** (2026-07-11, `Wait.forSuccessfulCommand` analog) —
+`wait_for::successful_command({argv...})` / `successful_shell_command("script")` (the latter
+wraps `/bin/sh -c`) polls a deadline-bounded exec until an attempt exits 0. Non-zero exits AND
+daemon-side errors (409 while the container is starting/restarting) are "not ready yet"; a 404
+propagates (the container is gone — retrying cannot help); transport timeouts follow the log
+wait's rule (at the wait deadline they ARE the readiness timeout, earlier they propagate). The
+probe sends no stdin and no TTY, so it runs on every transport (TLS and named pipe included)
+and its exec POSTs deliberately bypass the polling session (only GETs may ride it); the timeout
+error reports the last COMPLETED attempt (exit code + a 512-byte output snippet) because the
+final attempt is routinely cut off by the deadline and would otherwise mask it. An attempt
+still running at the deadline is abandoned client-side but KEEPS RUNNING in the container
+(Docker has no exec-kill API) — keep probes short-lived.
 
 **Log wait streams** (2026-07-05) — the log-message wait rides ONE deadline-bounded follow
 stream (`follow_logs(..., deadline)` → `FollowEnd`, re-arming the transport io deadline per

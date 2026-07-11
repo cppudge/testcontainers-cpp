@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 
@@ -17,6 +19,8 @@
 #include "docker/Ports.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/ExecOptions.hpp"
+#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 #include "testcontainers/docker/Logs.hpp"
@@ -404,6 +408,88 @@ void wait_for_port(DockerClient& client, const std::string& id, const wait_for::
     }
 }
 
+/// Run `cond.cmd` inside the container via a deadline-bounded exec until an
+/// attempt exits 0, retrying every `poll_interval`. A non-zero exit is "not
+/// ready yet"; so is a daemon-side DockerError (the container may still be
+/// starting, or restarting under a restart policy) — except a 404, which
+/// means the container is gone for good and propagates. The timeout error
+/// carries the last COMPLETED attempt's exit code plus a bounded output
+/// snippet: the final attempt is routinely cut off mid-run by the deadline
+/// and would otherwise mask the informative outcome before it.
+void wait_for_command(DockerClient& client, const std::string& id, const wait_for::Command& cond,
+                      Clock::time_point deadline) {
+    if (cond.cmd.empty()) {
+        throw DockerError("wait_for::Command requires a non-empty command", std::nullopt, id);
+    }
+
+    std::string display = cond.cmd.front();
+    for (std::size_t i = 1; i < cond.cmd.size(); ++i) {
+        display += " " + cond.cmd[i];
+    }
+
+    const std::chrono::milliseconds interval =
+        cond.poll_interval.count() > 0 ? cond.poll_interval : std::chrono::milliseconds(200);
+
+    std::string last_failure = "no attempt completed";
+    const auto timeout_error = [&] {
+        return StartupTimeoutError("Timed out waiting for command \"" + display +
+                                       "\" to succeed in container " + id + " (" + last_failure +
+                                       ")",
+                                   id);
+    };
+
+    for (;;) {
+        try {
+            // No stdin and no TTY: the attempt needs no half-closable
+            // transport, and the output arrives demuxed regardless of how the
+            // container itself was created. The consumer never stops early —
+            // the exit code needs the stream to reach its end.
+            std::string output;
+            const ExecStreamResult res = client.exec(
+                id, cond.cmd, ExecOptions{},
+                [&output](LogSource, std::string_view chunk) {
+                    constexpr std::size_t kSnippetCap = 512;
+                    if (output.size() < kSnippetCap) {
+                        output.append(chunk.substr(0, kSnippetCap - output.size()));
+                    }
+                    return true;
+                },
+                deadline);
+
+            if (res.exit_code) {
+                if (*res.exit_code == 0) {
+                    return; // the command succeeded — ready
+                }
+                last_failure = "last exit code " + std::to_string(*res.exit_code) +
+                               (output.empty() ? std::string{} : ", output: \"" + output + "\"");
+            }
+            // No exit code: the attempt was cut off (DeadlineExpired, or the
+            // rare still-running race right after StreamEnded) — it says
+            // nothing about the command, so keep the previous diagnostic.
+        } catch (const TransportTimeoutError&) {
+            // The transport's own io deadline fired around the exec
+            // round-trips. At the wait deadline that IS the readiness
+            // timeout; earlier it is a real transport problem — propagate.
+            if (Clock::now() >= deadline) {
+                throw timeout_error();
+            }
+            throw;
+        } catch (const NotFoundError&) {
+            throw; // the container is gone — no retry can succeed
+        } catch (const DockerError& e) {
+            // e.g. 409 "container is not running" while it is (re)starting:
+            // not ready yet — keep retrying under the deadline.
+            last_failure = std::string("last error: ") + e.what();
+        }
+
+        if (Clock::now() >= deadline) {
+            throw timeout_error();
+        }
+        std::this_thread::sleep_until(
+            std::min(Clock::now() + interval, deadline + std::chrono::milliseconds(1)));
+    }
+}
+
 } // namespace
 
 void wait_until_ready(DockerClient& client, const std::string& id,
@@ -412,8 +498,10 @@ void wait_until_ready(DockerClient& client, const std::string& id,
     // Readiness polling re-inspects every ~200ms (the log wait streams over
     // its own follow connection instead); reuse one daemon connection for the
     // polling GETs instead of paying a fresh connect (a TCP/TLS handshake on
-    // remote daemons) per poll. Every daemon call in the polls is a GET, so
-    // the session's stale-connection retry is safe. This scoped reuse is the
+    // remote daemons) per poll. Only GETs ride the session (its
+    // stale-connection retry is safe there); the command wait's exec POSTs
+    // and hijacked start stream open their own connections by design — its
+    // exec-inspect GET is what reuses this one. This scoped reuse is the
     // one deviation from the connection-per-request default shared with the
     // Rust reference (bollard pools nothing); see the DockerClient class doc
     // and docs/TODO.md for the analysis.
@@ -447,6 +535,8 @@ void wait_until_ready(DockerClient& client, const std::string& id,
                     wait_for_http(client, id, cond, deadline);
                 } else if constexpr (std::is_same_v<T, wait_for::Port>) {
                     wait_for_port(client, id, cond, deadline);
+                } else if constexpr (std::is_same_v<T, wait_for::Command>) {
+                    wait_for_command(client, id, cond, deadline);
                 }
             },
             w);

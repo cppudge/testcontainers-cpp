@@ -23,9 +23,13 @@
 //   WaitStrategies.LogMessageAppearsLate - a marker echoed ~1s after start is caught by the streaming log wait while the container keeps running.
 //   WaitStrategies.LogWaitSucceedsOnExitedContainer - after an exit wait guarantees the container is gone, the log wait still matches the marker in the exited container's log HISTORY (the follow stream ends right after replaying it).
 //   WaitStrategies.LogWaitCountsRepeatedMessage - times=2 gates on the SECOND occurrence: the wait returns only after the delayed repeat is streamed.
+//   WaitStrategies.CommandWaitReachesRedis - a redis container with wait_for::successful_command({"redis-cli", "ping"}) starts and is running (the in-container client, not a log line, proves the server accepts connections).
+//   WaitStrategies.CommandWaitRetriesUntilFlagAppears - a shell probe of a flag file created ~1s after start exits non-zero first, so the wait can only succeed through the retry loop.
+//   WaitStrategies.CommandWaitTimeoutCarriesExitCode - a probe that always fails times out with StartupTimeoutError carrying the container id, the command, and its exit code.
 //   WindowsWaitStrategies.ExitCodeWaitSucceeds - cmd `exit 7` with wait_for::exit_code(7) on a Windows container.
 //   WindowsWaitStrategies.StdoutMessageWait - wait_for::stdout_message gates on a marker echoed by a Windows container that keeps running.
 //   WindowsWaitStrategies.HealthcheckWaitBecomesHealthy - a Windows container with a passing shell healthcheck reaches healthy.
+//   WindowsWaitStrategies.CommandWaitRetriesUntilFlagAppears - the flag-file probe via cmd /c on a Windows container: the exec-based wait (no stdin, so the named pipe suffices) succeeds through the retry loop.
 //   WindowsWaitStrategies.ListeningPortWaitOnServercore - a PowerShell TcpListener in servercore + wait_for::listening_port proves a published Windows port is reachable from the host.
 
 using namespace testcontainers;
@@ -139,6 +143,46 @@ TEST_F(WaitStrategies, LogWaitCountsRepeatedMessage) {
     EXPECT_TRUE(c.is_running());
 }
 
+TEST_F(WaitStrategies, CommandWaitReachesRedis) {
+    // The flagship use: the in-container client proves the SERVER accepts
+    // connections — a log line races the listener, and Docker Desktop's host
+    // proxy accepts on a published port even when nothing listens inside.
+    Container c = GenericImage("redis", "7.2")
+                      .with_wait(wait_for::successful_command({"redis-cli", "ping"}))
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WaitStrategies, CommandWaitRetriesUntilFlagAppears) {
+    // The flag file appears ~1s after start, so the first probe attempts can
+    // only exit non-zero: success proves the retry loop, not just a lucky
+    // first attempt. The shell factory covers the /bin/sh -c wrapping.
+    Container c = GenericImage("alpine", "3.20")
+                      .with_cmd({"sh", "-c", "sleep 1; touch /tmp/tc-ready; sleep 60"})
+                      .with_wait(wait_for::successful_shell_command("test -f /tmp/tc-ready"))
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WaitStrategies, CommandWaitTimeoutCarriesExitCode) {
+    // `false` exits 1 on every attempt: the wait can only end by timing out,
+    // and the error must name the command and the last completed attempt's
+    // exit code (the final attempt is often cut off by the deadline).
+    try {
+        GenericImage("alpine", "3.20")
+            .with_cmd({"sleep", "60"})
+            .with_wait(wait_for::successful_command({"false"}))
+            .with_startup_timeout(3s)
+            .start();
+        FAIL() << "expected StartupTimeoutError";
+    } catch (const StartupTimeoutError& e) {
+        EXPECT_FALSE(e.resource_id().empty()) << e.what();
+        const std::string what = e.what();
+        EXPECT_NE(what.find("Timed out waiting for command \"false\""), std::string::npos) << what;
+        EXPECT_NE(what.find("last exit code 1"), std::string::npos) << what;
+    }
+}
+
 // The Windows mirror. The http wait has no Windows twin (it would need a real
 // HTTP server in the container — nginx-scale, not worth a multi-GB image); the
 // listening-port wait uses a PowerShell TcpListener in servercore instead.
@@ -171,6 +215,21 @@ TEST_F(WindowsWaitStrategies, HealthcheckWaitBecomesHealthy) {
                                             .with_retries(3)
                                             .with_start_period(0ms))
                       .with_wait(wait_for::healthy())
+                      .start();
+    EXPECT_TRUE(c.is_running());
+}
+
+TEST_F(WindowsWaitStrategies, CommandWaitRetriesUntilFlagAppears) {
+    // The Windows twin of the flag-file probe: cmd /c both produces and
+    // checks the flag. The exec-based wait sends no stdin, so it runs over
+    // the named-pipe transport unrestricted.
+    Container c = nanoserver()
+                      .with_cmd({"cmd", "/c",
+                                 "ping -n 3 127.0.0.1 >nul & echo done > C:\\tc-ready & "
+                                 "ping -n 300 127.0.0.1 >nul"})
+                      .with_wait(wait_for::successful_command(
+                          {"cmd", "/c", "if exist C:\\tc-ready (exit 0) else (exit 1)"}))
+                      .with_startup_timeout(std::chrono::minutes(2))
                       .start();
     EXPECT_TRUE(c.is_running());
 }

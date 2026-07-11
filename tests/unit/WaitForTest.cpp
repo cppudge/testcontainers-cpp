@@ -20,6 +20,8 @@
 //   WaitFor.HttpFactory - wait_for::http builds an Http with the given path, port, and status (and a default poll interval).
 //   WaitFor.HttpFactoryDefaultStatus - wait_for::http defaults the expected status to 200.
 //   WaitFor.ListeningPortFactory - wait_for::listening_port builds a Port with the given port (and a default poll interval).
+//   WaitFor.SuccessfulCommandFactory - wait_for::successful_command builds a Command with the given argv (and a default poll interval).
+//   WaitFor.SuccessfulShellCommandFactory - wait_for::successful_shell_command wraps the script in /bin/sh -c.
 //   WaitFor.Copyable - a WaitFor (and a vector of them) can be copied.
 //   WaitFor.VisitDispatches - std::visit dispatches to the active alternative.
 //   WaitFor.ClampedPlanFitsBudget - a duration ending before the deadline wakes at now+value with no timeout.
@@ -115,6 +117,21 @@ TEST(WaitFor, ListeningPortFactory) {
     const auto& p = std::get<wait_for::Port>(w);
     EXPECT_EQ(p.port, tcp(5432));
     EXPECT_EQ(p.poll_interval, std::chrono::milliseconds(200)); // default
+}
+
+TEST(WaitFor, SuccessfulCommandFactory) {
+    const WaitFor w = wait_for::successful_command({"pg_isready", "-U", "test"});
+    ASSERT_TRUE(std::holds_alternative<wait_for::Command>(w));
+    const auto& c = std::get<wait_for::Command>(w);
+    EXPECT_EQ(c.cmd, (std::vector<std::string>{"pg_isready", "-U", "test"}));
+    EXPECT_EQ(c.poll_interval, std::chrono::milliseconds(200)); // default
+}
+
+TEST(WaitFor, SuccessfulShellCommandFactory) {
+    const WaitFor w = wait_for::successful_shell_command("pg_isready -U test");
+    ASSERT_TRUE(std::holds_alternative<wait_for::Command>(w));
+    const auto& c = std::get<wait_for::Command>(w);
+    EXPECT_EQ(c.cmd, (std::vector<std::string>{"/bin/sh", "-c", "pg_isready -U test"}));
 }
 
 TEST(WaitFor, Copyable) {

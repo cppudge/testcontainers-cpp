@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "testcontainers/ContainerPort.hpp"
 
@@ -54,12 +56,28 @@ struct Port {
     std::chrono::milliseconds poll_interval{200}; ///< delay between probes
 };
 
+/// Wait until a command run inside the container (via exec) exits with code 0.
+///
+/// Each attempt runs `cmd` bounded by the shared startup deadline; a non-zero
+/// exit — or a daemon-side failure such as "container is restarting" — means
+/// "not ready yet" and the command is retried after `poll_interval`. The
+/// startup-timeout error carries the last completed attempt's exit code and a
+/// bounded snippet of its output. An attempt still running when the deadline
+/// passes is abandoned client-side but keeps running inside the container, so
+/// probe commands should be short-lived. The probe runs without stdin or a
+/// TTY, so it works on every transport.
+struct Command {
+    std::vector<std::string> cmd;                 ///< argv (exec form, not a shell line)
+    std::chrono::milliseconds poll_interval{200}; ///< delay between attempts
+};
+
 } // namespace wait_for
 
 /// A readiness condition: a closed sum of the small wait strategies above,
 /// dispatched with `std::visit`. Copyable so it lives happily in a vector.
-using WaitFor = std::variant<wait_for::None, wait_for::LogMessage, wait_for::Duration,
-                             wait_for::Exit, wait_for::Healthcheck, wait_for::Http, wait_for::Port>;
+using WaitFor =
+    std::variant<wait_for::None, wait_for::LogMessage, wait_for::Duration, wait_for::Exit,
+                 wait_for::Healthcheck, wait_for::Http, wait_for::Port, wait_for::Command>;
 
 /// Convenience factories that build the right `WaitFor` alternative.
 namespace wait_for {
@@ -109,6 +127,22 @@ inline WaitFor listening_port(ContainerPort port) {
     Port p;
     p.port = port;
     return p;
+}
+
+/// Wait until `cmd` (argv form), run inside the container, exits with code 0,
+/// e.g. `successful_command({"pg_isready", "-U", "test"})`.
+inline WaitFor successful_command(std::vector<std::string> cmd) {
+    Command c;
+    c.cmd = std::move(cmd);
+    return c;
+}
+
+/// Wait until the shell line `script`, run inside the container via
+/// `/bin/sh -c`, exits with code 0. Requires an image with /bin/sh; for a
+/// Windows container use `successful_command` with the image's shell instead
+/// (e.g. `{"cmd", "/c", ...}`).
+inline WaitFor successful_shell_command(std::string script) {
+    return successful_command({"/bin/sh", "-c", std::move(script)});
 }
 
 } // namespace wait_for

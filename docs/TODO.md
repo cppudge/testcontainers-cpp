@@ -7,9 +7,11 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 10 — the last of the agreed batch order (2026-07-10; batches 1–9 landed —
 see [feature-notes.md](feature-notes.md) and the git history): Tier-4 ecosystem
-modules for the flagship 0.2.0 — first the two foundations (an exec-based wait
-strategy and a `host()` override), then Postgres/Redis → MySQL → Kafka, each a
-composition over `GenericImage`. (Batch 9 — environment config: the
+modules for the flagship 0.2.0. The first foundation — the exec-based wait
+strategy (`wait_for::successful_command`) — landed 2026-07-11; next the second
+foundation (a `host()` override honoring `TESTCONTAINERS_HOST_OVERRIDE` plus a
+small DSN/connection-string builder), then Postgres/Redis → MySQL → Kafka,
+each a composition over `GenericImage`. (Batch 9 — environment config: the
 properties-key set behind every env switch, docker-context TLS materials +
 the tcp://→TLS upgrade, hub-prefix/config coverage for every utility image,
 and the age-based pull policy — landed in full 2026-07-11.)
