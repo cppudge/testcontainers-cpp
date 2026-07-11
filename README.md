@@ -73,7 +73,13 @@ and wire it into CMake with `find_package` (the CMake package and target are nam
 ```cmake
 find_package(testcontainers REQUIRED)
 target_link_libraries(my_tests PRIVATE testcontainers::testcontainers)
+# For the prebuilt technology wrappers (modules::RedisContainer, ...):
+target_link_libraries(my_tests PRIVATE testcontainers::modules)
 ```
+
+(Under Conan the root `testcontainers::testcontainers` target already carries the modules
+lib; the explicit `testcontainers::modules` line is what keeps the same CMakeLists working
+against a plain `cmake --install` tree, whose root target is core-only.)
 
 A plain `cmake --install` of this repo works too, exporting the same
 `find_package(testcontainers)` / `testcontainers::testcontainers` contract for non-Conan consumers.
@@ -171,6 +177,9 @@ the Rust reference also makes), with hot polling loops opting into scoped keep-a
   to the test host) and `DockerComposeContainer` (local CLI / containerised / auto client modes).
 - **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a mirror
   integration suite (build / volumes / networks / exec / copy / ports / waits / lifecycle).
+- **Modules** — prebuilt technology wrappers over `GenericImage` in `testcontainers::modules`
+  (Redis today; PostgreSQL, MySQL/MariaDB, Kafka, RabbitMQ, MongoDB in progress): pinned image +
+  correct readiness out of the box, typed connection getters, DSN strings instead of client drivers.
 
 Per-feature reference with known limits: [`docs/feature-notes.md`](docs/feature-notes.md).
 Public-API coverage in each engine mode: [`docs/public-api-test-coverage.md`](docs/public-api-test-coverage.md).
@@ -204,8 +213,10 @@ On Windows, Ninja needs the MSVC toolchain on `PATH` (run from an *"x64 Native T
 for VS 2022"*, or use VS Code with the CMake Tools + clangd extensions, which apply the developer
 environment for you).
 
-Two test suites: **unit** (`tc_unit_tests`, no Docker) and **integration** (`tc_integration_tests`,
-requires a reachable daemon; skips gracefully otherwise). CI gates every push on:
+Three test suites: **unit** (`tc_unit_tests`, no Docker), **integration** (`tc_integration_tests`,
+requires a reachable daemon; skips gracefully otherwise), and **modules** (`tc_module_tests`, the
+ecosystem-module suite — same daemon rules, separated because module image pulls are heavy). CI
+gates every push on:
 
 - `-Wall -Wextra` (gcc/clang) / `/W4` (MSVC) **as errors** (`TC_WERROR`).
 - Pinned **clang-format** (22.1.5) and **clang-tidy** (18.1.8) — `.clang-format` / `.clang-tidy` are

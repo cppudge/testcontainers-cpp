@@ -7,15 +7,15 @@ when it lands (adding a short note there if it needs one).
 ## Next candidates
 Batch 10 — the last of the agreed batch order (2026-07-10; batches 1–9 landed —
 see [feature-notes.md](feature-notes.md) and the git history): Tier-4 ecosystem
-modules for the flagship 0.2.0. Both foundations landed 2026-07-11 — the
-exec-based wait strategy (`wait_for::successful_command`), and the `host()`
-override (`TESTCONTAINERS_HOST_OVERRIDE` / `host.override` + the in-container
-bridge-gateway fallback) with the `ConnectionString` DSN builder. Next: the
-modules themselves — Postgres/Redis → MySQL → Kafka, each a composition over
-`GenericImage`. (Batch 9 — environment config: the properties-key set behind
-every env switch, docker-context TLS materials + the tcp://→TLS upgrade,
-hub-prefix/config coverage for every utility image, and the age-based pull
-policy — landed in full 2026-07-11.)
+modules for the flagship 0.2.0. Both foundations landed 2026-07-11 (the
+exec-based wait strategy `wait_for::successful_command`; the `host()` override +
+`ConnectionString`). The module layer itself started landing 2026-07-12: the
+pattern (copyable config builder → move-only Started handle; `with_customizer`
++ `to_generic()` escape hatches), the `testcontainers::modules` target / Conan
+component / `tc_module_tests` suite, and the **Redis** module. Agreed 0.2.0
+module set (2026-07-12, one design doc each — decisions recorded there and in
+feature-notes as they land): **PostgreSQL → MySQL + MariaDB → Kafka →
+RabbitMQ → MongoDB**, in that order.
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -38,6 +38,13 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   and dropped 2026-07-10 — little profit for the extra build-graph plumbing). New releases
   reach ConanCenter as small version-add PRs on top of conan-io/conan-center-index#30600
   once it merges (the staged recipe lives in `packaging/conan-center/`, pinned to v0.1.0).
+- **Module-layer residuals** — `test_package/` still links only the core target: extending
+  it to `testcontainers::modules` must wait for the 0.2.0 CCI sync (the staged 0.1.0 recipe
+  byte-compares against `test_package/`, and a modules reference would break building that
+  recipe, whose package predates the component). The `tc_module_tests` suite runs on the
+  primary Linux CI job only — consciously not in the sanitizer/TLS jobs (thin composition
+  over already-sanitized core paths; revisit if a module ever grows its own parsing/framing
+  logic). (`CMakeLists.txt`, `conanfile.py`, `.github/workflows/ci.yml`)
 - **API version pin residuals** — negotiation is one `GET /_ping` per client INSTANCE (fresh
   `from_environment()` clients re-ping; copies inherit). The raw `request()` escape hatch stays
   unversioned by design. (`src/docker/DockerClient.cpp`)
@@ -148,10 +155,9 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   feature-notes.md).
   Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,
   4–8 idle per endpoint, retry-once-only-on-unsent, streaming excluded.
-- **Ecosystem modules (Tier 4)** — prebuilt module wrappers (Postgres/MySQL/Kafka/…, the
-  testcontainers-java "modules" layer) plus the two foundations they'd need first: an
-  exec-based wait strategy and a `host()` override. The exploration doc lived in docs/05,
-  removed at v0.1.0 (git history).
+- **Ecosystem modules (Tier 4)** — IN PROGRESS (see Next candidates): the layer + Redis
+  landed 2026-07-12; PostgreSQL / MySQL+MariaDB / Kafka / RabbitMQ / MongoDB follow. The
+  original exploration doc lived in docs/05, removed at v0.1.0 (git history).
 
 > Implemented milestones (container config, wait strategies, exec, networks, volumes, compose,
 > reuse, hooks, Ryuk, auth, build-from-Dockerfile, …) are documented with their known limits in

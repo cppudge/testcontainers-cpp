@@ -17,6 +17,13 @@ GenericImage GenericImage::from_reference(const std::string& reference) {
     return GenericImage(image, tag);
 }
 
+GenericImage& GenericImage::with_image(const std::string& reference) {
+    auto [image, tag] = docker::split_image(reference);
+    image_ = std::move(image);
+    tag_ = std::move(tag);
+    return *this;
+}
+
 bool GenericImage::exists(const std::string& name, const std::string& tag) {
     DockerClient client = DockerClient::from_environment();
     return client.image_exists(name + ":" + tag);

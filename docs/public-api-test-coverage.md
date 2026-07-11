@@ -327,6 +327,27 @@ three has a Windows-mode test (file modes and privileged exec are Unix concepts
 
 ---
 
+## Ecosystem modules (`testcontainers::modules`)
+
+Module images are Linux-only, so the Windows columns are n/a by construction —
+the `tc_module_tests` exe runs on the Windows CI job solely to prove the engine
+guards self-skip. Rendering rules (cmd/env ownership, customizer precedence,
+idempotence) are unit-tested per module via `to_generic()`.
+
+| Function | Works on Linux | Works on Windows | Integration-tested (Linux) | Integration-tested (Windows) |
+|---|---|---|---|---|
+| `GenericImage::with_image` (core setter) | ✅ | ✅ | ❌ (unit-tested: GenericImage.WithImageReplacesReferenceKeepingOptions; every module `with_image` uses it) | ❌ |
+| `RedisContainer()` defaults + `start()` | ✅ | n/a (Linux image) | ✅ RedisModule.StartsServesAndBuildsDsn | n/a |
+| `RedisContainer::with_image` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.WithImageRewritesReference) | n/a |
+| `RedisContainer::with_password` | ✅ | n/a | ✅ RedisModule.PasswordIsEnforcedAndWired | n/a |
+| `RedisContainer::with_command_args` | ✅ | n/a | ✅ RedisModule.CommandArgsReachTheServer | n/a |
+| `RedisContainer::with_customizer` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.CustomizerRunsLastAndWins — pure rendering, no daemon interaction of its own) | n/a |
+| `RedisContainer::to_generic` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.* — `start()` goes through it) | n/a |
+| `StartedRedis::host` / `port` / `connection_string` / `password` | ✅ | n/a | ✅ RedisModule.StartsServesAndBuildsDsn, RedisModule.PasswordIsEnforcedAndWired | n/a |
+| `StartedRedis::container` (exec escape hatch) | ✅ | n/a | ✅ RedisModule.ExecSetGetRoundTrip | n/a |
+
+---
+
 ## Lifecycle hooks
 
 Covered under GenericImage above: on Linux (Lifecycle.HooksFireInOrder,

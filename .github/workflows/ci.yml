@@ -85,6 +85,15 @@ jobs:
         timeout-minutes: 20
         run: ./build/ninja/bin/tc_integration_tests
 
+      # The ecosystem-module suite (its own exe: module image pulls grow as
+      # modules accumulate, so they stay out of the core suite's budget).
+      # This job is the one place the module containers really run on CI.
+      # Budget note: the job cap is 45 min total — grow this step's cap only
+      # together with the job's as pull-heavy modules land.
+      - name: Module tests
+        timeout-minutes: 10
+        run: ./build/ninja/bin/tc_module_tests
+
   # The feature knob under test: TC_TLS=OFF + TC_HOST_PORT_FORWARDING=OFF must
   # (a) build and pass both suites, and (b) keep OpenSSL and libssh2 out of the
   # dependency graph and off every link line — the whole point of the options
@@ -340,6 +349,15 @@ jobs:
           ./procdump/procdump64.exe -accepteula -ma $p.Id hung-integration.dmp
           Stop-Process -Id $p.Id -Force
           exit 124
+
+      # Module images are Linux-only, so on this Windows-containers daemon
+      # every module test must self-skip via its engine guard — running the
+      # exe proves the guards hold (a missing guard would go red on the
+      # Linux-image pull — "no matching manifest for windows/amd64" — instead
+      # of skipping).
+      - name: Module tests (Windows engine; suites self-skip)
+        timeout-minutes: 5
+        run: ./build/ninja/bin/tc_module_tests.exe --gtest_brief=1
 
       - name: Upload hang dump (exe + pdb + dmp)
         if: failure()

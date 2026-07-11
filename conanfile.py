@@ -133,6 +133,10 @@ class TestcontainersCppRecipe(ConanFile):
         # build() runs the unit suite only (integration wants a Docker daemon a
         # package build cannot assume), so don't compile integration at all.
         tc.cache_variables["TC_BUILD_INTEGRATION_TESTS"] = False
+        # The ecosystem module wrappers ship with the package (the `modules`
+        # component below); explicit so a future CMake-default flip cannot
+        # silently drop them from the package.
+        tc.cache_variables["TC_BUILD_MODULES"] = True
         # Mirror the feature options into the CMake build (their CMake
         # defaults are ON; the conan options are the source of truth here).
         tc.cache_variables["TC_TLS"] = bool(self.options.tls)
@@ -170,35 +174,50 @@ class TestcontainersCppRecipe(ConanFile):
     def package_info(self):
         # Match the non-Conan install: find_package(testcontainers) and the
         # testcontainers::testcontainers target (the package NAME stays
-        # testcontainers-cpp for the reference on a remote).
+        # testcontainers-cpp for the reference on a remote). With components,
+        # that root target aggregates core + modules — linking the extra
+        # static module lib costs a consumer nothing (unreferenced archive
+        # members are never pulled in), and the two component targets below
+        # keep the same spellings as the non-Conan install for consumers who
+        # link a specific layer.
         self.cpp_info.set_property("cmake_file_name", "testcontainers")
         self.cpp_info.set_property("cmake_target_name", "testcontainers::testcontainers")
-        self.cpp_info.libs = ["testcontainers"]
+
+        core = self.cpp_info.components["core"]
+        core.set_property("cmake_target_name", "testcontainers::core")
+        core.libs = ["testcontainers"]
         # Scope the transitive link lines to what the static lib really needs:
         # only Boost's HEADERS component (Beast/Asio/System are header-only).
         # This recipe pins boost header-only so it changes little here, but it
         # must match the ConanCenter recipe, where boost arrives fully built.
-        self.cpp_info.requires = [
+        core.requires = [
             "boost::headers",
             "nlohmann_json::nlohmann_json",
             "libarchive::libarchive",
         ]
         if self.options.tls:
-            self.cpp_info.requires.extend(["openssl::ssl", "openssl::crypto"])
+            core.requires.extend(["openssl::ssl", "openssl::crypto"])
         if self.options.host_port_forwarding:
             # libcrypto also directly (OPENSSL_init_crypto/OPENSSL_thread_stop
             # in HostPortForwarding.cpp), not just through libssh2.
-            self.cpp_info.requires.append("libssh2::libssh2")
-            if "openssl::crypto" not in self.cpp_info.requires:
-                self.cpp_info.requires.append("openssl::crypto")
+            core.requires.append("libssh2::libssh2")
+            if "openssl::crypto" not in core.requires:
+                core.requires.append("openssl::crypto")
         if self.settings.os == "Windows":
             # Named-pipe / socket transport pulls in Win32 networking libs —
             # keep in sync with the target_link_libraries in CMakeLists.txt.
-            self.cpp_info.system_libs = ["ws2_32", "mswsock"]
+            core.system_libs = ["ws2_32", "mswsock"]
             if self.options.tls or self.options.host_port_forwarding:
                 # OpenSSL's Windows certificate store.
-                self.cpp_info.system_libs.append("crypt32")
+                core.system_libs.append("crypt32")
         else:
             # Threads::Threads is PRIVATE in CMake, but a static consumer
             # still links it transitively.
-            self.cpp_info.system_libs = ["pthread"]
+            core.system_libs = ["pthread"]
+
+        # The ecosystem module wrappers (RedisContainer, ...): same target
+        # spelling as the non-Conan install's exported testcontainers::modules.
+        modules = self.cpp_info.components["modules"]
+        modules.set_property("cmake_target_name", "testcontainers::modules")
+        modules.libs = ["testcontainers_modules"]
+        modules.requires = ["core"]

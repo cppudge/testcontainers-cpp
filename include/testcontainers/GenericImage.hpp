@@ -91,6 +91,12 @@ public:
 
     // --- In-place builders (single overload; chains on lvalues and temporaries) ---
 
+    /// Replace the image reference with "name[:tag]" (tag defaults to
+    /// "latest"), keeping every other configured option — the same parsing as
+    /// `from_reference`. Lets a copied base config swap the image without
+    /// rebuilding the rest.
+    GenericImage& with_image(const std::string& reference);
+
     GenericImage& with_exposed_port(ContainerPort p) {
         // Rendered into the spec right away, so the typed/string/publish-all
         // port trio stays consistent by construction.

@@ -22,6 +22,7 @@
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
 //   GenericImage.ReusableAfterWith - a named image survives a with_* call and reflects both early and later settings (no use-after-move).
 //   GenericImage.FromReference - from_reference splits "name[:tag]" into image and tag, defaulting to "latest" and handling a registry host:port.
+//   GenericImage.WithImageReplacesReferenceKeepingOptions - with_image swaps name and tag (same parsing as from_reference) while every other configured option survives.
 //   GenericImage.LifecycleHookDefaults - a freshly constructed image has no created/starting/started/stopping hooks and a single startup attempt.
 //   GenericImage.LifecycleHooksGrowVectors - each with_*_hook builder appends to the matching hook vector (in order across repeated calls).
 //   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
@@ -218,6 +219,27 @@ TEST(GenericImage, FromReference) {
     const GenericImage with_registry = GenericImage::from_reference("host:5000/repo:1.2");
     EXPECT_EQ(with_registry.image(), "host:5000/repo");
     EXPECT_EQ(with_registry.tag(), "1.2");
+}
+
+TEST(GenericImage, WithImageReplacesReferenceKeepingOptions) {
+    GenericImage img("redis", "7.2");
+    img.with_exposed_port(tcp(6379)).with_env("MODE", "standalone");
+
+    img.with_image("valkey/valkey:8.0");
+    EXPECT_EQ(img.image(), "valkey/valkey");
+    EXPECT_EQ(img.tag(), "8.0");
+    // Every other configured option survives the swap.
+    ASSERT_EQ(img.exposed_ports().size(), 1u);
+    EXPECT_EQ(img.exposed_ports()[0], tcp(6379));
+    ASSERT_EQ(img.env().size(), 1u);
+    EXPECT_EQ(img.env()[0].first, "MODE");
+
+    // Same parsing as from_reference: bare name defaults to "latest", a
+    // registry host:port is not mistaken for a tag.
+    EXPECT_EQ(img.with_image("repo").tag(), "latest");
+    img.with_image("host:5000/repo:1.2");
+    EXPECT_EQ(img.image(), "host:5000/repo");
+    EXPECT_EQ(img.tag(), "1.2");
 }
 
 TEST(GenericImage, LifecycleHookDefaults) {

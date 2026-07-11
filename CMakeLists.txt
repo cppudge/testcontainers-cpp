@@ -70,6 +70,10 @@ option(TC_BUILD_EXAMPLES "Build examples" ON)
 # the build machine cannot assume), so the Conan recipes pin this OFF and skip
 # compiling the ~20 integration TUs they would never run. Repo builds keep both.
 option(TC_BUILD_INTEGRATION_TESTS "Build the Docker-daemon integration test suite" ON)
+# The ecosystem module wrappers (modules::RedisContainer, ...) live behind
+# their own library target so the core stays lean and consumers link the layer
+# they actually use. Pure composition over the core — zero extra dependencies.
+option(TC_BUILD_MODULES "Build the ecosystem module wrappers (testcontainers::modules)" ON)
 
 if(BUILD_SHARED_LIBS)
     if(WIN32)
@@ -227,6 +231,22 @@ else()
     target_link_libraries(testcontainers PRIVATE Threads::Threads)
 endif()
 
+# ===== Ecosystem modules =====
+# Prebuilt wrappers over GenericImage (RedisContainer, ...): a copyable config
+# builder per technology that starts the container and hands back typed
+# connection getters. Consumed as testcontainers::modules.
+if(TC_BUILD_MODULES)
+    add_library(testcontainers_modules
+        src/modules/RedisContainer.cpp
+    )
+    add_library(testcontainers::modules ALIAS testcontainers_modules)
+    # Installed/exported as testcontainers::modules, not ::testcontainers_modules.
+    set_target_properties(testcontainers_modules PROPERTIES EXPORT_NAME modules)
+    # PUBLIC: the module headers expose core types (GenericImage, Container).
+    target_link_libraries(testcontainers_modules PUBLIC testcontainers::testcontainers)
+    tc_apply_warnings(testcontainers_modules)
+endif()
+
 # ===== Examples =====
 if(TC_BUILD_EXAMPLES)
     add_executable(tc_smoke examples/smoke.cpp)
@@ -315,6 +335,16 @@ if(BUILD_TESTING)
         target_compile_definitions(tc_unit_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
 
+    if(TC_BUILD_MODULES)
+        # Module rendering-rule tests are pure (no daemon) and run with the
+        # unit suite everywhere it runs; the TUs exist only when the modules
+        # target does.
+        target_sources(tc_unit_tests PRIVATE
+            tests/unit/modules/RedisContainerTest.cpp
+        )
+        target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
+    endif()
+
     # Integration tests — require a reachable Docker daemon (skipped otherwise).
     if(TC_BUILD_INTEGRATION_TESTS)
         add_executable(tc_integration_tests
@@ -372,6 +402,39 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME integration COMMAND tc_integration_tests)
         set_tests_properties(integration PROPERTIES LABELS "integration")
+
+        # Ecosystem-module integration tests — their own executable and ctest
+        # label from day one: the module suites accumulate heavy image pulls
+        # as modules are added, so they must be runnable (and skippable)
+        # apart from the core suite.
+        if(TC_BUILD_MODULES)
+            add_executable(tc_module_tests
+                tests/integration/modules/RedisModuleTest.cpp
+            )
+            target_link_libraries(tc_module_tests PRIVATE
+                testcontainers::modules
+                # RedisModuleTest opens raw TCP sockets with Boost.Asio (allowed
+                # in a test translation unit — it is not a public header).
+                Boost::headers
+                GTest::gtest
+                GTest::gtest_main
+            )
+            # EngineGuard.hpp / RedisPing.hpp live in tests/integration;
+            # tests/support holds helpers shared with the unit tree.
+            target_include_directories(tc_module_tests PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration
+            )
+            tc_apply_warnings(tc_module_tests)
+            if(WIN32)
+                target_link_libraries(tc_module_tests PRIVATE ws2_32 mswsock)
+            endif()
+            if(MSVC)
+                target_compile_definitions(tc_module_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+            endif()
+            add_test(NAME modules COMMAND tc_module_tests)
+            set_tests_properties(modules PROPERTIES LABELS "modules")
+        endif()
     endif()
 endif()
 
@@ -385,6 +448,17 @@ install(TARGETS testcontainers
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+if(TC_BUILD_MODULES)
+    # Same export set as the core target; imported as testcontainers::modules
+    # (EXPORT_NAME above). The module headers ride the include/ rule below.
+    install(TARGETS testcontainers_modules
+        EXPORT testcontainersTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+endif()
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.hpp"

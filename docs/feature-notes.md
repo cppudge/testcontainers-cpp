@@ -413,6 +413,53 @@ including "no credentials", the answer for every anonymous pull under Docker Des
 `credsStore` — are cached process-wide per (helper, registry) for 5 minutes (2026-07-10);
 the config file itself is still re-read per pull.
 
+## Ecosystem modules
+
+**The module layer** (2026-07-12, `testcontainers::modules` — its own library target and
+Conan component) — prebuilt wrappers over `GenericImage`, one per technology: a copyable
+config builder (`modules::RedisContainer`) whose `start()` returns a move-only started
+handle (`modules::StartedRedis`) owning the `Container` and carrying the credentials, host,
+and mapped port by value — resolved once at `start()`, so the connection getters are pure
+(no daemon round-trips; a container restarted by hand gets fresh ephemeral ports — drop to
+`container()` to re-resolve). No client drivers — the handles
+hand out host/port and DSN strings (assembled with `ConnectionString`); the integration
+proof execs the in-container CLI instead. Two escape hatches set the pattern for every
+module: `with_customizer(fn)` queues a callback over the underlying `GenericImage`, run at
+render time AFTER the module's own rendering (what it sets wins — the same precedence idea
+as `with_create_body_patch` over typed fields), and `to_generic()` renders the full config
+into a plain `GenericImage` for when a raw `Container` is wanted. Each module documents the
+small surface it owns (cmd/env keys); everything else passes through untouched. Opt-in by
+include + link: headers under `include/testcontainers/modules/`, target
+`testcontainers::modules` — the one spelling that means the same thing on both consumption
+paths. Around it the paths differ: the plain-CMake install exports
+`testcontainers::testcontainers` (core ONLY) + `testcontainers::modules` and has no
+`::core` alias, while under Conan the root `testcontainers::testcontainers` AGGREGATES
+core+modules (components `testcontainers::core` / `testcontainers::modules` select a
+layer). Portable consumers therefore link `testcontainers::modules` explicitly for the
+module layer — a Conan link line leaning on the root's aggregation breaks against a
+`cmake --install` tree. Module integration tests live in their own `tc_module_tests`
+executable (ctest label `modules`, engine-guarded like the core suite): CI runs them on the
+primary Linux job, and on the Windows job only to prove the guards self-skip; consciously
+NOT in the sanitizer/TLS jobs — the layer is thin composition over already-sanitized core
+paths. One core addition rode along: `GenericImage::with_image("name[:tag]")` re-points a
+configured builder at another image (same parsing as `from_reference`).
+
+**Redis module** (2026-07-12, `modules::RedisContainer` → `modules::StartedRedis`) — pinned
+`redis:7.2`, port 6379 exposed, readiness = in-container `redis-cli ping` via the command
+wait (a log wait races the listener; a raw TCP probe false-positives through Docker
+Desktop's host proxy). `with_password` renders `{"redis-server","--requirepass",pw}` AND
+sets container-level `REDISCLI_AUTH`, so the unchanged probe — and any `redis-cli` the user
+execs — authenticates automatically (honored by redis-cli ≥ 4.0.10; the pin is far past
+it). `with_command_args` appends server arguments after `--requirepass`; argv[0] stays
+`redis-server` so the official entrypoint's protected-mode handling keeps applying. The
+module owns the container command (iff a password or args are set) and the `REDISCLI_AUTH`
+env key — nothing else. `connection_string(db = 0)` renders
+`redis://[:pass@]host:port[/db]`; database selection is client-side in Redis, so there is
+no server-side database setter. Known limits: a config FILE must be the first server
+argument, so a config file combined with `with_password` is unsupported (drop to a
+customizer's `with_cmd`); redis-stack / Sentinel / cluster are out of scope (different
+image families / multi-container topologies).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out
