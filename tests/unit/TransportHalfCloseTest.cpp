@@ -17,11 +17,10 @@
 #include <cstddef>
 #include <future>
 #include <string>
-#include <thread>
 
+#include "PipeServer.hpp"
 #include "TestSupport.hpp"
 #include "docker/Transport.hpp"
-#include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
 
 // Tests in this file (Windows-only; in-process named-pipe servers, no Docker
@@ -34,15 +33,12 @@ namespace {
 
 using namespace std::chrono_literals;
 
-using testcontainers::DockerHost;
+using tcunit::PipeServer;
 using testcontainers::docker::TransportTimeouts;
 
-std::string pipe_name(const char* tag) {
-    return tcunit::pipe_name(std::string("tc-halfclose-") + tag);
-}
-
-DockerHost pipe_host(const char* tag) {
-    return tcunit::pipe_host(std::string("tc-halfclose-") + tag);
+/// The suite's pipe servers, tagged "tc-halfclose-<tag>".
+PipeServer pipe_server(const char* tag, PipeServer::Mode mode, PipeServer::Session session = {}) {
+    return PipeServer(std::string("tc-halfclose-") + tag, mode, std::move(session));
 }
 
 } // namespace
@@ -53,19 +49,10 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
     // message, then observe the zero-length message (a 0-byte read = EOF),
     // then still WRITE a reply the client must be able to read — proving the
     // half-close closed only the client->server direction.
-    const std::string name = pipe_name("msg");
-    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                                           /*default timeout*/ 0, /*security*/ nullptr);
-    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
-
     std::promise<std::string> payload_promise;
     std::promise<DWORD> eof_bytes_promise;
     std::promise<bool> eof_ok_promise;
-    std::thread server([&] {
-        ::ConnectNamedPipe(pipe, nullptr); // blocks until the client connects
-
+    PipeServer server = pipe_server("msg", PipeServer::Mode::Message, [&](HANDLE pipe) {
         char buf[256] = {};
         DWORD n = 0;
         const BOOL read_ok = ::ReadFile(pipe, buf, sizeof(buf), &n, nullptr);
@@ -84,10 +71,11 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
         ::WriteFile(pipe, reply.data(), static_cast<DWORD>(reply.size()), &written, nullptr);
         ::FlushFileBuffers(pipe);
     });
+    ASSERT_TRUE(server.valid()) << "CreateNamedPipeA: " << ::GetLastError();
 
     TransportTimeouts timeouts;
     timeouts.io = 5s; // a broken half-close must fail the test, not hang it
-    const auto transport = testcontainers::docker::connect(pipe_host("msg"), timeouts);
+    const auto transport = testcontainers::docker::connect(server.host(), timeouts);
 
     EXPECT_TRUE(transport->supports_half_close());
 
@@ -116,9 +104,6 @@ TEST(NamedPipeHalfClose, DeliversEofOnMessageModePipe) {
         << "the zero-length message must complete the read successfully";
     EXPECT_EQ(eof_bytes_promise.get_future().get(), 0u)
         << "the EOF signal is a zero-byte read, not data";
-
-    server.join();
-    ::CloseHandle(pipe);
 }
 
 TEST(NamedPipeHalfClose, PeerCloseWriteReadsAsEof) {
@@ -128,29 +113,21 @@ TEST(NamedPipeHalfClose, PeerCloseWriteReadsAsEof) {
     // zero-byte read as EOF (exactly how go-winio's own reader maps it);
     // reporting it as a bare (0 bytes, success) makes every read-to-EOF loop
     // re-issue the read and block forever on the still-open pipe.
-    const std::string name = pipe_name("peer-eof");
-    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                                           /*default timeout*/ 0, /*security*/ nullptr);
-    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
-
-    std::promise<void> done;
-    std::thread server([&] {
-        ::ConnectNamedPipe(pipe, nullptr);
+    PipeServer server = pipe_server("peer-eof", PipeServer::Mode::Message, [](HANDLE pipe) {
         const std::string payload = "output";
         DWORD written = 0;
         ::WriteFile(pipe, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr);
         // go-winio CloseWrite: flush, then the zero-length message. The pipe
-        // stays OPEN — the EOF must come from the message, not a pipe close.
+        // stays OPEN (the server holds it until destruction) — the EOF must
+        // come from the message, not a pipe close.
         ::FlushFileBuffers(pipe);
         ::WriteFile(pipe, "", 0, &written, nullptr);
-        done.get_future().wait(); // hold the pipe open until the client is done
     });
+    ASSERT_TRUE(server.valid()) << "CreateNamedPipeA: " << ::GetLastError();
 
     TransportTimeouts timeouts;
     timeouts.io = 5s; // a regression must fail the test in bounded time, not hang
-    const auto transport = testcontainers::docker::connect(pipe_host("peer-eof"), timeouts);
+    const auto transport = testcontainers::docker::connect(server.host(), timeouts);
 
     boost::system::error_code ec;
     char buf[64] = {};
@@ -166,9 +143,6 @@ TEST(NamedPipeHalfClose, PeerCloseWriteReadsAsEof) {
         << "peer CloseWrite must read as EOF, got: " << ec.message();
 
     transport->close();
-    done.set_value();
-    server.join();
-    ::CloseHandle(pipe);
 }
 
 TEST(NamedPipeHalfClose, ByteModePipeReportsNoHalfClose) {
@@ -176,30 +150,17 @@ TEST(NamedPipeHalfClose, ByteModePipeReportsNoHalfClose) {
     // there is no EOF to deliver. The transport must say so (the exec-stdin
     // guard then throws loudly instead of hanging the in-container reader),
     // and shutdown_send() must be a harmless no-op.
-    const std::string name = pipe_name("byte");
-    const HANDLE pipe = ::CreateNamedPipeA(name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                                           /*default timeout*/ 0, /*security*/ nullptr);
-    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
-
-    std::promise<void> stop;
-    std::thread server([&] {
-        ::ConnectNamedPipe(pipe, nullptr);
-        stop.get_future().wait();
-    });
+    PipeServer server = pipe_server("byte", PipeServer::Mode::Byte);
+    ASSERT_TRUE(server.valid()) << "CreateNamedPipeA: " << ::GetLastError();
 
     TransportTimeouts timeouts;
     timeouts.io = 5s;
-    const auto transport = testcontainers::docker::connect(pipe_host("byte"), timeouts);
+    const auto transport = testcontainers::docker::connect(server.host(), timeouts);
 
     EXPECT_FALSE(transport->supports_half_close());
     transport->shutdown_send(); // must not throw, hang, or write anything
 
     transport->close();
-    stop.set_value();
-    server.join();
-    ::CloseHandle(pipe);
 }
 
 #endif // _WIN32

@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "LoopbackServer.hpp"
 #include "testcontainers/docker/DockerHost.hpp"
 
 namespace tcunit {
@@ -103,14 +104,7 @@ public:
         // stop_ right after its accept returns and exits.
         stop_ = true;
         try {
-            {
-                boost::asio::io_context poke_io;
-                boost::asio::ip::tcp::socket poke(poke_io);
-                boost::system::error_code ignore;
-                poke.connect(boost::asio::ip::tcp::endpoint(
-                                 boost::asio::ip::make_address("127.0.0.1"), port_),
-                             ignore);
-            }
+            wake_pending_accept(port_);
             thread_.join();
             boost::system::error_code ignore;
             acceptor_.close(ignore);

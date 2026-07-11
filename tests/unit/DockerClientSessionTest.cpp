@@ -1,18 +1,16 @@
 #include <gtest/gtest.h>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/write.hpp>
 
-#include <atomic>
 #include <chrono>
-#include <cstdint>
+#include <cstddef>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
 #include "CannedHttpServer.hpp"
+#include "LoopbackServer.hpp"
 #include "TestSupport.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
@@ -125,81 +123,34 @@ TEST(Session, NonGetAlwaysOpensAFreshConnection) {
 
 namespace {
 
-/// One-connection loopback server for the timeout rule: serves one good
-/// keep-alive response, then reads the next request and never answers. The
-/// client's io-deadline expiry eventually drops its transport (closing the
-/// socket), which unblocks our read with an error and lets the thread exit.
-class SilentAfterFirstServer {
-public:
-    explicit SilentAfterFirstServer(std::string first_response)
-        : acceptor_(ioc_,
-                    boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)),
-          port_(acceptor_.local_endpoint().port()),
-          thread_([this, response = std::move(first_response)] {
-              namespace asio = boost::asio;
-              boost::system::error_code ec;
-              asio::ip::tcp::socket socket(ioc_);
-              acceptor_.accept(socket, ec);
-              if (ec || stop_) {
-                  return;
-              }
-              char buf[1024];
-              std::string request;
-              while (request.find("\r\n\r\n") == std::string::npos) {
-                  const std::size_t n = socket.read_some(asio::buffer(buf), ec);
-                  if (ec) {
-                      return;
-                  }
-                  request.append(buf, n);
-              }
-              asio::write(socket, asio::buffer(response), ec);
-              // Swallow whatever comes next and never answer, until the client
-              // gives up and its dropped transport closes the connection.
-              while (!ec) {
-                  socket.read_some(asio::buffer(buf), ec);
-              }
-              boost::system::error_code ignore;
-              socket.close(ignore);
-          }) {}
-
-    ~SilentAfterFirstServer() {
-        // Unblock a never-connected accept (same pattern as CannedHttpServer);
-        // an in-progress connection is unblocked by the client closing it.
-        stop_ = true;
-        try {
-            {
-                boost::asio::io_context poke_io;
-                boost::asio::ip::tcp::socket poke(poke_io);
-                boost::system::error_code ignore;
-                poke.connect(boost::asio::ip::tcp::endpoint(
-                                 boost::asio::ip::make_address("127.0.0.1"), port_),
-                             ignore);
+/// Session for the timeout rule: serve one good keep-alive response, then
+/// swallow whatever comes next and never answer — the client's io-deadline
+/// expiry eventually drops its transport (closing the connection), which
+/// errors our read and lets the server thread exit into its hold.
+tcunit::LoopbackServer::Session silent_after_first(std::string first_response) {
+    return [response = std::move(first_response)](boost::asio::ip::tcp::socket& socket) {
+        namespace asio = boost::asio;
+        boost::system::error_code ec;
+        char buf[1024];
+        std::string request;
+        while (request.find("\r\n\r\n") == std::string::npos) {
+            const std::size_t n = socket.read_some(asio::buffer(buf), ec);
+            if (ec) {
+                return;
             }
-            thread_.join();
-            boost::system::error_code ignore;
-            acceptor_.close(ignore);
-        } catch (...) {
-            // Best-effort: a destructor must never throw (join only throws
-            // when the thread is already unjoinable).
+            request.append(buf, n);
         }
-    }
-
-    testcontainers::DockerHost host() const {
-        return testcontainers::DockerHost::parse("tcp://127.0.0.1:" + std::to_string(port_));
-    }
-
-private:
-    boost::asio::io_context ioc_;
-    boost::asio::ip::tcp::acceptor acceptor_;
-    std::uint16_t port_;
-    std::atomic<bool> stop_{false};
-    std::thread thread_;
-};
+        asio::write(socket, asio::buffer(response), ec);
+        while (!ec) {
+            socket.read_some(asio::buffer(buf), ec);
+        }
+    };
+}
 
 } // namespace
 
 TEST(Session, TimeoutOnReusedConnectionIsNotRetried) {
-    SilentAfterFirstServer server(ok("one"));
+    tcunit::LoopbackServer server(silent_after_first(ok("one")));
     DockerClient client{server.host()};
     testcontainers::docker::TransportTimeouts timeouts;
     timeouts.io = std::chrono::milliseconds(250);

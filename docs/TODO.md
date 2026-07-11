@@ -11,14 +11,12 @@ Batch 7 of the agreed batch order (2026-07-10; batches 1–6 landed — see
 multi-pool support on create, `list_volumes` / volume prune; optionally a Windows
 volume-seeding helper.
 
-Remaining from the 2026-07-11 duplication review (the src-side sweep and the exec internal
-unification landed the same day; the buffered exec now runs over `exec_stream_impl` with
-"any read-end = the peer finished, the inspect settles the outcome" on both paths, and
-compose's `&&` setters keep the rvalue-chaining API but delegate to their `&` twins — the
-handle is move-only, so "single unqualified setters" would have broken
-`auto c = from_yaml(y).with_...` chains):
-- **tests duplication sweep** — merge the 3 loopback-fixture copies in tests/unit (the
-  accept-wake teardown trick lives in 4 places) and share the named-pipe test server.
+The 2026-07-11 duplication review landed in full the same day (with the exec internal
+unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
+finished, the inspect settles the outcome" on both paths; compose's `&&` setters keep the
+rvalue-chaining API but delegate to their `&` twins (the handle is move-only, so "single
+unqualified setters" would have broken `auto c = from_yaml(y).with_...` chains); the unit
+loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
 
 ## Tech debt
 - **CI analysis follow-ups** — `TC_WERROR` + unpinned runner compilers means occasional

@@ -3,8 +3,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,9 +17,9 @@
 #include <boost/asio/write.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "LoopbackServer.hpp"
 #include "docker/DuplexExchange.hpp"
 #include "docker/Transport.hpp"
-#include "testcontainers/docker/DockerHost.hpp"
 #include "testcontainers/docker/Timeouts.hpp"
 
 // Tests in this file (loopback servers + a scripted mock stream, no Docker
@@ -42,72 +40,13 @@ namespace asio = boost::asio;
 using asio::ip::tcp;
 using namespace std::chrono_literals;
 
-using testcontainers::DockerHost;
 using testcontainers::docker::ITransport;
 using testcontainers::docker::TransportTimeouts;
 
-/// A loopback TCP server accepting ONE connection and running `session` on it
-/// (the session owns the socket's fate: close it for a clean end, or return
-/// and let the hold keep it open — the shape of a silent peer — until the
-/// server is destroyed). A `receive_buffer` shrinks the accepted socket's
-/// SO_RCVBUF (set on the acceptor, inherited by the accepted socket) so a
-/// writer facing this peer runs out of in-flight room after a few dozen KB —
-/// kernels otherwise absorb many megabytes on loopback.
-class LoopbackPeer {
-public:
-    using Session = std::function<void(tcp::socket&)>;
-
-    explicit LoopbackPeer(Session session = {}, std::optional<int> receive_buffer = std::nullopt)
-        : acceptor_(make_acceptor(ioc_, receive_buffer)), port_(acceptor_.local_endpoint().port()),
-          thread_([this, session = std::move(session)] {
-              boost::system::error_code ec;
-              tcp::socket socket(ioc_);
-              acceptor_.accept(socket, ec);
-              if (ec) {
-                  return; // destroyed before a client connected
-              }
-              if (session) {
-                  session(socket);
-              }
-              stop_.get_future().wait(); // hold whatever is left open, silently
-              boost::system::error_code ignore;
-              socket.close(ignore);
-          }) {}
-
-    ~LoopbackPeer() {
-        stop_.set_value();
-        // A throwaway connection completes a still-pending accept
-        // deterministically (closing the acceptor cross-thread does not).
-        boost::system::error_code ignore;
-        tcp::socket wake(ioc_);
-        wake.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), port_), ignore);
-        thread_.join();
-    }
-
-    DockerHost host() const {
-        return DockerHost::parse("tcp://127.0.0.1:" + std::to_string(port_));
-    }
-
-private:
-    /// Bind + (optionally) shrink SO_RCVBUF BEFORE listening starts — the
-    /// accepted connection's window derives from the LISTENER's buffer at
-    /// handshake time, and setting it from another thread would race the
-    /// accept loop (concurrent calls on one asio object are undefined).
-    static tcp::acceptor make_acceptor(asio::io_context& ioc, std::optional<int> receive_buffer) {
-        tcp::acceptor acceptor(ioc, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
-        if (receive_buffer) {
-            boost::system::error_code ignore;
-            acceptor.set_option(asio::socket_base::receive_buffer_size(*receive_buffer), ignore);
-        }
-        return acceptor;
-    }
-
-    asio::io_context ioc_;
-    tcp::acceptor acceptor_;
-    std::uint16_t port_;
-    std::promise<void> stop_;
-    std::thread thread_;
-};
+// The shared one-connection loopback fixture; the receive_buffer option
+// exists for this suite (shrink the peer's window so a writer runs out of
+// in-flight room).
+using LoopbackPeer = tcunit::LoopbackServer;
 
 /// Drain `socket` until EOF/reset, returning everything read.
 std::string read_to_end(tcp::socket& socket) {

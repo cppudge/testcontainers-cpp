@@ -17,6 +17,7 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include "CannedHttpServer.hpp"
+#include "LoopbackServer.hpp"
 #include "Reaper.hpp"
 #include "TestEnv.hpp"
 #include "TestSupport.hpp"
@@ -50,13 +51,9 @@ public:
     ~FakeRyuk() {
         stop_ = true;
         // Unblock a parked accept with a throwaway connection instead of
-        // closing the acceptor under the server thread (CannedHttpServer's
-        // teardown idiom).
+        // closing the acceptor under the server thread.
         try {
-            asio::io_context poke_io;
-            tcp::socket poke(poke_io);
-            boost::system::error_code ignore;
-            poke.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), port_), ignore);
+            tcunit::wake_pending_accept(port_);
         } catch (...) {
             // Best-effort: the join below is what matters.
         }

@@ -7,13 +7,12 @@
 #include <boost/asio/write.hpp>
 
 #include <chrono>
-#include <functional>
-#include <future>
+#include <cstddef>
 #include <string>
 #include <thread>
-#include <utility>
 #include <vector>
 
+#include "LoopbackServer.hpp"
 #include "TestSupport.hpp"
 #include "docker/Transport.hpp"
 #include "testcontainers/Error.hpp"
@@ -22,13 +21,7 @@
 #include "testcontainers/docker/Timeouts.hpp"
 
 #if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include "PipeServer.hpp"
 #endif
 
 // Tests in this file (loopback servers, no Docker daemon — the deadline
@@ -56,58 +49,9 @@ using testcontainers::DockerHost;
 using testcontainers::TransportTimeoutError;
 using testcontainers::docker::TransportTimeouts;
 
-/// A loopback TCP server accepting ONE connection, running `session` on it,
-/// then holding the socket open (silently) until the server is destroyed —
-/// the shape a wedged daemon presents: connected, but never sends a byte.
-class LoopbackServer {
-public:
-    using Session = std::function<void(tcp::socket&)>;
-
-    explicit LoopbackServer(Session session = {})
-        : acceptor_(ioc_, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0)),
-          port_(acceptor_.local_endpoint().port()), thread_([this, session = std::move(session)] {
-              boost::system::error_code ec;
-              tcp::socket socket(ioc_);
-              acceptor_.accept(socket, ec);
-              if (ec) {
-                  return; // destroyed before a client connected
-              }
-              if (session) {
-                  session(socket);
-              }
-              stop_.get_future().wait(); // hold the connection open, silently
-              boost::system::error_code ignore;
-              socket.close(ignore);
-          }) {}
-
-    ~LoopbackServer() {
-        stop_.set_value();
-        // If no client ever connected, the thread is still blocked in
-        // accept(). Closing the acceptor from this thread does NOT unblock it
-        // (asio's sync accept waits in the reactor, which a cross-thread
-        // close() never wakes on Linux) — the join below then deadlocked the
-        // whole suite about 1% of the time. Completing the accept with a
-        // throwaway connection is deterministic in every interleaving: the
-        // stop promise is already set, so the thread falls straight through.
-        boost::system::error_code ignore;
-        tcp::socket wake(ioc_);
-        wake.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), port_), ignore);
-        thread_.join();
-    }
-
-    std::uint16_t port() const noexcept { return port_; }
-
-    DockerHost host() const {
-        return DockerHost::parse("tcp://127.0.0.1:" + std::to_string(port_));
-    }
-
-private:
-    asio::io_context ioc_;
-    tcp::acceptor acceptor_;
-    std::uint16_t port_;
-    std::promise<void> stop_;
-    std::thread thread_;
-};
+// The wedged-daemon shape every test here needs — accept, then hold the
+// socket silently — is the shared tcunit::LoopbackServer's default.
+using tcunit::LoopbackServer;
 
 std::chrono::milliseconds elapsed_since(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
@@ -299,23 +243,12 @@ TEST(TransportTimeout, RequestTimesOutMidBody) {
 TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     // A local named-pipe server that accepts the connection and never writes —
     // the primary Windows transport must time the read out, not hang.
-    const std::string pipe_name = tcunit::pipe_name("tc-timeout-test");
-    const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                                           /*default timeout*/ 0, /*security*/ nullptr);
-    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
-
-    std::promise<void> stop;
-    std::thread server([&] {
-        ::ConnectNamedPipe(pipe, nullptr); // blocks until the client connects
-        stop.get_future().wait();          // then hold the pipe open, silently
-    });
+    tcunit::PipeServer server("tc-timeout-test", tcunit::PipeServer::Mode::Byte);
+    ASSERT_TRUE(server.valid()) << "CreateNamedPipeA: " << ::GetLastError();
 
     TransportTimeouts timeouts;
     timeouts.io = 250ms;
-    const DockerHost host = tcunit::pipe_host("tc-timeout-test");
-    const auto transport = testcontainers::docker::connect(host, timeouts);
+    const auto transport = testcontainers::docker::connect(server.host(), timeouts);
 
     char byte = 0;
     boost::system::error_code ec;
@@ -327,9 +260,6 @@ TEST(TransportTimeout, NamedPipeReadTimesOutOnSilentServer) {
     EXPECT_LT(elapsed_since(start), 5s);
 
     transport->close();
-    stop.set_value();
-    server.join();
-    ::CloseHandle(pipe);
 }
 
 TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
@@ -337,20 +267,10 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
     // request is written (fits the pipe buffer), the response never comes, and
     // the typed TransportTimeoutError must survive to the caller on the
     // primary Windows transport.
-    const std::string pipe_name = tcunit::pipe_name("tc-timeout-req-test");
-    const HANDLE pipe = ::CreateNamedPipeA(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                           /*instances*/ 1, /*out buf*/ 4096, /*in buf*/ 4096,
-                                           /*default timeout*/ 0, /*security*/ nullptr);
-    ASSERT_NE(pipe, INVALID_HANDLE_VALUE) << "CreateNamedPipeA: " << ::GetLastError();
+    tcunit::PipeServer server("tc-timeout-req-test", tcunit::PipeServer::Mode::Byte);
+    ASSERT_TRUE(server.valid()) << "CreateNamedPipeA: " << ::GetLastError();
 
-    std::promise<void> stop;
-    std::thread server([&] {
-        ::ConnectNamedPipe(pipe, nullptr); // blocks until the client connects
-        stop.get_future().wait();          // never reads, never answers
-    });
-
-    testcontainers::DockerClient client{tcunit::pipe_host("tc-timeout-req-test")};
+    testcontainers::DockerClient client{server.host()};
     TransportTimeouts timeouts;
     timeouts.io = 250ms;
     client.set_transport_timeouts(timeouts);
@@ -363,10 +283,6 @@ TEST(TransportTimeout, NamedPipeRequestThrowsTypedTimeout) {
         EXPECT_EQ(e.status_code(), std::nullopt) << e.what();
     }
     EXPECT_LT(elapsed_since(start), 5s);
-
-    stop.set_value();
-    server.join();
-    ::CloseHandle(pipe);
 }
 
 #endif // _WIN32
