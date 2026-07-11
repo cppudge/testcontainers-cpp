@@ -369,6 +369,12 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `KafkaContainer::with_network` / `with_network_alias` (advertised internal listener) | ✅ | n/a | ✅ KafkaModule.TwoContainersOverNetwork | n/a |
 | `KafkaContainer::with_env` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, cluster-id validation, starter script, placeholder command, topics label) | n/a |
 | `StartedKafka` getters (`bootstrap_servers` bare host:port, `internal_bootstrap_servers`, `cluster_id`) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.TwoContainersOverNetwork | n/a |
+| `RabbitMQContainer()` defaults + `start()` (ordered log→exec readiness) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls | n/a |
+| `RabbitMQContainer::with_username/password/vhost` | ✅ | n/a | ✅ RabbitMQModule.CustomCredentialsAndVhost | n/a |
+| `RabbitMQContainer::with_definitions[_json]` (+ the seeded account) | ✅ | n/a | ✅ RabbitMQModule.DefinitionsPreloadWithSeededAccount (the zero-users trap in executable form) | n/a |
+| `RabbitMQContainer::with_plugin` | ✅ | n/a | ✅ RabbitMQModule.PluginEnabled | n/a |
+| `RabbitMQContainer::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ✅ customizer: RabbitMQModule.ManagementHttpServes; rest ❌ (unit-tested: RabbitMQModuleConfig.*) | n/a |
+| `StartedRabbitMQ` getters (`amqp_url` no-path-for-"/", `management_url`) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls, RabbitMQModule.CustomCredentialsAndVhost | n/a |
 
 ---
 

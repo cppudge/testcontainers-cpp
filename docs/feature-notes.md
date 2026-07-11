@@ -551,6 +551,41 @@ scope: SASL/TLS listeners, multi-broker quorums, Schema Registry et al. (separat
 modules), confluent images (untested best-effort: the starter script's fallback covers
 the boot only — `with_topic` still execs the apache CLI path).
 
+**RabbitMQ module** (2026-07-12, `modules::RabbitMQContainer` → `modules::StartedRabbitMQ`)
+— pinned `rabbitmq:3.13-management` (the management variant on purpose: its HTTP API is
+the one broker-inspection surface a no-drivers test can hit, and the weight argument is a
+myth — the tag differs from the plain image essentially by `enabled_plugins`, not a fat
+layer). Ports 5672 (AMQP) + 15672 (management) published. Readiness is ORDERED and the
+order is load-bearing (verified live during design): `wait_for::log("Server startup
+complete")` FIRST, one `rabbitmq-diagnostics -q check_port_connectivity` exec second, 1s
+poll — the image has no USER directive, so exec runs as root, and any Erlang CLI in the
+first ~2s of boot creates a root-owned 0400 `.erlang.cookie` that the uid-999 server then
+cannot read: the node dies unrecoverably inside that container. A log wait never execs;
+by the time the diagnostics probe runs, the server long since wrote its own cookie.
+`with_definitions`/`with_definitions_json` answer the second live-verified trap: under
+`load_definitions` RabbitMQ skips ALL default provisioning (a definitions file with no
+"users" entry leaves the broker with ZERO users, guest included — the env vars are ignored
+wholesale). The module therefore imports a DIRECTORY (`/etc/rabbitmq/definitions.d`):
+a synthesized `0010-testcontainers-seed.json` carrying the configured
+user/password/vhost/permissions (plaintext password fields — the importer hashes on load),
+the user's files as `05NN-` (call order; lexicographically after the seed, so a user file
+declaring the same objects wins), plus a `load_definitions` conf drop-in in
+`/etc/rabbitmq/conf.d`. So `with_definitions` composes with the credential setters instead
+of silently disabling them. `with_plugin` enables plugins post-ready via
+`rabbitmq-plugins enable` (additive — overwriting `enabled_plugins` at boot would drop the
+image's own management/prometheus) and renders an order-normalized reuse-visibility label,
+so a changed plugin set creates a fresh container instead of adopting one without the new
+plugins. An empty password fails fast at render — verified live: the account gets created
+but the broker's internal auth backend prohibits blank-password logins outright.
+`amqp_url()` emits NO path for the default vhost "/"
+(an absent path means the client's default vhost in every mainstream client, and unlike
+the spec-equivalent `/%2F` it survives URI parsers that skip percent-decoding); any other
+vhost renders percent-encoded as one segment. `with_username` REPLACES the built-in guest
+account (image contract); remote guest works only by the official image's
+`loopback_users.guest = false` grace — custom users sidestep that on hardened bases. Out
+of scope: clustering, TLS/amqps, MQTT/STOMP typed getters, tc-java's ~30-method
+per-object topology builder (definitions import is RabbitMQ's own bulk mechanism).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

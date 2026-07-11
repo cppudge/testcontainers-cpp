@@ -243,6 +243,7 @@ if(TC_BUILD_MODULES)
         src/modules/MySQLContainer.cpp
         src/modules/MariaDBContainer.cpp
         src/modules/PostgreSQLContainer.cpp
+        src/modules/RabbitMQContainer.cpp
         src/modules/RedisContainer.cpp
     )
     add_library(testcontainers::modules ALIAS testcontainers_modules)
@@ -253,6 +254,10 @@ if(TC_BUILD_MODULES)
     # Internal core helpers (e.g. the Kafka hook's OccurrenceCounter from
     # src/WaitStrategies.hpp).
     target_include_directories(testcontainers_modules PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # RabbitMQContainer.cpp synthesizes its definitions seed with
+    # nlohmann_json (header-only; an implementation detail — nothing leaks
+    # into the public module headers).
+    target_link_libraries(testcontainers_modules PRIVATE nlohmann_json::nlohmann_json)
     tc_apply_warnings(testcontainers_modules)
 endif()
 
@@ -352,6 +357,7 @@ if(BUILD_TESTING)
             tests/unit/modules/KafkaContainerTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/PostgreSQLContainerTest.cpp
+            tests/unit/modules/RabbitMQContainerTest.cpp
             tests/unit/modules/RedisContainerTest.cpp
         )
         target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
@@ -425,6 +431,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/MariaDBModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp
+                tests/integration/modules/RabbitMQModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp
             )
             target_link_libraries(tc_module_tests PRIVATE
