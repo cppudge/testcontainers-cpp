@@ -21,8 +21,10 @@
 #include <sys/select.h> // select() for the tunnel pump (winsock covers Windows)
 #endif
 
+#include "Config.hpp"
 #include "RandomHex.hpp"
 #include "Runner.hpp"
+#include "docker/Auth.hpp" // split_image_ref (sshd.container.image override)
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/Error.hpp"
@@ -38,9 +40,21 @@ using asio::ip::tcp;
 
 /// The sidecar image every Testcontainers implementation shares: alpine +
 /// openssh; its own entrypoint+command set ${USERNAME} (root) to ${PASSWORD}
-/// and run sshd in the foreground with GatewayPorts=yes.
+/// and run sshd in the foreground with GatewayPorts=yes. Overridable via env
+/// TESTCONTAINERS_SSHD_CONTAINER_IMAGE / properties key sshd.container.image
+/// (a name[:tag] reference); the hub prefix applies through GenericImage's
+/// default substitutor either way.
 constexpr const char* kSshdImage = "testcontainers/sshd";
 constexpr const char* kSshdTag = "1.3.0";
+
+std::pair<std::string, std::string> sshd_image_and_tag() {
+    const auto override_ref =
+        config_value("TESTCONTAINERS_SSHD_CONTAINER_IMAGE", "sshd.container.image");
+    if (!override_ref) {
+        return {kSshdImage, kSshdTag};
+    }
+    return docker::split_image_ref(*override_ref);
+}
 
 /// Per-direction buffer cap per forwarded connection. When a buffer is full
 /// the reading side is paused until the writing side drains it (backpressure
@@ -615,10 +629,11 @@ std::unique_ptr<HostPortForwarder::State> HostPortForwarder::make_state(DockerCl
     // password env var is injected — overriding the command would fight the
     // `sh -c` entrypoint.
     const std::string password = random_hex(24);
+    const auto [sshd_image, sshd_tag] = sshd_image_and_tag();
     // NOTE: `testcontainers::tcp` is spelled out — the unqualified name is
     // shadowed by the `asio::ip::tcp` alias in this namespace.
     const ContainerRequest request =
-        GenericImage(kSshdImage, kSshdTag)
+        GenericImage(sshd_image, sshd_tag)
             .with_exposed_port(testcontainers::tcp(22))
             .with_env("PASSWORD", password)
             .with_wait(wait_for::listening_port(testcontainers::tcp(22)))

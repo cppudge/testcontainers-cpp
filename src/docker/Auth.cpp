@@ -410,4 +410,16 @@ std::string substitute_image_name(const std::string& image) {
     return apply_hub_image_prefix(image, prefix.value_or(std::string{}));
 }
 
+std::pair<std::string, std::string> split_image_ref(const std::string& image) {
+    const std::size_t slash = image.rfind('/');
+    const std::size_t colon = image.rfind(':');
+    if (colon == std::string::npos || (slash != std::string::npos && colon < slash)) {
+        return {image, "latest"}; // no tag (a ':' before the last '/' is a registry port)
+    }
+    if (colon + 1 == image.size()) {
+        return {image.substr(0, colon), "latest"}; // "redis:" means the same as "redis"
+    }
+    return {image.substr(0, colon), image.substr(colon + 1)};
+}
+
 } // namespace testcontainers::docker

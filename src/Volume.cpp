@@ -11,6 +11,7 @@
 
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
+#include "docker/Auth.hpp" // substitute_image_name (hub prefix for the helpers)
 
 namespace testcontainers {
 
@@ -169,14 +170,15 @@ void Volume::populate(const std::vector<CopyToContainer>& sources, const std::st
     // there); empty mount_path/helper_image resolve per daemon OS.
     if (client_.server_os() == "windows") {
         populate_windows(client_, name_, sources, mount_path.empty() ? "C:/__tc_seed" : mount_path,
-                         helper_image.empty() ? "mcr.microsoft.com/windows/nanoserver:ltsc2022"
-                                              : helper_image);
+                         docker::substitute_image_name(
+                             helper_image.empty() ? "mcr.microsoft.com/windows/nanoserver:ltsc2022"
+                                                  : helper_image));
         return;
     }
     const std::string mount = mount_path.empty() ? "/__tc_seed" : mount_path;
 
     CreateContainerSpec spec;
-    spec.image = helper_image.empty() ? "alpine:3.20" : helper_image;
+    spec.image = docker::substitute_image_name(helper_image.empty() ? "alpine:3.20" : helper_image);
     // We START the helper before copying. Empirically (see VolumeTest) copying to
     // a created-but-not-started helper also lands in the bind-mounted volume on
     // the dev daemon, but `PUT /containers/{id}/archive` is not guaranteed to

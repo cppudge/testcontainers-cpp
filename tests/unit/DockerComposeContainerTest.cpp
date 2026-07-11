@@ -9,23 +9,26 @@
 #include <utility>
 #include <vector>
 
+#include "TempHome.hpp"
+#include "TestEnv.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/DockerComposeContainer.hpp"
 
 // Tests in this file (daemon-free; nothing here calls start()):
 //   DockerComposeContainer.DefaultProjectName - a fresh handle has a non-empty project name starting with "tc".
 //   DockerComposeContainer.DefaultClientIsLocal - the default client kind is Local (matches rust's default).
-//   DockerComposeContainer.DefaultComposeImage - the default containerised ambassador image is docker:26.1-cli.
+//   DockerComposeContainerFile.DefaultComposeImage - the default containerised client image is docker:26.1-cli (under a temp HOME: the default is configurable, so a real compose.container.image must not bleed in).
 //   DockerComposeContainer.FromYamlYieldsOneFileAndLocal - from_yaml writes one temp compose file and defaults to Local.
 //   DockerComposeContainer.FactoriesSetKindAndFiles - the with_*_client factories set the right kind and carry the files.
 //   DockerComposeContainer.WithClientOverridesKind - with_client overrides the kind on an existing instance.
 //   DockerComposeContainer.WithProjectName - with_project_name overrides the project name.
-//   DockerComposeContainer.WithComposeImage - with_compose_image overrides the ambassador image.
+//   DockerComposeContainer.WithComposeImage - with_compose_image overrides the containerised client image.
 //   DockerComposeContainer.EnvGetters - with_env / with_env_vars reflect in env().
 //   DockerComposeContainer.ProfilesAccumulateInOrder - profiles() is empty by default; with_profile appends in call order (rvalue chaining included).
 //   DockerComposeContainer.ScalesLastValueWinsPerService - scales() is empty by default; with_scale records per service and the last value wins.
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
-//   DockerComposeContainer.AmbassadorGetters - ambassadors() is empty by default with the pinned socat image; with_ambassador accumulates (dedup is start()'s job) and with_ambassador_image overrides the image.
+//   DockerComposeContainerFile.AmbassadorGetters - ambassadors() is empty by default with the pinned socat image (temp HOME: the default is configurable); with_ambassador accumulates (dedup is start()'s job) and with_ambassador_image overrides the image.
+//   DockerComposeContainerFile.UtilityImageDefaultsFromProperties - compose.container.image / socat.container.image supply the construction-time defaults; the with_* setters still win.
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws, on the plain, indexed, instance-list, and log accessors alike.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
@@ -33,6 +36,35 @@
 //   DockerComposeContainer.StopIsIdempotent - stop() before start() and repeated stop() are harmless; the from_yaml temp file is gone after the first stop().
 
 using namespace testcontainers;
+
+namespace {
+
+// The construction-time image defaults read the env AND
+// ~/.testcontainers.properties (compose.container.image /
+// socat.container.image), so tests asserting the built-in defaults — or the
+// properties-driven ones — run on the temp-HOME fixture with the two image
+// env vars pinned to unset (a developer's exported override must not bleed in;
+// env beats the file).
+class DockerComposeContainerFile : public tcunit::TempHomeTest {
+protected:
+    void SetUp() override {
+        tcunit::TempHomeTest::SetUp();
+        compose_image_env_.emplace("TESTCONTAINERS_COMPOSE_CONTAINER_IMAGE", std::nullopt);
+        socat_image_env_.emplace("TESTCONTAINERS_SOCAT_CONTAINER_IMAGE", std::nullopt);
+    }
+
+    void TearDown() override {
+        socat_image_env_.reset();
+        compose_image_env_.reset();
+        tcunit::TempHomeTest::TearDown();
+    }
+
+private:
+    std::optional<tctest::ScopedEnv> compose_image_env_;
+    std::optional<tctest::ScopedEnv> socat_image_env_;
+};
+
+} // namespace
 
 TEST(DockerComposeContainer, DefaultProjectName) {
     const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
@@ -45,9 +77,9 @@ TEST(DockerComposeContainer, DefaultClientIsLocal) {
     EXPECT_EQ(compose.client_kind(), ComposeClientKind::Local);
 }
 
-TEST(DockerComposeContainer, DefaultComposeImage) {
+TEST_F(DockerComposeContainerFile, DefaultComposeImage) {
     const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
-    // Containerised ambassador image is a long-lived docker:cli (compose v2).
+    // The containerised client image is a long-lived docker:cli (compose v2).
     EXPECT_EQ(compose.compose_image(), "docker:26.1-cli");
 }
 
@@ -157,7 +189,7 @@ TEST(DockerComposeContainer, FlagGetters) {
     EXPECT_TRUE(compose.remove_images());
 }
 
-TEST(DockerComposeContainer, AmbassadorGetters) {
+TEST_F(DockerComposeContainerFile, AmbassadorGetters) {
     {
         const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
         EXPECT_TRUE(compose.ambassadors().empty());
@@ -171,6 +203,22 @@ TEST(DockerComposeContainer, AmbassadorGetters) {
     ASSERT_EQ(compose.ambassadors().size(), 2u); // recorded verbatim; start() dedups
     EXPECT_EQ(compose.ambassadors().front().first, "db");
     EXPECT_EQ(compose.ambassadors().front().second, tcp(5432));
+    EXPECT_EQ(compose.ambassador_image(), "alpine/socat:custom");
+}
+
+TEST_F(DockerComposeContainerFile, UtilityImageDefaultsFromProperties) {
+    set_properties("compose.container.image=corp.example/cli:1\n"
+                   "socat.container.image=corp.example/socat:2\n");
+    {
+        const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+        EXPECT_EQ(compose.compose_image(), "corp.example/cli:1");
+        EXPECT_EQ(compose.ambassador_image(), "corp.example/socat:2");
+    }
+    // Explicit setters still beat the configured defaults.
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n")
+                                               .with_compose_image("docker:27-cli")
+                                               .with_ambassador_image("alpine/socat:custom");
+    EXPECT_EQ(compose.compose_image(), "docker:27-cli");
     EXPECT_EQ(compose.ambassador_image(), "alpine/socat:custom");
 }
 

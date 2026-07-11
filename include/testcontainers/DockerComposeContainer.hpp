@@ -125,8 +125,11 @@ public:
     DockerComposeContainer& with_ambassador(std::string service, ContainerPort port) &;
     DockerComposeContainer&& with_ambassador(std::string service, ContainerPort port) &&;
 
-    /// Override the socat relay image used by with_ambassador
-    /// (default: "alpine/socat:1.8.0.3").
+    /// Override the socat relay image used by with_ambassador (default:
+    /// "alpine/socat:1.8.0.3", or the TESTCONTAINERS_SOCAT_CONTAINER_IMAGE
+    /// env var / `socat.container.image` key of ~/.testcontainers.properties
+    /// when set). The hub image-name prefix applies to the resolved value at
+    /// start().
     DockerComposeContainer& with_ambassador_image(std::string image) &;
     DockerComposeContainer&& with_ambassador_image(std::string image) &&;
 
@@ -148,8 +151,11 @@ public:
     DockerComposeContainer& with_project_name(std::string name) &;
     DockerComposeContainer&& with_project_name(std::string name) &&;
 
-    /// Override the containerised client's long-lived cli image
-    /// (default: "docker:26.1-cli"). Ignored by the Local client.
+    /// Override the containerised client's long-lived cli image (default:
+    /// "docker:26.1-cli", or the TESTCONTAINERS_COMPOSE_CONTAINER_IMAGE env
+    /// var / `compose.container.image` key of ~/.testcontainers.properties
+    /// when set). Ignored by the Local client. The hub image-name prefix
+    /// applies to the resolved value at start().
     DockerComposeContainer& with_compose_image(std::string image) &;
     DockerComposeContainer&& with_compose_image(std::string image) &&;
 

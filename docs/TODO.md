@@ -122,13 +122,15 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   {1,true,TRUE,True}. Context TLS materials and the `tcp://`→TLS upgrade (both 2026-07-11)
   apply on the `resolve()` path only — an explicit `DockerHost::parse("tcp://…")` keeps its
   scheme and env-driven TLS. `~/.testcontainers.properties` keys beyond the supported set
-  (`docker.host`, `docker.tls.verify`, `docker.cert.path`, `hub.image.name.prefix`,
-  `ryuk.disabled`, `ryuk.container.image`, `testcontainers.reuse.enable`, since 2026-07-11)
-  are ignored.
+  (see the configuration-switches note in feature-notes.md, since 2026-07-11) are ignored.
   (`src/docker/HostResolve.hpp`, `src/docker/DockerHost.cpp`, `src/Config.cpp`)
-- **Image substitution scope** — the substitutor applies at the `GenericImage` layer only;
-  `GenericBuildableImage` / Compose / raw `DockerClient` calls are not substituted. No
-  time-based ("pull if older than N") policy; `Always` re-pulls on every `start()`.
+- **Image substitution scope** — the hub prefix covers `GenericImage` and every internal
+  utility image (2026-07-11); still out of scope by design: `GenericBuildableImage` output
+  (the daemon resolves `FROM`), compose YAML services (the file is the user's), and raw
+  `DockerClient` calls. The custom `with_image_name_substitutor` remains `GenericImage`-only.
+  Utility-image overrides take `name[:tag]` references — digest (`@sha256:...`) spellings
+  don't fit the sshd sidecar's name:tag builder. No time-based ("pull if older than N")
+  policy; `Always` re-pulls on every `start()`.
 - **Host access residuals** — remote forwards are never cancelled once added; the
   tunnel pump wakes every 100ms even when idle (fine for test traffic).
   (`src/HostPortForwarding.cpp`)

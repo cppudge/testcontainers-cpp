@@ -31,6 +31,7 @@
 //   Reaper.LabelsContainSessionIdWhenEnabled - testcontainers_labels() carries the session-id label (== session_id()) unless Ryuk is disabled.
 //   ReaperFile.PerDaemonMapBootsDedupsAndSkips - against canned daemons + fake Ryuks (under a temp HOME so a real ryuk.container.image/ryuk.disabled cannot bleed in): each daemon boots its own Ryuk exactly once (session filter ACKed there), repeat ensure_started calls add no traffic, register_filter reaches the ENVIRONMENT daemon's Ryuk (once, dedup across repeats, visible via registered_filters), and a Windows-mode daemon is skipped entirely (no create; register_filter a no-op).
 //   Reaper.RyukImageOverrideViaEnv - TESTCONTAINERS_RYUK_CONTAINER_IMAGE replaces the default ryuk image in start_ryuk's create request.
+//   ReaperFile.RyukImageHubPrefixApplied - TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX prefixes the default ryuk image in the create request (registry-qualified overrides would pass through untouched).
 
 using namespace testcontainers::detail;
 
@@ -299,6 +300,24 @@ TEST(Reaper, RyukImageOverrideViaEnv) {
     EXPECT_EQ(endpoint.container_id, "ryuk-under-test");
     ASSERT_EQ(daemon.requests().size(), 4u); // ping, create, start, inspect
     EXPECT_NE(daemon.requests()[1].find("mirror.example.com/testcontainers/ryuk"),
+              std::string::npos)
+        << daemon.requests()[1];
+}
+
+TEST_F(ReaperFile, RyukImageHubPrefixApplied) {
+    // The DEFAULT ryuk reference is a Hub image, so the corporate-mirror
+    // prefix must reach the create request (temp HOME: no real ryuk.container.
+    // image override can interfere; the prefix env var beats the properties).
+    const tctest::ScopedEnv prefix("TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX", "mirror.example.com/");
+    const tctest::ScopedEnv no_override("TESTCONTAINERS_RYUK_CONTAINER_IMAGE", std::nullopt);
+    tcunit::CannedHttpServer daemon(std::vector<std::string>{
+        tcunit::ping_ok(), tcunit::created("ryuk-under-test"), no_content(), inspect_ryuk(45678)});
+    testcontainers::DockerClient client{daemon.host()};
+
+    const RyukEndpoint endpoint = start_ryuk(client);
+    EXPECT_EQ(endpoint.container_id, "ryuk-under-test");
+    ASSERT_EQ(daemon.requests().size(), 4u); // ping, create, start, inspect
+    EXPECT_NE(daemon.requests()[1].find("mirror.example.com/testcontainers/ryuk:0.11.0"),
               std::string::npos)
         << daemon.requests()[1];
 }

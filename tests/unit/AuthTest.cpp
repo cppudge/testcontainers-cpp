@@ -3,6 +3,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -45,6 +46,7 @@
 //   Auth.ApplyHubImagePrefixNotDoubled - an image already starting with the prefix is not prefixed again.
 //   Auth.ApplyHubImagePrefixEmptyIsNoOp - an empty prefix returns the image unchanged.
 //   Auth.ApplyHubImagePrefixNamespacedHub - a namespaced Hub image (library/redis) still gets the prefix.
+//   Auth.SplitImageRefTagAfterLastSlash - split_image_ref splits name:tag on the last ':' after the last '/'; a registry port is not a tag; no tag means "latest".
 
 using testcontainers::RegistryAuth;
 using testcontainers::docker::apply_hub_image_prefix;
@@ -57,6 +59,7 @@ using testcontainers::docker::encode_x_registry_auth;
 using testcontainers::docker::parse_credential_helper_output;
 using testcontainers::docker::resolve_registry;
 using testcontainers::docker::select_credential_helper;
+using testcontainers::docker::split_image_ref;
 
 TEST(Auth, Base64EncodeKnownVectors) {
     // RFC 4648 §10 test vectors.
@@ -393,4 +396,15 @@ TEST(Auth, ApplyHubImagePrefixEmptyIsNoOp) {
 TEST(Auth, ApplyHubImagePrefixNamespacedHub) {
     // "library/redis" has no dot/port in its first segment, so it is a Hub image.
     EXPECT_EQ(apply_hub_image_prefix("library/redis", "mirror.corp/"), "mirror.corp/library/redis");
+}
+
+TEST(Auth, SplitImageRefTagAfterLastSlash) {
+    using P = std::pair<std::string, std::string>;
+    EXPECT_EQ(split_image_ref("redis"), (P{"redis", "latest"}));
+    EXPECT_EQ(split_image_ref("redis:"), (P{"redis", "latest"})); // trailing ':' = no tag
+    EXPECT_EQ(split_image_ref("redis:7.2"), (P{"redis", "7.2"}));
+    EXPECT_EQ(split_image_ref("testcontainers/sshd:1.3.0"), (P{"testcontainers/sshd", "1.3.0"}));
+    // A ':' before the last '/' is a registry port, not a tag separator.
+    EXPECT_EQ(split_image_ref("localhost:5000/sshd"), (P{"localhost:5000/sshd", "latest"}));
+    EXPECT_EQ(split_image_ref("my.reg:5000/ns/sshd:2"), (P{"my.reg:5000/ns/sshd", "2"}));
 }

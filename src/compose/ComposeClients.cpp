@@ -1,6 +1,7 @@
 #include "compose/ComposeClients.hpp"
 
 #include "Process.hpp"
+#include "docker/Auth.hpp" // substitute_image_name (hub prefix for the cli image)
 
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Error.hpp"
@@ -124,7 +125,7 @@ public:
         // Start the long-lived cli container. The in-container default
         // DOCKER_HOST is already this unix socket, so no DOCKER_HOST env needed.
         CreateContainerSpec spec;
-        spec.image = compose_image;
+        spec.image = docker::substitute_image_name(compose_image);
         spec.entrypoint = {"/bin/sh"};
         spec.cmd = {"-c", "sleep infinity"};
         spec.mounts = {Mount::bind("/var/run/docker.sock", "/var/run/docker.sock")};

@@ -3,6 +3,7 @@
 #include "AsioRun.hpp"
 #include "Config.hpp"
 #include "RandomHex.hpp"
+#include "docker/Auth.hpp" // substitute_image_name (hub prefix for the ryuk image)
 #include "docker/Ports.hpp"
 #include "docker/Transport.hpp" // throw_transport_error
 #include "testcontainers/Error.hpp"
@@ -41,8 +42,11 @@ constexpr const char* kRyukImage = "testcontainers/ryuk:0.11.0";
 constexpr const char* kRyukPort = "8080/tcp";
 
 std::string ryuk_image() {
-    return config_value("TESTCONTAINERS_RYUK_CONTAINER_IMAGE", "ryuk.container.image")
-        .value_or(kRyukImage);
+    // The hub prefix applies to the RESOLVED reference: a mirror override that
+    // is already registry-qualified passes through the prefix untouched.
+    return docker::substitute_image_name(
+        config_value("TESTCONTAINERS_RYUK_CONTAINER_IMAGE", "ryuk.container.image")
+            .value_or(kRyukImage));
 }
 
 constexpr const char* kManagedByLabel = "org.testcontainers.managed-by";

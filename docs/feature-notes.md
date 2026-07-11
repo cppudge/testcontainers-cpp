@@ -77,7 +77,12 @@ upgrades; `ssh://` context endpoints remain unsupported.
 **Configuration switches** (`src/Config.*`, 2026-07-11) — library switches read an env var
 first, then a key of `~/.testcontainers.properties` (under HOME, else USERPROFILE; the file is
 read ONCE per process). Keys: `docker.host`, `docker.tls.verify`, `docker.cert.path`,
-`hub.image.name.prefix`, `ryuk.disabled`, `ryuk.container.image`, `testcontainers.reuse.enable`.
+`hub.image.name.prefix`, `ryuk.disabled`, `ryuk.container.image`, `sshd.container.image`,
+`socat.container.image`, `compose.container.image`, `testcontainers.reuse.enable` (env names =
+`TESTCONTAINERS_` + the key upper-cased with dots as underscores, with two exceptions: the
+`docker.*` trio keeps its standard `DOCKER_*` names, and a key already starting
+`testcontainers.` is not doubled — `testcontainers.reuse.enable` ↔ `TESTCONTAINERS_REUSE_ENABLE`,
+exactly like java's mapping).
 A SET (non-empty) env var decides even when it decides "off" — an explicit env `false`
 overrides a file-enabled switch (Java's `getEnvVarOrProperty` parity). Because the file is
 shared with testcontainers-java, parsing mirrors it where the two could diverge: `#`/`!`
@@ -340,8 +345,16 @@ reverse-declaration order.
 **Image pull policy + name substitution** — `ImagePullPolicy::Default` (lazy: pull on a create
 404) / `Always` (pull before every create); substitution via
 `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX` (or the `hub.image.name.prefix` properties key) or a
-custom `with_image_name_substitutor` (replaces the default). Applied at the `GenericImage`
-layer only — not for builds, compose, or raw `DockerClient` calls.
+custom `with_image_name_substitutor` (replaces the default, `GenericImage`-scoped). Since
+2026-07-11 the hub prefix reaches EVERY internal utility image — ryuk, the socat ambassador,
+the containerised compose cli, the volume-populate helpers, plus the sshd host-access sidecar
+(which already had it via `GenericImage`) — each of which also has a configured default
+(env / properties): `ryuk.container.image`,
+`sshd.container.image`, `socat.container.image`, `compose.container.image` (helpers take a
+per-call `helper_image` parameter instead). The prefix only touches Docker-Hub references, so
+a registry-qualified mirror override passes through untouched. Still NOT substituted: images
+built by `GenericBuildableImage` (the daemon resolves `FROM` lines), services in compose YAML
+(the file is the user's), and raw `DockerClient` calls (deliberately verbatim).
 
 **Pull retry** (2026-07-10) — `pull_image` retries an HTTP 5xx reply to `POST /images/create`
 (the daemon relaying transient registry trouble, e.g. its auth-token endpoint answering

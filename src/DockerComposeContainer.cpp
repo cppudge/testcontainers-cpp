@@ -1,10 +1,12 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
+#include "Config.hpp"
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
 #include "WaitStrategies.hpp"
 #include "compose/ComposeClients.hpp"
 #include "compose/ComposeCommand.hpp"
+#include "docker/Auth.hpp" // substitute_image_name (hub prefix for the relay image)
 #include "docker/Ports.hpp"
 
 #include "testcontainers/Error.hpp"
@@ -29,12 +31,26 @@ namespace {
 
 /// The default containerised-client image: a long-lived `docker:cli`
 /// container drives `docker compose` (v2) via exec. (Was `docker/compose:1.29.2`
-/// in the one-shot MVP.)
+/// in the one-shot MVP.) Overridable via env
+/// TESTCONTAINERS_COMPOSE_CONTAINER_IMAGE / properties compose.container.image.
 constexpr const char* kComposeImage = "docker:26.1-cli";
 
 /// The default with_ambassador relay image (ENTRYPOINT ["socat"]; we override
-/// with /bin/sh to run one socat per target).
+/// with /bin/sh to run one socat per target). Overridable via env
+/// TESTCONTAINERS_SOCAT_CONTAINER_IMAGE / properties socat.container.image.
 constexpr const char* kSocatImage = "alpine/socat:1.8.0.3";
+
+/// The configured defaults behind the two with_* setters. Resolved at
+/// construction (not at start) so the getters show what will actually run.
+std::string default_compose_image() {
+    return detail::config_value("TESTCONTAINERS_COMPOSE_CONTAINER_IMAGE", "compose.container.image")
+        .value_or(kComposeImage);
+}
+
+std::string default_ambassador_image() {
+    return detail::config_value("TESTCONTAINERS_SOCAT_CONTAINER_IMAGE", "socat.container.image")
+        .value_or(kSocatImage);
+}
 
 /// The ambassador's own listen ports start here (one per target, ascending) —
 /// they only need to be unique inside the ambassador container.
@@ -204,7 +220,7 @@ void DockerComposeContainer::TempFile::remove() noexcept {
 
 DockerComposeContainer::DockerComposeContainer(std::vector<std::string> files)
     : compose_files_(std::move(files)), project_("tc" + random_hex(8)),
-      compose_image_(kComposeImage), ambassador_image_(kSocatImage) {
+      compose_image_(default_compose_image()), ambassador_image_(default_ambassador_image()) {
     // compose `-f` wants absolute paths; absolutize in place (reusing the moved
     // vector's buffer) rather than building a second vector element by element.
     for (std::string& f : compose_files_) {
@@ -239,8 +255,8 @@ DockerComposeContainer::with_auto_client(std::vector<std::string> compose_files)
 DockerComposeContainer DockerComposeContainer::from_yaml(const std::string& compose_yaml) {
     DockerComposeContainer c;
     c.project_ = "tc" + random_hex(8);
-    c.compose_image_ = kComposeImage;
-    c.ambassador_image_ = kSocatImage;
+    c.compose_image_ = default_compose_image();
+    c.ambassador_image_ = default_ambassador_image();
     c.client_kind_ = ComposeClientKind::Local;
 
     // Write the inline YAML to a temp `.yml` so the (default) local client has a
@@ -552,7 +568,7 @@ void DockerComposeContainer::start() {
         }
 
         CreateContainerSpec spec;
-        spec.image = ambassador_image_;
+        spec.image = docker::substitute_image_name(ambassador_image_);
         // The image's entrypoint IS socat; run a shell instead so one
         // container can host every relay (plus `wait` to stay alive).
         spec.entrypoint = {"/bin/sh"};
