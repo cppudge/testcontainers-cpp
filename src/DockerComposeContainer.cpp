@@ -85,6 +85,7 @@ struct DockerComposeContainer::ActiveStack {
     /// are destroyed in reverse order, after ~ActiveStack ran `down`).
     std::unique_ptr<compose::IComposeClient> client;
     std::string project;
+    std::vector<std::string> profiles;
     std::vector<std::pair<std::string, std::string>> env;
     bool remove_volumes = true;
     bool remove_images = false;
@@ -104,6 +105,7 @@ struct DockerComposeContainer::ActiveStack {
                 try {
                     compose::ComposeDownCommand down;
                     down.project_name = project;
+                    down.profiles = profiles;
                     down.env = env;
                     down.volumes = remove_volumes;
                     down.remove_images = remove_images;
@@ -254,6 +256,14 @@ DockerComposeContainer&& DockerComposeContainer::with_exposed_service(std::strin
     return std::move(with_exposed_service(std::move(service), port));
 }
 
+DockerComposeContainer& DockerComposeContainer::with_profile(std::string profile) & {
+    profiles_.push_back(std::move(profile));
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_profile(std::string profile) && {
+    return std::move(with_profile(std::move(profile)));
+}
+
 DockerComposeContainer& DockerComposeContainer::with_project_name(std::string name) & {
     project_ = std::move(name);
     return *this;
@@ -356,6 +366,7 @@ void DockerComposeContainer::start() {
     stack->client = compose::make_compose_client(to_internal_kind(client_kind_), compose_files_,
                                                  compose_image_);
     stack->project = project_;
+    stack->profiles = profiles_;
     for (const auto& [key, value] : env_) {
         stack->env.emplace_back(key, value);
     }
@@ -375,6 +386,7 @@ void DockerComposeContainer::start() {
     compose::ComposeUpCommand up;
     up.project_name = project_;
     up.files = compose_files_; // the client overrides with its own paths
+    up.profiles = profiles_;
     up.env = stack->env;
     up.wait_timeout_secs = wait_timeout_.count();
     up.build = build_;
@@ -448,7 +460,7 @@ std::string DockerComposeContainer::get_service_container_id(const std::string& 
         }
     }
     throw DockerError("Unknown compose service '" + service + "' in project '" + project_ +
-                      "' (did start() run, and does the service publish a port?)");
+                      "' (did start() run, and is the service's profile active?)");
 }
 
 void DockerComposeContainer::stop() {

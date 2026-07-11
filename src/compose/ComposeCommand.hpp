@@ -18,8 +18,9 @@ namespace testcontainers::compose {
 
 /// A `docker compose ... up -d` invocation, described abstractly.
 struct ComposeUpCommand {
-    std::string project_name;       ///< --project-name <p>
-    std::vector<std::string> files; ///< each emitted as `-f <file>`
+    std::string project_name;          ///< --project-name <p>
+    std::vector<std::string> files;    ///< each emitted as `-f <file>`
+    std::vector<std::string> profiles; ///< each emitted as `--profile <name>`
     /// Environment passed to the child process (local) / exec (containerised).
     /// Not part of the argv — recorded here so the clients can read it.
     std::vector<std::pair<std::string, std::string>> env;
@@ -32,6 +33,13 @@ struct ComposeUpCommand {
 /// A `docker compose ... down` invocation, described abstractly.
 struct ComposeDownCommand {
     std::string project_name; ///< --project-name <p>
+    /// The same profiles as `up`: a file-driven `down` (the local client passes
+    /// `-f`) enumerates its services from the file model filtered by ACTIVE
+    /// profiles, so without them it leaves profile-gated containers behind
+    /// (with an orphan warning). A label-reconstructed `down` (no `-f`, the
+    /// containerised client) removes them regardless — the flags are a
+    /// harmless no-op there.
+    std::vector<std::string> profiles; ///< each emitted as `--profile <name>`
     /// Environment passed to the child process (local) / exec (containerised) —
     /// the same vars as `up`, so a compose file that interpolates env resolves
     /// to the same project definition at teardown. Not part of the argv.
@@ -41,15 +49,16 @@ struct ComposeDownCommand {
 };
 
 /// Build the argv following `docker compose` for an `up` command, i.e. starting
-/// at `--project-name`. Order: `--project-name <p>`, every `-f <file>`, `up`,
-/// `-d`, then the conditional flags (`--build`, `--pull always`, `--wait
+/// at `--project-name`. Order: `--project-name <p>`, every `-f <file>`, every
+/// `--profile <name>` (a top-level compose flag, so before the subcommand),
+/// `up`, `-d`, then the conditional flags (`--build`, `--pull always`, `--wait
 /// --wait-timeout <n>`). The env is NOT part of the argv.
 std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command);
 
 /// Build the argv following `docker compose` for a `down` command: `--project-name
-/// <p>`, `down`, then the conditional `--volumes` / `--rmi all`. We pass `--rmi
-/// all` (compose v2 requires an argument; rust pushes a bare `--rmi`, which is a
-/// v1-ism — we deviate for correctness).
+/// <p>`, every `--profile <name>`, `down`, then the conditional `--volumes` /
+/// `--rmi all`. We pass `--rmi all` (compose v2 requires an argument; rust pushes
+/// a bare `--rmi`, which is a v1-ism — we deviate for correctness).
 std::vector<std::string> build_compose_down_args(const ComposeDownCommand& command);
 
 /// Single-quote a token for /bin/sh, escaping embedded single quotes

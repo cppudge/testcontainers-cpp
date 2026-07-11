@@ -14,6 +14,11 @@ std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command) 
         args.push_back(file);
     }
 
+    for (const std::string& profile : command.profiles) {
+        args.emplace_back("--profile");
+        args.push_back(profile);
+    }
+
     args.emplace_back("up");
     args.emplace_back("-d");
 
@@ -37,6 +42,12 @@ std::vector<std::string> build_compose_down_args(const ComposeDownCommand& comma
     std::vector<std::string> args;
     args.emplace_back("--project-name");
     args.push_back(command.project_name);
+
+    for (const std::string& profile : command.profiles) {
+        args.emplace_back("--profile");
+        args.push_back(profile);
+    }
+
     args.emplace_back("down");
 
     if (command.volumes) {

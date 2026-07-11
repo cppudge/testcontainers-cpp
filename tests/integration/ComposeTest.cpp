@@ -10,6 +10,7 @@
 #include "Reaper.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/DockerComposeContainer.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
 #include "EngineGuard.hpp"
@@ -20,6 +21,7 @@
 //   Compose.ContainerisedClientBringsUpRedis - the CONTAINERISED client (long-lived docker:26.1-cli + exec) brings up redis (pulling docker:26.1-cli on first run), PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.RestartKeepsProjectAlive - start() on an already-started handle tears the OLD run down first, so the fresh containers survive (the shared project label makes teardown-after-up remove the new run's containers).
+//   Compose.ProfileGatesService - a service behind `profiles:` stays down without with_profile and comes up with it; the profile-aware teardown leaves no container behind.
 //   Compose.ProjectFilterRegisteredWithReaper - start() hands the session's Ryuk an extra `label=com.docker.compose.project=<project>` filter (crash-safe reaping of the stack), exactly once across a restart.
 
 using namespace testcontainers;
@@ -34,6 +36,19 @@ constexpr const char* kRedisYaml = R"(services:
     image: redis:7.2
     ports:
       - "6379"
+)";
+
+// kRedisYaml plus a second service gated behind the "extra" profile (same
+// image — already pulled by the other tests, and it stays alive by itself).
+constexpr const char* kProfileYaml = R"(services:
+  redis:
+    image: redis:7.2
+    ports:
+      - "6379"
+  extra:
+    image: redis:7.2
+    profiles:
+      - extra
 )";
 
 // True if the host `docker compose` CLI is available (for the local-client guard).
@@ -136,6 +151,41 @@ TEST_F(Compose, RestartKeepsProjectAlive) {
     ASSERT_NO_THROW(compose.stop());
     const auto leftovers = client.list_containers(
         {{"label", "com.docker.compose.project=" + compose.project_name()}}, /*all*/ true);
+    EXPECT_TRUE(leftovers.empty());
+}
+
+TEST_F(Compose, ProfileGatesService) {
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP(); // host `docker compose` CLI is not available
+    }
+
+    // Without the profile active the gated service must not come up (the
+    // profile-less redis still does — with_exposed_service probes it live).
+    {
+        DockerComposeContainer compose = DockerComposeContainer::from_yaml(kProfileYaml)
+                                             .with_exposed_service("redis", tcp(6379));
+        ASSERT_NO_THROW(compose.start());
+        EXPECT_NO_THROW(compose.get_service_container_id("redis"));
+        EXPECT_THROW(compose.get_service_container_id("extra"), DockerError);
+        ASSERT_NO_THROW(compose.stop());
+    }
+
+    // With it active both services run, and the profile-aware `down` (backed
+    // by the label sweep) leaves nothing behind.
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml(kProfileYaml)
+                                         .with_profile("extra")
+                                         .with_exposed_service("redis", tcp(6379));
+    const std::string project_name = compose.project_name();
+    ASSERT_NO_THROW(compose.start());
+
+    DockerClient client = DockerClient::from_environment();
+    std::string extra_id;
+    ASSERT_NO_THROW(extra_id = compose.get_service_container_id("extra"));
+    EXPECT_TRUE(client.inspect_container(extra_id).running);
+
+    ASSERT_NO_THROW(compose.stop());
+    const auto leftovers = client.list_containers(
+        {{"label", "com.docker.compose.project=" + project_name}}, /*all*/ true);
     EXPECT_TRUE(leftovers.empty());
 }
 

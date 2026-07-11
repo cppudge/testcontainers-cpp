@@ -346,7 +346,11 @@ rule), Containerised (a long-lived `docker:26.1-cli` ambassador with the host so
 bind-mounted), and Auto (probe, then fall back). Readiness = compose v2 `--wait
 --wait-timeout` PLUS a TCP probe per `with_exposed_service` (phases budgeted separately; the
 probe is the Port wait strategy's — since 2026-07-11 each attempt is bounded, so a black-holed
-connect cannot overshoot the wait timeout).
+connect cannot overshoot the wait timeout). Compose profiles: `with_profile` (repeatable,
+2026-07-11) emits top-level `--profile` flags on `up` AND the teardown `down` — a
+profile-less file-driven `down` would skip the gated services, leaving them to the
+label sweep (a label-reconstructed `down` — no `-f`, the containerised client —
+removes them regardless).
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running

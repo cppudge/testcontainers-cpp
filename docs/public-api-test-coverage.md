@@ -241,6 +241,7 @@ row's Windows column is n/a for that reason.
 | `from_yaml(yaml)` | ✅ | n/a | ✅ Compose.LocalClientBringsUpRedis (+ all) | n/a |
 | `with_client(kind)` | ✅ | n/a | ✅ Compose.ContainerisedClientBringsUpRedis (Containerised), Compose.AutoClientBringsUpRedis (Auto), Compose.LocalClientBringsUpRedis (Local default) | n/a |
 | `with_exposed_service` | ✅ | n/a | ✅ Compose.* | n/a |
+| `with_profile` | ✅ | n/a | ✅ Compose.ProfileGatesService (gated service down without / up with; profile-aware teardown) | n/a |
 | `with_project_name` | ✅ | n/a | ❌ | n/a |
 | `with_compose_image` | ✅ | n/a | ❌ (default docker:26.1-cli used) | n/a |
 | `with_env` / `with_env_vars` | ✅ | n/a | ❌ | n/a |

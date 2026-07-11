@@ -13,7 +13,9 @@
 //   ComposeCommand.UpArgsWaitByDefault - with wait on, up args contain --wait --wait-timeout <n>.
 //   ComposeCommand.UpArgsNoWaitWhenDisabled - with wait off, up args contain neither --wait nor --wait-timeout.
 //   ComposeCommand.UpArgsBuildAndPull - --build and --pull always appear only when requested.
+//   ComposeCommand.UpArgsProfilesBeforeUp - each profile is emitted as `--profile <name>` (in order, before `up`); none by default.
 //   ComposeCommand.DownArgsBare - a bare down emits --project-name <p> down and (by default) no extras here.
+//   ComposeCommand.DownArgsProfilesBeforeDown - down carries the same `--profile <name>` flags, before `down`.
 //   ComposeCommand.DownArgsVolumesAndRmi - --volumes and --rmi all appear only when requested (rmi takes the `all` argument).
 //   ComposeCommand.ShellQuoteWrapsInSingleQuotes - plain tokens and ones with spaces/$/" are wrapped in single quotes verbatim.
 //   ComposeCommand.ShellQuoteEscapesEmbeddedSingleQuotes - an embedded ' becomes the '\'' close-escape-reopen sequence.
@@ -121,6 +123,33 @@ TEST(ComposeCommand, UpArgsBuildAndPull) {
     }
 }
 
+TEST(ComposeCommand, UpArgsProfilesBeforeUp) {
+    {
+        ComposeUpCommand up;
+        up.project_name = "proj";
+        const std::vector<std::string> args = build_compose_up_args(up);
+        EXPECT_FALSE(contains(args, "--profile"));
+    }
+    {
+        ComposeUpCommand up;
+        up.project_name = "proj";
+        up.profiles = {"frontend", "debug"};
+        const std::vector<std::string> args = build_compose_up_args(up);
+
+        // `--profile <name>` per profile, in order, and — being a top-level
+        // compose flag — before the `up` subcommand.
+        EXPECT_EQ(count(args, "--profile"), 2);
+        const int fe = index_of(args, "frontend");
+        const int dbg = index_of(args, "debug");
+        ASSERT_GT(fe, 0);
+        ASSERT_GT(dbg, 0);
+        EXPECT_EQ(args[fe - 1], "--profile");
+        EXPECT_EQ(args[dbg - 1], "--profile");
+        EXPECT_LT(fe, dbg);
+        EXPECT_LT(dbg, index_of(args, "up"));
+    }
+}
+
 TEST(ComposeCommand, DownArgsBare) {
     ComposeDownCommand down;
     down.project_name = "proj";
@@ -134,6 +163,20 @@ TEST(ComposeCommand, DownArgsBare) {
     EXPECT_TRUE(contains(args, "down"));
     EXPECT_FALSE(contains(args, "--volumes"));
     EXPECT_FALSE(contains(args, "--rmi"));
+}
+
+TEST(ComposeCommand, DownArgsProfilesBeforeDown) {
+    ComposeDownCommand down;
+    down.project_name = "proj";
+    down.profiles = {"frontend"};
+    const std::vector<std::string> args = build_compose_down_args(down);
+
+    // The teardown must see the same profiles as `up`, or compose skips the
+    // profile-gated services when enumerating what to remove.
+    const int fe = index_of(args, "frontend");
+    ASSERT_GT(fe, 0);
+    EXPECT_EQ(args[fe - 1], "--profile");
+    EXPECT_LT(fe, index_of(args, "down"));
 }
 
 TEST(ComposeCommand, DownArgsVolumesAndRmi) {

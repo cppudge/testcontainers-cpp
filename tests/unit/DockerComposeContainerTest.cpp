@@ -21,6 +21,7 @@
 //   DockerComposeContainer.WithProjectName - with_project_name overrides the project name.
 //   DockerComposeContainer.WithComposeImage - with_compose_image overrides the ambassador image.
 //   DockerComposeContainer.EnvGetters - with_env / with_env_vars reflect in env().
+//   DockerComposeContainer.ProfilesAccumulateInOrder - profiles() is empty by default; with_profile appends in call order (rvalue chaining included).
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
 //   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
@@ -100,6 +101,19 @@ TEST(DockerComposeContainer, EnvGetters) {
     ASSERT_EQ(env.count("BAZ"), 1u);
     EXPECT_EQ(env.at("FOO"), "override"); // with_env_vars merges over with_env
     EXPECT_EQ(env.at("BAZ"), "qux");
+}
+
+TEST(DockerComposeContainer, ProfilesAccumulateInOrder) {
+    {
+        const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+        EXPECT_TRUE(compose.profiles().empty());
+    }
+
+    // Repeatable, order-preserving; the && overload chains on a temporary.
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n")
+                                               .with_profile("frontend")
+                                               .with_profile("debug");
+    EXPECT_EQ(compose.profiles(), (std::vector<std::string>{"frontend", "debug"}));
 }
 
 TEST(DockerComposeContainer, FlagGetters) {

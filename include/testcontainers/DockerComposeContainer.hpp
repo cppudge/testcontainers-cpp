@@ -89,6 +89,15 @@ public:
     DockerComposeContainer& with_exposed_service(std::string service, ContainerPort port) &;
     DockerComposeContainer&& with_exposed_service(std::string service, ContainerPort port) &&;
 
+    /// Activate a compose profile (repeatable). Services carrying `profiles:`
+    /// in the YAML only start when one of their profiles is active; profile-less
+    /// services always start. The profiles stay active for the teardown `down`
+    /// too, so profile-gated services are removed with the rest of the stack.
+    /// Prefer this over setting `COMPOSE_PROFILES` via with_env: when both are
+    /// given they do not merge, and which one wins varies by compose version.
+    DockerComposeContainer& with_profile(std::string profile) &;
+    DockerComposeContainer&& with_profile(std::string profile) &&;
+
     /// Override the compose project name (default: "tc" + random hex).
     ///
     /// The project is registered with the Ryuk reaper at start(): EVERYTHING
@@ -181,6 +190,9 @@ public:
     /// The environment variables set on the compose invocation.
     const std::map<std::string, std::string>& env() const noexcept { return env_; }
 
+    /// The active compose profiles, in the order added.
+    const std::vector<std::string>& profiles() const noexcept { return profiles_; }
+
     /// `--build` flag.
     bool build() const noexcept { return build_; }
     /// `--pull always` flag.
@@ -224,6 +236,7 @@ private:
     std::string compose_image_;              ///< containerised ambassador image
     ComposeClientKind client_kind_ = ComposeClientKind::Local;
     std::map<std::string, std::string> env_; ///< compose env vars
+    std::vector<std::string> profiles_;      ///< active compose profiles
     bool build_ = false;
     bool pull_ = false;
     bool wait_ = true;
