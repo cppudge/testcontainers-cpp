@@ -222,15 +222,22 @@ TEST_F(WindowsWaitStrategies, HealthcheckWaitBecomesHealthy) {
 TEST_F(WindowsWaitStrategies, CommandWaitRetriesUntilFlagAppears) {
     // The Windows twin of the flag-file probe: cmd /c both produces and
     // checks the flag. The exec-based wait sends no stdin, so it runs over
-    // the named-pipe transport unrestricted.
-    Container c = nanoserver()
-                      .with_cmd({"cmd", "/c",
-                                 "ping -n 3 127.0.0.1 >nul & echo done > C:\\tc-ready & "
-                                 "ping -n 300 127.0.0.1 >nul"})
-                      .with_wait(wait_for::successful_command(
-                          {"cmd", "/c", "if exist C:\\tc-ready (exit 0) else (exit 1)"}))
-                      .with_startup_timeout(std::chrono::minutes(2))
-                      .start();
+    // the named-pipe transport unrestricted. The flag's location is
+    // load-bearing, both traps found live: the C:\ root is not
+    // ContainerUser-writable on a process-isolated engine (the CI runner;
+    // the local hyperv engine allows it), and %TEMP% (C:\Windows\TEMP) is
+    // per-session — a file the MAIN process writes there is invisible to
+    // exec sessions. The user profile is both writable and shared.
+    Container c =
+        nanoserver()
+            .with_cmd({"cmd", "/c",
+                       "ping -n 3 127.0.0.1 >nul & echo done > C:\\Users\\ContainerUser\\tc-ready"
+                       " & ping -n 300 127.0.0.1 >nul"})
+            .with_wait(wait_for::successful_command(
+                {"cmd", "/c",
+                 "if exist C:\\Users\\ContainerUser\\tc-ready (exit 0) else (exit 1)"}))
+            .with_startup_timeout(std::chrono::minutes(2))
+            .start();
     EXPECT_TRUE(c.is_running());
 }
 
