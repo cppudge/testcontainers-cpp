@@ -5,11 +5,12 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 7 of the agreed batch order (2026-07-10; batches 1–6 landed — see
-[feature-notes.md](feature-notes.md) and the git history): networks & volumes —
-the optional Windows volume-seeding helper is the remaining item. (IPAM
-multi-pool on create, `list_networks` + `Network::Builder::with_reuse`, and
-`list_volumes` + `prune_volumes` landed 2026-07-11.)
+Batch 8 of the agreed batch order (2026-07-10; batches 1–7 landed — see
+[feature-notes.md](feature-notes.md) and the git history): compose extensions —
+`--profile`, service scaling (`--scale`), per-service log streaming, a socat
+ambassador for unpublished ports. (Batch 7 — IPAM multi-pool, `list_networks` +
+`Network::Builder::with_reuse`, `list_volumes` + `prune_volumes`, and the
+Windows `populate` path — landed in full 2026-07-11.)
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -97,12 +98,15 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   external-prune story: nothing removes them but a label sweep
   (`label=org.testcontainers.reuse.hash`).
 - **Volumes** — no anonymous-volume management (`list_volumes`/`prune_volumes` landed
-  2026-07-11); `populate` spins up a real helper container per call (no batching).
+  2026-07-11); `populate` spins up a real helper container per call (no batching), and its
+  helper keep-alive bounds a seed (~30s Linux `sleep`, ~5min Windows `ping`) — a copy
+  outrunning it can read as success (the attached exec's exit settles to 0 on a vanished
+  helper); lift the budgets if a giant fixture ever bites.
 - **Compose gaps** — `--profile`, service scaling (`--scale`), per-service log streaming, and a
   socat ambassador for UNPUBLISHED ports are all unsupported.
-- **Windows containers** — `Volume::populate` cannot seed a Windows volume — the
-  daemon extracts archives into the container LAYER, bypassing mounts (`docker cp` shares the
-  blind spot); a Windows seeding mechanism would need a stage-then-in-container-copy helper.
+- **Windows containers** — `Volume::populate` seeds Windows volumes via
+  stage-then-in-container-copy (2026-07-11); the default helper is nanoserver:ltsc2022, so
+  process-isolation daemons need a build-matched `helper_image` passed explicitly.
   Remaining Windows-mode test gaps: the http wait (needs a real HTTP server image —
   the PowerShell TcpListener in servercore covers listening_port only), bind mounts, and
   the stopping hook (see public-api-test-coverage.md for the full matrix).

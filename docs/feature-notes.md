@@ -305,7 +305,11 @@ body's env (readable via inspect — by someone who already has daemon access; J
 **Named volumes** — `Volume` RAII handle + builder, session-labeled for Ryuk;
 `populate(sources)` seeds data through a throwaway helper container (`alpine:3.20` by default,
 started before the archive PUT — not every daemon materializes writes on a created-only
-container's mountpoint). `DockerClient::list_volumes(filters)` lists volumes (label/name
+container's mountpoint). On Windows daemons (2026-07-11) populate stages into the CREATED
+(not yet started) helper's layer (Hyper-V isolation rejects archive writes to a running
+container; extraction bypasses mounts either way) and xcopies onto the volume from inside as
+ContainerAdministrator; default helper nanoserver:ltsc2022 — pass a build-matched image on
+process-isolation daemons. `DockerClient::list_volumes(filters)` lists volumes (label/name
 filters; names match by substring) and `prune_volumes(filters)` batch-removes unused ones,
 returning the daemon's deleted-names + reclaimed-bytes report (2026-07-11) — API 1.42+
 daemons prune only ANONYMOUS unused volumes unless the `{"all","true"}` filter is passed.
@@ -373,9 +377,10 @@ fixtures live NEXT to their Linux twins in the same test files. Port publication
 in-container listener (nanoserver suffices); the listening_port wait uses a PowerShell
 TcpListener in build-matched servercore (pre-cached on GitHub windows runners).
 Windows-daemon facts they encode (all verified live): (a) archive uploads (`PUT .../archive`,
-`docker cp` alike) land in the container LAYER and silently bypass volume mounts, so
-`Volume::populate` is Linux-only — seed Windows volumes by exec'ing writes in a container
-that mounts them; (b) whether HNS serves single-label DNS names to process-isolated
+`docker cp` alike) land in the container LAYER and silently bypass volume mounts — which is
+why `Volume::populate` seeds Windows volumes by staging into the created (not yet started)
+helper's layer and
+xcopying from inside (2026-07-11); (b) whether HNS serves single-label DNS names to process-isolated
 containers is environment-dependent (a host DNS-suffix search list breaks it), so the network
 tests assert daemon-side registration (DNSNames/Aliases in inspect) + ICMP to the peer's
 network IP instead of in-container name resolution; (c) nanoserver's volume-dir ACLs require

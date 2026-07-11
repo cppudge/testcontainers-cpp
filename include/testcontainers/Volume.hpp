@@ -107,21 +107,29 @@ public:
     /// Seed data into the volume by copying `sources` into it via a throwaway
     /// helper container that has this volume mounted at `mount_path`.
     ///
-    /// Each source's (absolute) target is rebased under `mount_path` so it lands
-    /// at that path *inside the volume*: e.g. a source targeting "/seed.txt" with
-    /// the default mount path is written to "<mount_path>/seed.txt", i.e.
-    /// "/seed.txt" within the volume. File-source modes are preserved. The helper
+    /// Each source's target (absolute POSIX-style "/x", also toward Windows
+    /// daemons — anything else throws) is rebased so it lands at that path
+    /// *within the volume*: a source targeting "/seed.txt" is readable as
+    /// "seed.txt" right under wherever the volume is mounted next. The helper
     /// carries the testcontainers session labels (so it is reaped if we crash
     /// mid-seed) and is always force-removed afterwards; the volume persists.
     ///
-    /// Linux daemons only. A Windows daemon extracts archive uploads into the
-    /// container's LAYER, not its live filesystem view, so the copy silently
-    /// bypasses the volume mounted in the helper (`docker cp` has the same
-    /// blind spot there). Seed a Windows volume by mounting it and writing
-    /// from inside a container (exec) instead.
-    void populate(const std::vector<CopyToContainer>& sources,
-                  const std::string& mount_path = "/__tc_seed",
-                  const std::string& helper_image = "alpine:3.20") const;
+    /// Empty `mount_path` / `helper_image` resolve per daemon OS: Linux
+    /// "/__tc_seed" + "alpine:3.20", Windows "C:/__tc_seed" +
+    /// "mcr.microsoft.com/windows/nanoserver:ltsc2022".
+    ///
+    /// Linux daemons copy straight through the mount. A Windows daemon
+    /// extracts archive uploads into the container's LAYER, never through
+    /// mounts (`docker cp` shares the blind spot), so there the seed is
+    /// staged into the created (not yet started) helper's layer and an
+    /// in-container `xcopy` (run as ContainerAdministrator — the volume
+    /// directory's ACL denies nanoserver's default user) moves it onto the
+    /// volume; file-source MODES apply on Linux only. Windows helpers run
+    /// under the daemon's default isolation — pass a build-matched
+    /// `helper_image` (e.g. nanoserver:ltsc2025 on a 26100 host) where that
+    /// default is process isolation.
+    void populate(const std::vector<CopyToContainer>& sources, const std::string& mount_path = {},
+                  const std::string& helper_image = {}) const;
 
 private:
     Volume(DockerClient client, std::string name)

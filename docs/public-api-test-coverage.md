@@ -216,15 +216,15 @@ Notes:
 | `name()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove | ✅ WindowsVolumes.CreateInspectRemove |
 | `remove()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove, Volumes.RaiiRemovesOnDrop | ✅ WindowsVolumes.CreateInspectRemove |
 | `inspect()` | ✅ | ✅ | ✅ Volumes.CreateInspectRemove | ✅ WindowsVolumes.CreateInspectRemove |
-| `populate(sources, …)` | ✅ | ❌ (Linux-only; archive upload lands in the layer, bypassing the mount) | ✅ Volumes.PopulateThenReadBack, Volumes.PopulateDirSource | n/a [a] |
+| `populate(sources, …)` | ✅ | ✅ (staged: layer copy + in-container xcopy, 2026-07-11) | ✅ Volumes.PopulateThenReadBack, Volumes.PopulateDirSource | ✅ WindowsVolumes.PopulateSeedsVolume [a] |
 | `builder()` + `create()` | ✅ | ✅ | ✅ Volumes.BuilderSetsNameAndLabels | ❌ |
 | `Builder::with_name` / `with_label` | ✅ | ✅ | ✅ Volumes.BuilderSetsNameAndLabels | ❌ |
 | `Builder::with_driver` / `with_driver_opt` | ✅ | ✅ | ❌ | ❌ |
 
 Notes:
-- [a] WindowsVolumes.DataPersistsAcrossContainers substitutes for populate() on
-  Windows: it seeds the volume by writing from inside a mounted container
-  (`exec`), the mechanism Windows users must use.
+- [a] WindowsVolumes.DataPersistsAcrossContainers pins the underlying mechanism
+  (a write from inside a mounted container goes through the junction and
+  persists) that populate()'s staged Windows path builds on.
 
 ---
 

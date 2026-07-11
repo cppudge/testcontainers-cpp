@@ -24,10 +24,11 @@
 //   Volumes.BuilderSetsNameAndLabels - Volume::builder() name + labels land on the created volume (asserted via inspect()).
 //   Volumes.ListVolumesFindsByLabel - list_volumes with a label filter returns exactly the matching volume (name/labels/mountpoint); the name filter finds it too (substring match daemon-side, exact match post-filtered by the caller).
 //   Volumes.PruneRemovesUnusedByLabel - prune_volumes with a label filter (+ {"all","true"} for named volumes on API 1.42+) reports both unused volumes deleted and they are actually gone (inspect throws NotFoundError).
-//   Volumes.PopulateThenReadBack - populate() seeds a file into the volume via a helper container; a fresh container mounting the volume reads the seeded content back, proving it persisted in the volume.
+//   Volumes.PopulateThenReadBack - populate() seeds a file into the volume via a helper container; a fresh container mounting the volume reads the seeded content back, proving it persisted in the volume; a relative source target throws up front instead of being silently misplaced.
 //   Volumes.PopulateDirSource - populate() with a host_dir source seeds a whole tree into the volume (nested file readable from a fresh container mounting it).
 //   WindowsVolumes.CreateInspectRemove - the same create/inspect/remove round-trip against a Windows daemon (the RAII variant is client-side logic and needs no per-engine mirror).
-//   WindowsVolumes.DataPersistsAcrossContainers - a file written into a mounted volume from inside one container survives that container's removal and is read back by a fresh container mounting the same volume. (No populate() mirror: a Windows daemon extracts archive uploads into the container's layer, bypassing mounts — populate is Linux-only, see Volume.hpp.)
+//   WindowsVolumes.DataPersistsAcrossContainers - a file written into a mounted volume from inside one container survives that container's removal and is read back by a fresh container mounting the same volume (the manual seeding path populate() automates).
+//   WindowsVolumes.PopulateSeedsVolume - populate() on a Windows daemon (stage into the created helper's layer, then in-container xcopy onto the volume) lands a file and a nested tree; a fresh container mounting the volume reads both back.
 
 using namespace testcontainers;
 
@@ -191,6 +192,10 @@ TEST_F(Volumes, PopulateThenReadBack) {
 
     const ExecResult res = c.exec({"cat", "/data/seed.txt"});
     EXPECT_EQ(res.exit_code, 0) << "stdout: " << res.stdout_data << " stderr: " << res.stderr_data;
+
+    // A relative target would be silently misplaced by the rebase — populate
+    // refuses it up front (before any helper is created).
+    EXPECT_THROW(v.populate({CopyToContainer::content("x", "relative.txt")}), DockerError);
     EXPECT_NE(res.stdout_data.find("hello-volume"), std::string::npos)
         << "seeded data did not appear in the volume; stdout: " << res.stdout_data;
 
@@ -238,10 +243,10 @@ TEST_F(WindowsVolumes, CreateInspectRemove) {
 }
 
 TEST_F(WindowsVolumes, DataPersistsAcrossContainers) {
-    // populate() cannot seed a Windows volume (archive uploads land in the
-    // helper's layer, bypassing mounts — a daemon limitation shared by
-    // `docker cp`), so seed the volume the way Windows users must: write from
-    // INSIDE a container that mounts it. The write goes through the mount
+    // The manual seeding path (what populate() automates on Windows): archive
+    // uploads land in the helper's layer, bypassing mounts — a daemon
+    // limitation shared by `docker cp` — so a write into the volume must come
+    // from INSIDE a container that mounts it. The write goes through the mount
     // junction and must outlive the writer. ContainerAdministrator throughout:
     // the volume directory's ACL does not grant nanoserver's default
     // low-privilege ContainerUser access.
@@ -273,4 +278,36 @@ TEST_F(WindowsVolumes, DataPersistsAcrossContainers) {
 
     // RAII tears down the reader before the volume at scope exit (a volume in
     // use cannot be removed).
+}
+
+TEST_F(WindowsVolumes, PopulateSeedsVolume) {
+    // populate() on a Windows daemon stages into the helper's LAYER while it
+    // is still created-not-started, then xcopies onto the volume from inside
+    // (archives never extract through mounts there — see Volume.hpp). The
+    // helper image is build-matched here: a process-isolation daemon rejects
+    // a mismatched build.
+    Volume v = Volume::create();
+    v.populate({CopyToContainer::content("hello-populate-win\n", "/seed.txt"),
+                CopyToContainer::content("nested-win\n", "/sub/dir/nested.txt")},
+               /*mount_path=*/{}, std::string(tcit::kWindowsImage) + ":" + tag_);
+
+    // A fresh container mounting the volume reads both files back — the tree
+    // itself landed on the volume, not the staging directory.
+    Container reader = nanoserver()
+                           .with_cmd(keep_alive_cmd())
+                           .with_user("ContainerAdministrator")
+                           .with_mount(Mount::volume(v.name(), "C:/data"))
+                           .start();
+
+    const ExecResult seed = reader.exec({"cmd", "/c", "type C:\\data\\seed.txt"});
+    EXPECT_EQ(seed.exit_code, 0) << "stdout: " << seed.stdout_data
+                                 << " stderr: " << seed.stderr_data;
+    EXPECT_NE(seed.stdout_data.find("hello-populate-win"), std::string::npos) << seed.stdout_data;
+
+    const ExecResult nested = reader.exec({"cmd", "/c", "type C:\\data\\sub\\dir\\nested.txt"});
+    EXPECT_EQ(nested.exit_code, 0)
+        << "stdout: " << nested.stdout_data << " stderr: " << nested.stderr_data;
+    EXPECT_NE(nested.stdout_data.find("nested-win"), std::string::npos) << nested.stdout_data;
+
+    // RAII tears down the reader before the volume at scope exit.
 }
