@@ -586,6 +586,33 @@ account (image contract); remote guest works only by the official image's
 of scope: clustering, TLS/amqps, MQTT/STOMP typed getters, tc-java's ~30-method
 per-object topology builder (definitions import is RabbitMQ's own bulk mechanism).
 
+**MongoDB module** (2026-07-12, `modules::MongoDBContainer` → `modules::StartedMongoDB`) —
+pinned `mongo:7` (floor `mongo:5.0` — the module execs `mongosh`, argv form only; older
+images ship just the removed legacy shell), and it ALWAYS runs as a single-node replica
+set (`--replSet rs0 --bind_ip_all`): transactions and change streams are why the module
+exists, a standalone rejects both, and the whole cost is a ~1–2s election on top of the
+boot. There is deliberately no standalone mode and no auth surface — MongoDB requires a
+cluster keyfile the moment auth meets a replica set, so MONGO_INITDB_ROOT_* is a
+boot-breaker under --replSet (the header warns customizer users off it; initdb.d scripts
+are equally unsupported — they trigger a temporary double-start whose log line would
+release the wait early). Boot choreography: log wait "Waiting for connections" (exact 4.4+
+casing; appears exactly once since nothing triggers the initdb phase) → listening_port
+(proves the HOST side of the mapping) → a started hook that execs `rs.initiate({_id, 
+members: [{_id: 0, host: '127.0.0.1:27017'}]})` (deterministic self-check member address;
+AlreadyInitialized tolerated for pre-initiated volumes and reuse) and then polls
+`db.hello().isWritablePrimary` in-shell (200×100ms ≈ 20s cap) — the PRIMARY wait cannot be
+a wait strategy because waits run before hooks, i.e. before rs.initiate exists. THE DSN
+decision: `connection_string()` emits
+`mongodb://host:port/<db>?directConnection=true` and NEVER `replicaSet=` —
+direct mode pins single-server behavior in every spec-compliant driver instead of relying
+on per-driver legacy defaults (the "works in tc-java, ServerSelectionTimeoutError in
+PyMongo" classic), while a direct connection to a PRIMARY fully supports sessions,
+transactions, and change streams; the database segment is always present, empty name
+included (`/?directConnection=true`), because strict URI parsers reject options without
+the slash. `mongosh(js)` on the Started handle seeds and asserts without a C++ driver.
+Reuse-adopt skips the hook — correct: the RS config persists in the data directory. Out of
+scope: auth/keyfile choreography, initdb.d scripts, multi-node sets, sharding.
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

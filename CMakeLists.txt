@@ -239,6 +239,7 @@ if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
         src/modules/KafkaDetail.cpp
         src/modules/KafkaContainer.cpp
+        src/modules/MongoDBContainer.cpp
         src/modules/MySqlFamily.cpp
         src/modules/MySQLContainer.cpp
         src/modules/MariaDBContainer.cpp
@@ -355,6 +356,7 @@ if(BUILD_TESTING)
         # target does.
         target_sources(tc_unit_tests PRIVATE
             tests/unit/modules/KafkaContainerTest.cpp
+            tests/unit/modules/MongoDBContainerTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/PostgreSQLContainerTest.cpp
             tests/unit/modules/RabbitMQContainerTest.cpp
@@ -429,6 +431,7 @@ if(BUILD_TESTING)
             add_executable(tc_module_tests
                 tests/integration/modules/KafkaModuleTest.cpp
                 tests/integration/modules/MariaDBModuleTest.cpp
+                tests/integration/modules/MongoDBModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp
                 tests/integration/modules/RabbitMQModuleTest.cpp

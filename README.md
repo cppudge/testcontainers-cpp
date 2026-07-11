@@ -177,9 +177,10 @@ the Rust reference also makes), with hot polling loops opting into scoped keep-a
   to the test host) and `DockerComposeContainer` (local CLI / containerised / auto client modes).
 - **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a mirror
   integration suite (build / volumes / networks / exec / copy / ports / waits / lifecycle).
-- **Modules** — prebuilt technology wrappers over `GenericImage` in `testcontainers::modules`
-  (Redis today; PostgreSQL, MySQL/MariaDB, Kafka, RabbitMQ, MongoDB in progress): pinned image +
-  correct readiness out of the box, typed connection getters, DSN strings instead of client drivers.
+- **Modules** — prebuilt technology wrappers over `GenericImage` in `testcontainers::modules`:
+  Redis, PostgreSQL, MySQL, MariaDB, Kafka (single-node KRaft), RabbitMQ, and MongoDB
+  (single-node replica set — transactions work). Pinned image + correct readiness out of the box,
+  typed connection getters, DSN strings instead of client drivers.
 
 Per-feature reference with known limits: [`docs/feature-notes.md`](docs/feature-notes.md).
 Public-API coverage in each engine mode: [`docs/public-api-test-coverage.md`](docs/public-api-test-coverage.md).

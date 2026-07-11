@@ -375,6 +375,11 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `RabbitMQContainer::with_plugin` | ✅ | n/a | ✅ RabbitMQModule.PluginEnabled | n/a |
 | `RabbitMQContainer::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ✅ customizer: RabbitMQModule.ManagementHttpServes; rest ❌ (unit-tested: RabbitMQModuleConfig.*) | n/a |
 | `StartedRabbitMQ` getters (`amqp_url` no-path-for-"/", `management_url`) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls, RabbitMQModule.CustomCredentialsAndVhost | n/a |
+| `MongoDBContainer()` defaults + `start()` (RS initiate + PRIMARY wait) | ✅ | n/a | ✅ MongoDBModule.BecomesWritablePrimary, MongoDBModule.InsertFindRoundTrip | n/a |
+| `MongoDBContainer::with_replica_set_name` | ✅ | n/a | ✅ MongoDBModule.CustomReplicaSetName | n/a |
+| `MongoDBContainer::with_database` + `StartedMongoDB::connection_string` (directConnection, mandatory '/') | ✅ | n/a | ✅ MongoDBModule.ConnectionStringShape | n/a |
+| `StartedMongoDB::mongosh` (transactions payoff) | ✅ | n/a | ✅ MongoDBModule.TransactionCommitAndAbort (+ every MongoDBModule test) | n/a |
+| `MongoDBContainer::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MongoDBModuleConfig.* — cmd/waits/hook shape, rs-name validation) | n/a |
 
 ---
 

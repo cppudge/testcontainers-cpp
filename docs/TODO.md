@@ -5,17 +5,17 @@ documented in [feature-notes.md](feature-notes.md); an item leaves this list
 when it lands (adding a short note there if it needs one).
 
 ## Next candidates
-Batch 10 — the last of the agreed batch order (2026-07-10; batches 1–9 landed —
-see [feature-notes.md](feature-notes.md) and the git history): Tier-4 ecosystem
-modules for the flagship 0.2.0. Both foundations landed 2026-07-11 (the
-exec-based wait strategy `wait_for::successful_command`; the `host()` override +
-`ConnectionString`). The module layer itself started landing 2026-07-12: the
-pattern (copyable config builder → move-only Started handle; `with_customizer`
-+ `to_generic()` escape hatches), the `testcontainers::modules` target / Conan
-component / `tc_module_tests` suite, and the **Redis**, **PostgreSQL**,
-**MySQL**, **MariaDB**, **Kafka** and **RabbitMQ** modules. Agreed 0.2.0
-module set (2026-07-12, one design doc each — decisions recorded in
-feature-notes as they land): remaining **MongoDB**.
+Batch 10 — the last of the agreed batch order — **landed in full 2026-07-12**:
+the two foundations (2026-07-11: `wait_for::successful_command`; the `host()`
+override + `ConnectionString`) and the whole Tier-4 module layer — the pattern
+(copyable config builder → move-only Started handle with start()-resolved
+getters; `with_customizer` + `to_generic()` escape hatches), the
+`testcontainers::modules` target / Conan component / `tc_module_tests` suite,
+and all seven 0.2.0 modules: **Redis**, **PostgreSQL**, **MySQL**, **MariaDB**,
+**Kafka**, **RabbitMQ**, **MongoDB** (decisions and per-module traps recorded
+in [feature-notes.md](feature-notes.md)). Next: the 0.2.0 release pass —
+version bump, README refresh, release notes, and the CCI version-add PR once
+conan-io/conan-center-index#30600 merges.
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer
@@ -155,9 +155,12 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   feature-notes.md).
   Parameters to build it with: endpoint-keyed shared pool behind a `shared_ptr`, ~90s idle TTL,
   4–8 idle per endpoint, retry-once-only-on-unsent, streaming excluded.
-- **Ecosystem modules (Tier 4)** — IN PROGRESS (see Next candidates): the layer + Redis
-  landed 2026-07-12; PostgreSQL / MySQL+MariaDB / Kafka / RabbitMQ / MongoDB follow. The
-  original exploration doc lived in docs/05, removed at v0.1.0 (git history).
+- **Ecosystem modules beyond the 0.2.0 seven** — the Tier-4 layer and all seven agreed
+  modules landed 2026-07-12 (see Next candidates). Natural follow-ups if demand shows:
+  Schema Registry / Kafka Connect (consuming `internal_bootstrap_servers()`), a
+  ConfluentKafkaContainer twin, redis-stack, MongoDB auth (`with_auth` wiring the full
+  keyfile choreography), multi-node topologies. The original exploration doc lived in
+  docs/05, removed at v0.1.0 (git history).
 
 > Implemented milestones (container config, wait strategies, exec, networks, volumes, compose,
 > reuse, hooks, Ryuk, auth, build-from-Dockerfile, …) are documented with their known limits in
