@@ -12,10 +12,10 @@ exec-based wait strategy `wait_for::successful_command`; the `host()` override +
 `ConnectionString`). The module layer itself started landing 2026-07-12: the
 pattern (copyable config builder → move-only Started handle; `with_customizer`
 + `to_generic()` escape hatches), the `testcontainers::modules` target / Conan
-component / `tc_module_tests` suite, and the **Redis** module. Agreed 0.2.0
-module set (2026-07-12, one design doc each — decisions recorded there and in
-feature-notes as they land): **PostgreSQL → MySQL + MariaDB → Kafka →
-RabbitMQ → MongoDB**, in that order.
+component / `tc_module_tests` suite, and the **Redis** and **PostgreSQL**
+modules. Agreed 0.2.0 module set (2026-07-12, one design doc each — decisions
+recorded in feature-notes as they land): remaining **MySQL + MariaDB →
+Kafka → RabbitMQ → MongoDB**, in that order.
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer

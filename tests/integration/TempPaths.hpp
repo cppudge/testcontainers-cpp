@@ -18,11 +18,13 @@ namespace tcit {
 /// across concurrently running test processes.
 inline std::string random_suffix() { return testcontainers::detail::random_hex(8); }
 
-/// A self-cleaning temp file holding `content`.
+/// A self-cleaning temp file holding `content`. `suffix` lands after the
+/// random part — for consumers that dispatch on the file extension.
 class TempFile {
 public:
-    explicit TempFile(const std::string& content, const std::string& prefix = "tc_file_") {
-        path_ = std::filesystem::temp_directory_path() / (prefix + random_suffix());
+    explicit TempFile(const std::string& content, const std::string& prefix = "tc_file_",
+                      const std::string& suffix = "") {
+        path_ = std::filesystem::temp_directory_path() / (prefix + random_suffix() + suffix);
         std::ofstream(path_, std::ios::binary) << content;
     }
     ~TempFile() {

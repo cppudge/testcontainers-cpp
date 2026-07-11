@@ -460,6 +460,32 @@ argument, so a config file combined with `with_password` is unsupported (drop to
 customizer's `with_cmd`); redis-stack / Sentinel / cluster are out of scope (different
 image families / multi-container topologies).
 
+**PostgreSQL module** (2026-07-12, `modules::PostgreSQLContainer` →
+`modules::StartedPostgreSQL`) — pinned `postgres:16-alpine` (C locale; the header points
+collation-sensitive tests at the Debian image / POSTGRES_INITDB_ARGS), credentials
+test/test/test, readiness = exec `pg_isready -h 127.0.0.1 -p 5432 -U <user> -d <db>`. The
+TCP-forced probe is the load-bearing choice: the image's first boot runs a TEMPORARY
+unix-socket-only server (initdb + /docker-entrypoint-initdb.d), shuts it down, then starts
+the real TCP server — a socket probe or the "ready to accept connections" log line
+(printed by BOTH servers) reads ready inside that window, the TCP probe cannot, and TCP
+readiness additionally proves every init script finished. The credential-env trio is
+module-owned: appended last so it wins over raw `with_env` duplicates, and an empty
+password fails fast at render time unless `POSTGRES_HOST_AUTH_METHOD=trust` was set (the
+image's own failure mode is a log line plus the full wait timeout). `with_init_script`
+(host file or in-memory) targets /docker-entrypoint-initdb.d with a zero-padded
+registration-index prefix (registration order beats the entrypoint's C-collation name
+order), whitelists the extensions the entrypoint executes (.sql, .sql.gz, .sql.xz,
+.sql.zst, .sh — anything else throws instead of being silently skipped), ships `.sh`
+executable (a non-executable .sh is *sourced* into the entrypoint's shell, where a stray
+`exit` kills the boot), and is not re-run on a reuse-adopt (data persistence is the point;
+editing a script changes the reuse hash). `with_config_option` renders `postgres -c k=v`;
+`with_wait` REPLACES the default probe (a customizer-added wait runs in addition).
+`StartedPostgreSQL` adds `conninfo()` (libpq keyword/value with its quoting rules; the
+password keyword omitted when empty) beside the URI `connection_string(scheme)`, and
+`exec_sql()` through the in-container psql (`-X -tA`, local-socket trust — no password).
+Curated pass-throughs (env / label / network / alias / reuse / timeout / attempts) forward
+to the embedded builder; everything else rides `with_customizer`.
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

@@ -237,6 +237,7 @@ endif()
 # connection getters. Consumed as testcontainers::modules.
 if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
+        src/modules/PostgreSQLContainer.cpp
         src/modules/RedisContainer.cpp
     )
     add_library(testcontainers::modules ALIAS testcontainers_modules)
@@ -340,6 +341,7 @@ if(BUILD_TESTING)
         # unit suite everywhere it runs; the TUs exist only when the modules
         # target does.
         target_sources(tc_unit_tests PRIVATE
+            tests/unit/modules/PostgreSQLContainerTest.cpp
             tests/unit/modules/RedisContainerTest.cpp
         )
         target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
@@ -409,19 +411,23 @@ if(BUILD_TESTING)
         # apart from the core suite.
         if(TC_BUILD_MODULES)
             add_executable(tc_module_tests
+                tests/integration/modules/PostgreSQLModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp
             )
             target_link_libraries(tc_module_tests PRIVATE
                 testcontainers::modules
-                # RedisModuleTest opens raw TCP sockets with Boost.Asio (allowed
-                # in a test translation unit — it is not a public header).
+                # The module tests open raw TCP sockets with Boost.Asio for
+                # protocol-level reachability probes (allowed in a test
+                # translation unit — it is not a public header).
                 Boost::headers
                 GTest::gtest
                 GTest::gtest_main
             )
-            # EngineGuard.hpp / RedisPing.hpp live in tests/integration;
-            # tests/support holds helpers shared with the unit tree.
+            # EngineGuard.hpp / RedisPing.hpp / TempPaths.hpp live in
+            # tests/integration; tests/support holds helpers shared with the
+            # unit tree; TempPaths pulls the internal src/RandomHex.hpp.
             target_include_directories(tc_module_tests PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration
             )

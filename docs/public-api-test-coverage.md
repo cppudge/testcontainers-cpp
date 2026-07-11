@@ -345,6 +345,16 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `RedisContainer::to_generic` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.* — `start()` goes through it) | n/a |
 | `StartedRedis::host` / `port` / `connection_string` / `password` | ✅ | n/a | ✅ RedisModule.StartsServesAndBuildsDsn, RedisModule.PasswordIsEnforcedAndWired | n/a |
 | `StartedRedis::container` (exec escape hatch) | ✅ | n/a | ✅ RedisModule.ExecSetGetRoundTrip | n/a |
+| `PostgreSQLContainer()` defaults + `start()` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.TcpProbeSurvivesInitWindow | n/a |
+| `PostgreSQLContainer::with_username` / `with_password` / `with_database` | ✅ | n/a | ✅ PostgreSQLModule.CustomCredentialsDsnAndConninfo | n/a |
+| `PostgreSQLContainer::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ PostgreSQLModule.InitScriptFromHostFile, PostgreSQLModule.InitScriptsRunInRegistrationOrder | n/a |
+| `PostgreSQLContainer::with_config_option` | ✅ | n/a | ✅ PostgreSQLModule.ConfigOptionsReachServer | n/a |
+| `PostgreSQLContainer::with_reuse` | ✅ | n/a | ✅ PostgreSQLModule.ReuseAdoptsSeededServer | n/a |
+| `PostgreSQLContainer::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: PostgreSQLModuleConfig.CustomWaitReplacesDefaultProbe, PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
+| `PostgreSQLContainer` other pass-throughs (label/network/alias/timeout/attempts) | ✅ | n/a | ❌ (thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
+| `PostgreSQLContainer::with_customizer` / `to_generic` | ✅ | n/a | ✅ PostgreSQLModule.CustomizerReachesCreateBody | n/a |
+| `StartedPostgreSQL::host` / `port` / `connection_string` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
+| `StartedPostgreSQL::exec_sql` | ✅ | n/a | ✅ every PostgreSQLModule test | n/a |
 
 ---
 
