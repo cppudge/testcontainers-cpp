@@ -22,8 +22,9 @@
 //   DockerComposeContainer.WithComposeImage - with_compose_image overrides the ambassador image.
 //   DockerComposeContainer.EnvGetters - with_env / with_env_vars reflect in env().
 //   DockerComposeContainer.ProfilesAccumulateInOrder - profiles() is empty by default; with_profile appends in call order (rvalue chaining included).
+//   DockerComposeContainer.ScalesLastValueWinsPerService - scales() is empty by default; with_scale records per service and the last value wins.
 //   DockerComposeContainer.FlagGetters - with_build/pull/wait/wait_timeout/remove_volumes/remove_images reflect in the getters.
-//   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws.
+//   DockerComposeContainer.UnknownServiceThrows - querying a service before start() (none discovered) throws, on the plain, indexed, and instance-list accessors alike.
 //   DockerComposeContainer.MoveConstructTransfersTempFileOwnership - after a move the source's destructor leaves the from_yaml temp file alone; only the target's destructor deletes it.
 //   DockerComposeContainer.MoveAssignTransfersState - move-assignment carries config over and the moved-from handle tears nothing down.
 //   DockerComposeContainer.MoveAssignReleasesTargetsOldTempFile - move-assigning over a handle releases (deletes) the temp file the target owned before.
@@ -116,6 +117,22 @@ TEST(DockerComposeContainer, ProfilesAccumulateInOrder) {
     EXPECT_EQ(compose.profiles(), (std::vector<std::string>{"frontend", "debug"}));
 }
 
+TEST(DockerComposeContainer, ScalesLastValueWinsPerService) {
+    {
+        const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
+        EXPECT_TRUE(compose.scales().empty());
+    }
+
+    const DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n")
+                                               .with_scale("redis", 2)
+                                               .with_scale("worker", 3)
+                                               .with_scale("redis", 5); // last wins
+    const auto& scales = compose.scales();
+    ASSERT_EQ(scales.size(), 2u);
+    EXPECT_EQ(scales.at("redis"), 5);
+    EXPECT_EQ(scales.at("worker"), 3);
+}
+
 TEST(DockerComposeContainer, FlagGetters) {
     DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
 
@@ -142,8 +159,10 @@ TEST(DockerComposeContainer, UnknownServiceThrows) {
     DockerComposeContainer compose = DockerComposeContainer::from_yaml("services: {}\n");
     compose.with_exposed_service("redis", tcp(6379));
     // No start() ran, so nothing is discovered; looking the service up must throw
-    // (purely a map lookup — no daemon involved).
+    // (purely a map lookup — no daemon involved), whichever accessor is used.
     EXPECT_ANY_THROW(compose.get_service_container_id("redis"));
+    EXPECT_ANY_THROW(compose.get_service_container_id("redis", 2));
+    EXPECT_ANY_THROW(compose.service_instances("redis"));
 }
 
 TEST(DockerComposeContainer, MoveConstructTransfersTempFileOwnership) {

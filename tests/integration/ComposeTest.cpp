@@ -22,6 +22,7 @@
 //   Compose.AutoClientBringsUpRedis - the AUTO client (local first, else containerised) brings up redis, PING/PONG succeeds, and teardown leaves nothing.
 //   Compose.RestartKeepsProjectAlive - start() on an already-started handle tears the OLD run down first, so the fresh containers survive (the shared project label makes teardown-after-up remove the new run's containers).
 //   Compose.ProfileGatesService - a service behind `profiles:` stays down without with_profile and comes up with it; the profile-aware teardown leaves no container behind.
+//   Compose.ScaleRunsTwoInstances - with_scale("redis", 2) runs two discoverable instances with distinct containers and distinct ephemeral host ports (both answer PING); the plain accessor picks instance 1; an out-of-range instance throws.
 //   Compose.ProjectFilterRegisteredWithReaper - start() hands the session's Ryuk an extra `label=com.docker.compose.project=<project>` filter (crash-safe reaping of the stack), exactly once across a restart.
 
 using namespace testcontainers;
@@ -184,6 +185,47 @@ TEST_F(Compose, ProfileGatesService) {
     EXPECT_TRUE(client.inspect_container(extra_id).running);
 
     ASSERT_NO_THROW(compose.stop());
+    const auto leftovers = client.list_containers(
+        {{"label", "com.docker.compose.project=" + project_name}}, /*all*/ true);
+    EXPECT_TRUE(leftovers.empty());
+}
+
+TEST_F(Compose, ScaleRunsTwoInstances) {
+    if (!host_docker_compose_available()) {
+        GTEST_SKIP(); // host `docker compose` CLI is not available
+    }
+    // kRedisYaml publishes the container port alone ("6379"), so each instance
+    // gets its own ephemeral host port — the only publishing mode --scale can
+    // multiply. Probe both instances explicitly.
+    DockerComposeContainer compose = DockerComposeContainer::from_yaml(kRedisYaml)
+                                         .with_scale("redis", 2)
+                                         .with_exposed_service("redis", 1, tcp(6379))
+                                         .with_exposed_service("redis", 2, tcp(6379));
+    const std::string project_name = compose.project_name();
+    ASSERT_NO_THROW(compose.start());
+
+    EXPECT_EQ(compose.service_instances("redis"), (std::vector<int>{1, 2}));
+    const std::string id1 = compose.get_service_container_id("redis", 1);
+    const std::string id2 = compose.get_service_container_id("redis", 2);
+    EXPECT_NE(id1, id2);
+    EXPECT_EQ(compose.get_service_container_id("redis"), id1); // plain = instance 1
+
+    // Both instances are live on their own ports (bound simultaneously, so the
+    // ephemeral host ports must differ).
+    const std::uint16_t port1 = compose.get_service_port("redis", 1, tcp(6379));
+    const std::uint16_t port2 = compose.get_service_port("redis", 2, tcp(6379));
+    EXPECT_NE(port1, port2);
+    const std::string host = compose.get_service_host("redis");
+    std::string reply;
+    ASSERT_NO_THROW(reply = redis_ping(host, port1));
+    EXPECT_NE(reply.find("PONG"), std::string::npos);
+    ASSERT_NO_THROW(reply = redis_ping(host, port2));
+    EXPECT_NE(reply.find("PONG"), std::string::npos);
+
+    EXPECT_THROW(compose.get_service_container_id("redis", 3), DockerError);
+
+    ASSERT_NO_THROW(compose.stop());
+    DockerClient client = DockerClient::from_environment();
     const auto leftovers = client.list_containers(
         {{"label", "com.docker.compose.project=" + project_name}}, /*all*/ true);
     EXPECT_TRUE(leftovers.empty());

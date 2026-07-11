@@ -11,6 +11,7 @@
 #include "testcontainers/docker/ContainerSpec.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,7 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace testcontainers {
 
@@ -31,6 +33,7 @@ constexpr const char* kComposeImage = "docker:26.1-cli";
 
 constexpr const char* kComposeProjectLabel = "com.docker.compose.project";
 constexpr const char* kComposeServiceLabel = "com.docker.compose.service";
+constexpr const char* kComposeContainerNumberLabel = "com.docker.compose.container-number";
 
 using detail::random_hex;
 
@@ -43,6 +46,14 @@ std::uint16_t published_host_port(const ContainerInspect& info, const std::strin
                           key);
     }
     return *host_port;
+}
+
+/// The published host port for `port` on the container `id` (fresh client —
+/// same stateless-host-config policy as the public accessors).
+std::uint16_t published_port_of(const std::string& id, ContainerPort port) {
+    DockerClient client = DockerClient::from_environment();
+    const ContainerInspect info = client.inspect_container(id);
+    return published_host_port(info, to_string(port));
 }
 
 /// Map the public client kind to the internal compose-client kind.
@@ -89,8 +100,10 @@ struct DockerComposeContainer::ActiveStack {
     std::vector<std::pair<std::string, std::string>> env;
     bool remove_volumes = true;
     bool remove_images = false;
-    /// compose service name -> discovered container id.
-    std::map<std::string, std::string> service_to_id;
+    /// compose service name -> (instance number -> discovered container id).
+    /// Instance numbers come from the compose container-number label (1..n;
+    /// a single-instance service has just {1}).
+    std::map<std::string, std::map<int, std::string>> service_to_id;
 
     ActiveStack() = default;
     ActiveStack(const ActiveStack&) = delete;
@@ -248,12 +261,31 @@ DockerComposeContainer&& DockerComposeContainer::with_client(ComposeClientKind k
 
 DockerComposeContainer& DockerComposeContainer::with_exposed_service(std::string service,
                                                                      ContainerPort port) & {
-    exposed_services_.emplace_back(std::move(service), port);
+    exposed_services_.push_back({std::move(service), /*instance=*/0, port});
     return *this;
 }
 DockerComposeContainer&& DockerComposeContainer::with_exposed_service(std::string service,
                                                                       ContainerPort port) && {
     return std::move(with_exposed_service(std::move(service), port));
+}
+DockerComposeContainer& DockerComposeContainer::with_exposed_service(std::string service,
+                                                                     int instance,
+                                                                     ContainerPort port) & {
+    exposed_services_.push_back({std::move(service), instance, port});
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_exposed_service(std::string service,
+                                                                      int instance,
+                                                                      ContainerPort port) && {
+    return std::move(with_exposed_service(std::move(service), instance, port));
+}
+
+DockerComposeContainer& DockerComposeContainer::with_scale(std::string service, int instances) & {
+    scales_[std::move(service)] = instances;
+    return *this;
+}
+DockerComposeContainer&& DockerComposeContainer::with_scale(std::string service, int instances) && {
+    return std::move(with_scale(std::move(service), instances));
 }
 
 DockerComposeContainer& DockerComposeContainer::with_profile(std::string profile) & {
@@ -387,6 +419,9 @@ void DockerComposeContainer::start() {
     up.project_name = project_;
     up.files = compose_files_; // the client overrides with its own paths
     up.profiles = profiles_;
+    for (const auto& [service, instances] : scales_) {
+        up.scales.emplace_back(service, instances);
+    }
     up.env = stack->env;
     up.wait_timeout_secs = wait_timeout_.count();
     up.build = build_;
@@ -403,7 +438,24 @@ void DockerComposeContainer::start() {
         if (it == summary.labels.end()) {
             continue; // not a per-service container (skip)
         }
-        stack->service_to_id.emplace(it->second, summary.id);
+        // The container-number label carries the instance (1..n under
+        // --scale). Every compose v2 stamps it; the fallback for exotic
+        // daemons takes the next free slot, so two unlabelled containers of
+        // one service never collapse onto the same number (which would
+        // silently drop one from discovery).
+        auto& instances = stack->service_to_id[it->second];
+        int instance = 0;
+        bool parsed = false;
+        const auto num_it = summary.labels.find(kComposeContainerNumberLabel);
+        if (num_it != summary.labels.end()) {
+            const std::string& text = num_it->second;
+            parsed =
+                std::from_chars(text.data(), text.data() + text.size(), instance).ec == std::errc();
+        }
+        if (!parsed) {
+            instance = instances.empty() ? 1 : instances.rbegin()->first + 1;
+        }
+        instances.emplace(instance, summary.id);
     }
 
     // Adopt (active_ is null here — any previous stack was torn down up top).
@@ -415,9 +467,12 @@ void DockerComposeContainer::start() {
     //    so a black-holed connect cannot overshoot the wait timeout). This
     //    confirms the port is actually open even for services without a
     //    healthcheck.
-    for (const auto& [service, port] : exposed_services_) {
-        const std::uint16_t host_port = get_service_port(service, port);
-        const std::string host = get_service_host(service);
+    for (const auto& exposed : exposed_services_) {
+        const std::uint16_t host_port =
+            exposed.instance == 0
+                ? get_service_port(exposed.service, exposed.port)
+                : get_service_port(exposed.service, exposed.instance, exposed.port);
+        const std::string host = get_service_host(exposed.service);
 
         // The same user-configurable timeout that governs compose's --wait.
         const auto deadline = std::chrono::steady_clock::now() + wait_timeout_;
@@ -430,10 +485,13 @@ void DockerComposeContainer::start() {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         if (!connected) {
-            throw StartupTimeoutError("Compose service '" + service + "' host port " +
-                                          std::to_string(host_port) +
+            std::string what = "Compose service '" + exposed.service + "'";
+            if (exposed.instance != 0) {
+                what += " instance " + std::to_string(exposed.instance);
+            }
+            throw StartupTimeoutError(what + " host port " + std::to_string(host_port) +
                                           " did not accept a connection within the wait timeout",
-                                      service);
+                                      exposed.service);
         }
     }
 }
@@ -446,21 +504,61 @@ std::string DockerComposeContainer::get_service_host(const std::string& service)
 
 std::uint16_t DockerComposeContainer::get_service_port(const std::string& service,
                                                        ContainerPort port) const {
-    const std::string id = get_service_container_id(service);
-    DockerClient client = DockerClient::from_environment();
-    const ContainerInspect info = client.inspect_container(id);
-    return published_host_port(info, to_string(port));
+    return published_port_of(get_service_container_id(service), port);
+}
+
+std::uint16_t DockerComposeContainer::get_service_port(const std::string& service, int instance,
+                                                       ContainerPort port) const {
+    return published_port_of(get_service_container_id(service, instance), port);
 }
 
 std::string DockerComposeContainer::get_service_container_id(const std::string& service) const {
+    // The first (lowest-numbered) instance — THE container of an unscaled
+    // service, which always has just {1}.
+    const auto& instances = find_service_instances(service);
+    return instances.begin()->second;
+}
+
+std::string DockerComposeContainer::get_service_container_id(const std::string& service,
+                                                             int instance) const {
+    const auto& instances = find_service_instances(service);
+    const auto it = instances.find(instance);
+    if (it == instances.end()) {
+        std::string known;
+        for (const auto& [number, id] : instances) {
+            if (!known.empty()) {
+                known += ", ";
+            }
+            known += std::to_string(number);
+        }
+        throw DockerError("Compose service '" + service + "' in project '" + project_ +
+                          "' has no instance " + std::to_string(instance) +
+                          " (running instances: " + known + ")");
+    }
+    return it->second;
+}
+
+std::vector<int> DockerComposeContainer::service_instances(const std::string& service) const {
+    const auto& instances = find_service_instances(service);
+    std::vector<int> numbers;
+    numbers.reserve(instances.size());
+    for (const auto& [number, id] : instances) {
+        numbers.push_back(number); // map order = ascending
+    }
+    return numbers;
+}
+
+const std::map<int, std::string>&
+DockerComposeContainer::find_service_instances(const std::string& service) const {
     if (active_) {
         const auto it = active_->service_to_id.find(service);
-        if (it != active_->service_to_id.end()) {
+        if (it != active_->service_to_id.end() && !it->second.empty()) {
             return it->second;
         }
     }
     throw DockerError("Unknown compose service '" + service + "' in project '" + project_ +
-                      "' (did start() run, and is the service's profile active?)");
+                      "' (did start() run, is the service's profile active, and is its scale "
+                      "non-zero?)");
 }
 
 void DockerComposeContainer::stop() {

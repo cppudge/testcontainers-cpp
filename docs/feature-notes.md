@@ -350,7 +350,13 @@ connect cannot overshoot the wait timeout). Compose profiles: `with_profile` (re
 2026-07-11) emits top-level `--profile` flags on `up` AND the teardown `down` — a
 profile-less file-driven `down` would skip the gated services, leaving them to the
 label sweep (a label-reconstructed `down` — no `-f`, the containerised client —
-removes them regardless).
+removes them regardless). Scaling: `with_scale(service, n)` (2026-07-11) emits
+`up --scale service=n`; discovery keys instances by the compose container-number
+label, so `get_service_port`/`get_service_container_id` take an optional instance
+number (1..n; the plain forms mean the lowest-numbered instance),
+`service_instances` lists the running numbers, and `with_exposed_service` can
+probe a specific instance. Scaling past 1 requires ephemeral host ports (a
+fixed one collides across instances).
 Local-mode children are spawned directly (`CreateProcessW` / `posix_spawnp` — no shell) with
 an explicit per-child environment block, so compose env never touches the parent process and
 concurrent stacks cannot cross-contaminate. The handle follows the rule of zero: the running

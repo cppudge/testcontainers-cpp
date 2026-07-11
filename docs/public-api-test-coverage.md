@@ -240,8 +240,9 @@ row's Windows column is n/a for that reason.
 | `with_local_client` / `with_containerised_client` / `with_auto_client` | ✅ | n/a | ❌ (factory form; `with_client` used) | n/a |
 | `from_yaml(yaml)` | ✅ | n/a | ✅ Compose.LocalClientBringsUpRedis (+ all) | n/a |
 | `with_client(kind)` | ✅ | n/a | ✅ Compose.ContainerisedClientBringsUpRedis (Containerised), Compose.AutoClientBringsUpRedis (Auto), Compose.LocalClientBringsUpRedis (Local default) | n/a |
-| `with_exposed_service` | ✅ | n/a | ✅ Compose.* | n/a |
+| `with_exposed_service` (+ per-instance overload) | ✅ | n/a | ✅ Compose.* (per-instance: ScaleRunsTwoInstances) | n/a |
 | `with_profile` | ✅ | n/a | ✅ Compose.ProfileGatesService (gated service down without / up with; profile-aware teardown) | n/a |
+| `with_scale` | ✅ | n/a | ✅ Compose.ScaleRunsTwoInstances (two live instances, distinct ports, PING both) | n/a |
 | `with_project_name` | ✅ | n/a | ❌ | n/a |
 | `with_compose_image` | ✅ | n/a | ❌ (default docker:26.1-cli used) | n/a |
 | `with_env` / `with_env_vars` | ✅ | n/a | ❌ | n/a |
@@ -254,8 +255,9 @@ row's Windows column is n/a for that reason.
 | `start()` Ryuk project filter | ✅ | n/a | ✅ Compose.ProjectFilterRegisteredWithReaper (registered once, ACKed by the real Ryuk) | n/a |
 | `stop()` | ✅ | n/a | ✅ Compose.* (+ label sweep assertion) | n/a |
 | `get_service_host` | ✅ | n/a | ✅ Compose.* | n/a |
-| `get_service_port` | ✅ | n/a | ✅ Compose.* | n/a |
-| `get_service_container_id` | ✅ | n/a | ✅ Compose.RestartKeepsProjectAlive | n/a |
+| `get_service_port` (+ per-instance overload) | ✅ | n/a | ✅ Compose.* (per-instance: ScaleRunsTwoInstances) | n/a |
+| `get_service_container_id` (+ per-instance overload) | ✅ | n/a | ✅ Compose.RestartKeepsProjectAlive, Compose.ScaleRunsTwoInstances | n/a |
+| `service_instances` | ✅ | n/a | ✅ Compose.ScaleRunsTwoInstances | n/a |
 | `project_name()` | ✅ | n/a | ✅ Compose.* | n/a |
 | getters (`compose_files`, `client_kind`, …) | ✅ | n/a | unit-tested | n/a |
 

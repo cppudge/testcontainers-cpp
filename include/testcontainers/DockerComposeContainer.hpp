@@ -85,9 +85,26 @@ public:
 
     /// Record a service + container port to wait for at start() (an EXTRA TCP
     /// probe on top of compose `--wait`). The port must be published by the
-    /// service (via `ports:`) so the host can reach it.
+    /// service (via `ports:`) so the host can reach it. For a scaled service
+    /// this probes the first (lowest-numbered) instance; the three-argument
+    /// overload probes a specific one.
     DockerComposeContainer& with_exposed_service(std::string service, ContainerPort port) &;
     DockerComposeContainer&& with_exposed_service(std::string service, ContainerPort port) &&;
+    DockerComposeContainer& with_exposed_service(std::string service, int instance,
+                                                 ContainerPort port) &;
+    DockerComposeContainer&& with_exposed_service(std::string service, int instance,
+                                                  ContainerPort port) &&;
+
+    /// Run `instances` containers of `service` (`up --scale <service>=<n>`;
+    /// repeatable — the last value per service wins; overrides the file's
+    /// `deploy.replicas`). Scaling to 0 starts none. Instances are numbered
+    /// from 1 and selected via the instance-taking accessor overloads.
+    ///
+    /// A service cannot scale past 1 while publishing a FIXED host port — the
+    /// instances would collide over it. Publish the container port alone
+    /// (e.g. `- "6379"`) so each instance gets its own ephemeral host port.
+    DockerComposeContainer& with_scale(std::string service, int instances) &;
+    DockerComposeContainer&& with_scale(std::string service, int instances) &&;
 
     /// Activate a compose profile (repeatable). Services carrying `profiles:`
     /// in the YAML only start when one of their profiles is active; profile-less
@@ -159,15 +176,32 @@ public:
     void start();
 
     /// The host to reach a service on (the daemon host; "localhost" for a pipe /
-    /// unix socket).
+    /// unix socket — the same for every instance).
     std::string get_service_host(const std::string& service) const;
 
-    /// The published host port mapping `service`'s container `port` (IPv4-pref).
-    /// Throws if the service is unknown or the port isn't published.
+    /// The published host port mapping `service`'s container `port` (IPv4-pref),
+    /// on the first (lowest-numbered) instance. Throws if the service is
+    /// unknown or the port isn't published.
     std::uint16_t get_service_port(const std::string& service, ContainerPort port) const;
 
-    /// The discovered container id backing `service` (throws if unknown).
+    /// The published host port mapping container `port` on instance `instance`
+    /// (numbered from 1) of a scaled `service`. Throws if the service or the
+    /// instance is unknown, or the port isn't published.
+    std::uint16_t get_service_port(const std::string& service, int instance,
+                                   ContainerPort port) const;
+
+    /// The discovered container id backing `service` — the first
+    /// (lowest-numbered) instance (throws if unknown).
     std::string get_service_container_id(const std::string& service) const;
+
+    /// The discovered container id backing instance `instance` (numbered from
+    /// 1) of a scaled `service`. Throws if the service or the instance is
+    /// unknown (the error lists the running instance numbers).
+    std::string get_service_container_id(const std::string& service, int instance) const;
+
+    /// The running instance numbers of `service`, ascending (a single-instance
+    /// service yields {1}). Throws if the service is unknown.
+    std::vector<int> service_instances(const std::string& service) const;
 
     /// Tear the stack down (compose `down`) and remove leftovers by the project
     /// label. Idempotent; the destructor calls it best-effort.
@@ -192,6 +226,9 @@ public:
 
     /// The active compose profiles, in the order added.
     const std::vector<std::string>& profiles() const noexcept { return profiles_; }
+
+    /// The requested per-service instance counts (service -> n).
+    const std::map<std::string, int>& scales() const noexcept { return scales_; }
 
     /// `--build` flag.
     bool build() const noexcept { return build_; }
@@ -231,20 +268,31 @@ private:
         std::string path_;
     };
 
+    /// The instance-number -> container-id map for `service` (never empty);
+    /// throws the unknown-service DockerError when absent.
+    const std::map<int, std::string>& find_service_instances(const std::string& service) const;
+
     std::vector<std::string> compose_files_; ///< host compose files
     std::string project_;                    ///< compose project name
     std::string compose_image_;              ///< containerised ambassador image
     ComposeClientKind client_kind_ = ComposeClientKind::Local;
     std::map<std::string, std::string> env_; ///< compose env vars
     std::vector<std::string> profiles_;      ///< active compose profiles
+    std::map<std::string, int> scales_;      ///< service -> --scale count
     bool build_ = false;
     bool pull_ = false;
     bool wait_ = true;
     std::chrono::seconds wait_timeout_{60};
     bool remove_volumes_ = true;
     bool remove_images_ = false;
+    /// A with_exposed_service entry: which instance's published port to probe.
+    struct ExposedService {
+        std::string service;
+        int instance; ///< 0 = the first (lowest-numbered) instance
+        ContainerPort port;
+    };
     /// The services (+ their published port) to wait for at start().
-    std::vector<std::pair<std::string, ContainerPort>> exposed_services_;
+    std::vector<ExposedService> exposed_services_;
     /// The running project (created by start()): the compose client, a
     /// teardown snapshot of the config, and the discovered service ids.
     /// Destroying it IS the teardown, so the defaulted moves inherit correct

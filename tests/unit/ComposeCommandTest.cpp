@@ -14,6 +14,7 @@
 //   ComposeCommand.UpArgsNoWaitWhenDisabled - with wait off, up args contain neither --wait nor --wait-timeout.
 //   ComposeCommand.UpArgsBuildAndPull - --build and --pull always appear only when requested.
 //   ComposeCommand.UpArgsProfilesBeforeUp - each profile is emitted as `--profile <name>` (in order, before `up`); none by default.
+//   ComposeCommand.UpArgsScaleAfterUp - each scale is emitted as `--scale <service>=<n>` after `up`; none by default.
 //   ComposeCommand.DownArgsBare - a bare down emits --project-name <p> down and (by default) no extras here.
 //   ComposeCommand.DownArgsProfilesBeforeDown - down carries the same `--profile <name>` flags, before `down`.
 //   ComposeCommand.DownArgsVolumesAndRmi - --volumes and --rmi all appear only when requested (rmi takes the `all` argument).
@@ -147,6 +148,32 @@ TEST(ComposeCommand, UpArgsProfilesBeforeUp) {
         EXPECT_EQ(args[dbg - 1], "--profile");
         EXPECT_LT(fe, dbg);
         EXPECT_LT(dbg, index_of(args, "up"));
+    }
+}
+
+TEST(ComposeCommand, UpArgsScaleAfterUp) {
+    {
+        ComposeUpCommand up;
+        up.project_name = "proj";
+        const std::vector<std::string> args = build_compose_up_args(up);
+        EXPECT_FALSE(contains(args, "--scale"));
+    }
+    {
+        ComposeUpCommand up;
+        up.project_name = "proj";
+        up.scales = {{"redis", 2}, {"worker", 3}};
+        const std::vector<std::string> args = build_compose_up_args(up);
+
+        // `--scale <service>=<n>` per service — an `up` flag, so after the
+        // subcommand (unlike the top-level --profile/-f globals).
+        EXPECT_EQ(count(args, "--scale"), 2);
+        const int redis = index_of(args, "redis=2");
+        const int worker = index_of(args, "worker=3");
+        ASSERT_GT(redis, 0);
+        ASSERT_GT(worker, 0);
+        EXPECT_EQ(args[redis - 1], "--scale");
+        EXPECT_EQ(args[worker - 1], "--scale");
+        EXPECT_GT(redis, index_of(args, "up"));
     }
 }
 

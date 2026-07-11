@@ -21,6 +21,9 @@ struct ComposeUpCommand {
     std::string project_name;          ///< --project-name <p>
     std::vector<std::string> files;    ///< each emitted as `-f <file>`
     std::vector<std::string> profiles; ///< each emitted as `--profile <name>`
+    /// Each emitted as `--scale <service>=<n>` (an `up` flag, after the
+    /// subcommand — unlike the globals above).
+    std::vector<std::pair<std::string, int>> scales;
     /// Environment passed to the child process (local) / exec (containerised).
     /// Not part of the argv — recorded here so the clients can read it.
     std::vector<std::pair<std::string, std::string>> env;
@@ -51,8 +54,9 @@ struct ComposeDownCommand {
 /// Build the argv following `docker compose` for an `up` command, i.e. starting
 /// at `--project-name`. Order: `--project-name <p>`, every `-f <file>`, every
 /// `--profile <name>` (a top-level compose flag, so before the subcommand),
-/// `up`, `-d`, then the conditional flags (`--build`, `--pull always`, `--wait
-/// --wait-timeout <n>`). The env is NOT part of the argv.
+/// `up`, `-d`, then the conditional flags (`--build`, `--pull always`, every
+/// `--scale <service>=<n>`, `--wait --wait-timeout <n>`). The env is NOT part
+/// of the argv.
 std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command);
 
 /// Build the argv following `docker compose` for a `down` command: `--project-name

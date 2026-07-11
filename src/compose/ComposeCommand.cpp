@@ -29,6 +29,10 @@ std::vector<std::string> build_compose_up_args(const ComposeUpCommand& command) 
         args.emplace_back("--pull");
         args.emplace_back("always");
     }
+    for (const auto& [service, instances] : command.scales) {
+        args.emplace_back("--scale");
+        args.push_back(service + "=" + std::to_string(instances));
+    }
     if (command.wait) {
         args.emplace_back("--wait");
         args.emplace_back("--wait-timeout");
