@@ -390,6 +390,11 @@ which includes it in place of the individual header.
 | `NATSImage::with_command_arg[s]` (+ managed-flag render throw) | ✅ | n/a | ✅ NATSModule.CommandArgsReachTheServer (throw + both twins unit-tested: NATSModuleConfig.ManagedFlagInArgsThrowsAtRender, NATSModuleConfig.CommandArgsAccumulateAfterManagedFlags) | n/a |
 | `NATSImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: NATSModuleConfig.CustomizerRunsLastAndWins, NATSModuleConfig.PassThroughsLandOnTheImage, NATSModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
 | `NATSContainer` getters (`url` nats://[user:pass@]host:port, `monitoring_url`) | ✅ | n/a | ✅ NATSModule.StartsServesAndBuildsUrls, NATSModule.AuthIsEnforcedAndWired | n/a |
+| `MosquittoImage()` defaults + `start()` (managed conf + "running" log wait) | ✅ | n/a | ✅ MosquittoModule.StartsServesAndBuildsUrl (raw MQTT CONNECT/CONNACK), MosquittoModule.SysTopicReportsPinnedVersion | n/a |
+| `MosquittoImage::with_config_option` | ✅ | n/a | ✅ MosquittoModule.ConfigOptionReachesTheBroker (append order unit-tested: MosquittoModuleConfig.ConfigOptionsAppendInCallOrder) | n/a |
+| `MosquittoImage::with_config` / `with_config_content` (+ option-combining throw) | ✅ | n/a | ✅ MosquittoModule.ConfigReplaceOwnsTheContract (replace/last-wins + throw unit-tested: MosquittoModuleConfig.ReplacementConfigReplacesAndLastWins, MosquittoModuleConfig.OptionsPlusReplacementThrowAtRender) | n/a |
+| `MosquittoImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MosquittoModuleConfig.CustomizerRunsLastAndWins, MosquittoModuleConfig.PassThroughsLandOnTheImage, MosquittoModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `MosquittoContainer` getters (`broker_url` tcp://host:port) + `container()` exec | ✅ | n/a | ✅ MosquittoModule.StartsServesAndBuildsUrl, MosquittoModule.ExecPubSubRoundTrip | n/a |
 
 ---
 

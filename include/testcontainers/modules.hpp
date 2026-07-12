@@ -8,6 +8,7 @@
 #include "testcontainers/modules/Kafka.hpp"
 #include "testcontainers/modules/MariaDB.hpp"
 #include "testcontainers/modules/MongoDB.hpp"
+#include "testcontainers/modules/Mosquitto.hpp"
 #include "testcontainers/modules/MySQL.hpp"
 #include "testcontainers/modules/NATS.hpp"
 #include "testcontainers/modules/PostgreSQL.hpp"

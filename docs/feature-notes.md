@@ -682,6 +682,46 @@ examples stick to real flags: --name, --auth, -DV). Out of scope: clustering/lea
 (multi-container), `--auth` token as a typed setter (rides with_command_args; a URL form
 would need `nats://token@`).
 
+**Mosquitto module** (2026-07-12, `modules::MosquittoImage` → `modules::MosquittoContainer`,
+wave 2) — pinned `eclipse-mosquitto:2.0` (2.0.x is the patch-receiving production line; the
+floating `2` tag jumped to 2.1.2-alpine in 02/2026 — exactly what a version-stable pin
+avoids; at the 2.1 bump re-verify the "running" line/stream and the new `-alpine` tag
+suffix). Port 1883 only; websockets stay a documented config-opt-in recipe. THE trap the
+module exists to encode away: since 2.0 a configless broker listens on the container's
+loopback ONLY, so the mapped port connects to nothing — the module ships a managed
+mosquitto.conf (`listener 1883` + `allow_anonymous true`, matching the image's own no-auth
+quickstart file) as CopyToContainer::content to /mosquitto/config/mosquitto.conf,
+overwriting the stock file pre-start. Config is file-only (the image reads no env → no
+managed env keys, with_env is a pure pass-through). Config surface: with_config_option(k,v)
+appends lines after the managed block in call order (listener-scoped options bind to the
+1883 listener); with_config(path)/with_config_content(bytes) REPLACE the file entirely
+(last call wins); combining options with a replacement THROWS at render — mosquitto config
+is order- and listener-scoped, merging has no well-defined meaning (replace-entirely was
+the chosen precedence). Replacement owners keep the contract: a listener 1883, logs on
+stdout/stderr (the wait scans them), their own auth (allow_anonymous defaults to false once
+a listener is defined). Readiness = wait_for::log("running") — the broker prints "mosquitto
+version X running" AFTER listeners__start() (verified in the 2.0.x sources), so no
+log/listener race and no exec probe to break under replaced auth configs; default log_dest
+is stderr, the either-stream wait survives log_dest overrides. No hooks → no reuse label;
+the managed config is generated as a pure function of the options (fixed comment header, no
+timestamps) so identical configs stay reuse-hash-identical (byte copy-to sources hash
+content verbatim; with_config(host_path) hashes path+size+mtime — the core's caveat).
+Auth DEFERRED by research, not dodged: the official TLS-compiled broker requires HASHED
+password_file entries (plaintext works only on no-TLS builds), client-side PBKDF2-SHA512
+hashing would drag optional-OpenSSL into the modules layer, and in-container
+mosquitto_passwd needs a started broker + SIGHUP + root-vs-uid-1883 ownership dance
+(RabbitMQ's cookie trap class). Recipe today: with_config naming a password_file +
+customizer with_copy_to of a pre-hashed file; typed with_password_file is the follow-up.
+Integration proof: raw MQTT 3.1.1 CONNECT/CONNACK helper (tests/integration/MqttConnect.hpp,
+RedisPing mold — return code 0 anonymous-accepted, 5 not-authorized for the replacement
+test), retained-message pub/sub round trip through in-image mosquitto_pub/_sub (retained ⇒
+no blocking-subscriber race; `-C 1 -W n` bounds every subscribe, timeout exits 27),
+$SYS/broker/version as the pin-drift canary (argv exec — no shell to eat `$SYS`), and
+retain_available=false as the observable negative proving appended options reach the real
+broker (the QoS-0 publisher may exit 0 before noticing the disconnect — the subscriber
+timeout is the reliable observable). Out of scope: typed auth (above), websockets listener,
+bridges/plugins.
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

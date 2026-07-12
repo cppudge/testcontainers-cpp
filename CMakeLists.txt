@@ -260,6 +260,7 @@ if(TC_BUILD_MODULES)
         src/modules/Kafka.cpp
         src/modules/ModuleDetail.cpp
         src/modules/MongoDB.cpp
+        src/modules/Mosquitto.cpp
         src/modules/MySqlFamily.cpp
         src/modules/MySQL.cpp
         src/modules/MariaDB.cpp
@@ -370,6 +371,7 @@ if(BUILD_TESTING)
         target_sources(tc_unit_tests PRIVATE
             tests/unit/modules/KafkaTest.cpp
             tests/unit/modules/MongoDBTest.cpp
+            tests/unit/modules/MosquittoTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/NATSTest.cpp
             tests/unit/modules/PostgreSQLTest.cpp
@@ -438,6 +440,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/KafkaModuleTest.cpp
                 tests/integration/modules/MariaDBModuleTest.cpp
                 tests/integration/modules/MongoDBModuleTest.cpp
+                tests/integration/modules/MosquittoModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/NATSModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp

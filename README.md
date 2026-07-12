@@ -155,7 +155,7 @@ green on Windows (named pipe) and Linux (unix socket):
 - host-port exposure (`with_exposed_host_port` — sshd sidecar + SSH tunnel), and the TLS transport
   (mutual TLS verified end to end in CI)
 - the `testcontainers::modules` layer — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ,
-  MongoDB (typed connection getters; new in 0.2.0), NATS (post-0.2.0, on main)
+  MongoDB (typed connection getters; new in 0.2.0), NATS + Mosquitto (post-0.2.0, on main)
 
 Known gaps: shared builds are **static-only on Windows** (the sources carry no symbol-export
 macros yet). Per-feature limits are tracked in
