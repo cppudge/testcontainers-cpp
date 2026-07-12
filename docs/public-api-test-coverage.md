@@ -395,6 +395,13 @@ which includes it in place of the individual header.
 | `MosquittoImage::with_config` / `with_config_content` (+ option-combining throw) | ✅ | n/a | ✅ MosquittoModule.ConfigReplaceOwnsTheContract (replace/last-wins + throw unit-tested: MosquittoModuleConfig.ReplacementConfigReplacesAndLastWins, MosquittoModuleConfig.OptionsPlusReplacementThrowAtRender) | n/a |
 | `MosquittoImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MosquittoModuleConfig.CustomizerRunsLastAndWins, MosquittoModuleConfig.PassThroughsLandOnTheImage, MosquittoModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
 | `MosquittoContainer` getters (`broker_url` tcp://host:port) + `container()` exec | ✅ | n/a | ✅ MosquittoModule.StartsServesAndBuildsUrl, MosquittoModule.ExecPubSubRoundTrip | n/a |
+| `ClickHouseImage()` defaults + `start()` (handover → /ping → SELECT 1 readiness triple) | ✅ | n/a | ✅ ClickHouseModule.DefaultsStartAndConnect, ClickHouseModule.HttpPingFromHost, ClickHouseModule.InitWindowImmunity (the loopback-init-server money test) | n/a |
+| `ClickHouseImage::with_username/password/database` | ✅ | n/a | ✅ ClickHouseModule.CustomCredentialsAndDsn (empty-field throws unit-tested: ClickHouseModuleConfig.EmptyCredentialFieldsThrowAtRender) | n/a |
+| `ClickHouseImage::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ ClickHouseModule.InitWindowImmunity, ClickHouseModule.InitScriptsRunInRegistrationOrder (staging + narrower whitelist unit-tested: ClickHouseModuleConfig.InitScriptsStageOrderedAndValidated) | n/a |
+| `ClickHouseImage::with_config_file` (.xml/.yaml/.yml) | ✅ | n/a | ✅ ClickHouseModule.ConfigFileReachesServer (validation unit-tested: ClickHouseModuleConfig.ConfigFilesStageValidated) | n/a |
+| `ClickHouseImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: ClickHouseModuleConfig.CustomWaitReplacesDefaultProbe, ClickHouseModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
+| `ClickHouseImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: ClickHouseModuleConfig.CustomizerRunsLastAndWins, ClickHouseModuleConfig.PassThroughsLandOnTheImage, ClickHouseModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `ClickHouseContainer` getters (`connection_string` clickhouse://, `http_url`) + `exec_sql` | ✅ | n/a | ✅ ClickHouseModule.DefaultsStartAndConnect, ClickHouseModule.CustomCredentialsAndDsn (+ exec_sql in every ClickHouseModule test but HttpPingFromHost) | n/a |
 
 ---
 

@@ -57,6 +57,7 @@ nav:
       - MongoDB: modules/mongodb.md
       - NATS: modules/nats.md
       - Mosquitto (MQTT): modules/mosquitto.md
+      - ClickHouse: modules/clickhouse.md
   - API reference: https://cppudge.github.io/testcontainers-cpp/api/
 
 markdown_extensions:

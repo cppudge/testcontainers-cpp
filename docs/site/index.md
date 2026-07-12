@@ -67,7 +67,8 @@ const modules::PostgreSQLContainer pg =
 - **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a
   full Windows-engine test mirror in CI.
 - **Modules** — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB, NATS,
-  Mosquitto: pinned images, load-bearing readiness probes, typed connection getters.
+  Mosquitto, ClickHouse: pinned images, load-bearing readiness probes, typed connection
+  getters.
 
 ## Platform support
 

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "testcontainers/CopyToContainer.hpp"
@@ -40,6 +41,18 @@ CopyToContainer stage_init_script(std::filesystem::path host_path, std::size_t i
 /// The in-memory variant: `name` must be a bare file name (no separators).
 CopyToContainer stage_init_script(const std::string& name, std::string content, std::size_t index,
                                   const char* entrypoint_name);
+
+/// The same staging with an explicit extension whitelist, for entrypoints
+/// whose executed set differs from the postgres/mysql one (ClickHouse runs
+/// .sql/.sql.gz/.sh only — its entrypoint ignores the xz/zst forms).
+CopyToContainer stage_init_script(std::filesystem::path host_path, std::size_t index,
+                                  const char* entrypoint_name,
+                                  const std::vector<std::string_view>& allowed_extensions);
+
+/// The in-memory variant of the explicit-whitelist staging.
+CopyToContainer stage_init_script(const std::string& name, std::string content, std::size_t index,
+                                  const char* entrypoint_name,
+                                  const std::vector<std::string_view>& allowed_extensions);
 
 /// Exec `cmd` in container `id` and return the result; a non-zero exit
 /// throws DockerError "<what> failed (exit N): <stderr, else stdout>"

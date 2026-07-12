@@ -13,11 +13,16 @@ namespace {
 
 /// The extensions the postgres and mysql/mariadb entrypoints execute;
 /// anything else they SKIP silently — a green start with an empty schema —
-/// so staging refuses unknown ones up front.
-constexpr std::string_view kInitExtensions[] = {".sql", ".sql.gz", ".sql.xz", ".sql.zst", ".sh"};
+/// so staging refuses unknown ones up front. Entrypoints with a different
+/// executed set pass their own whitelist to the 4-argument overloads.
+const std::vector<std::string_view>& default_init_extensions() {
+    static const std::vector<std::string_view> extensions{".sql", ".sql.gz", ".sql.xz", ".sql.zst",
+                                                          ".sh"};
+    return extensions;
+}
 
-bool has_known_init_extension(std::string_view name) {
-    for (const std::string_view ext : kInitExtensions) {
+bool has_known_init_extension(std::string_view name, const std::vector<std::string_view>& allowed) {
+    for (const std::string_view ext : allowed) {
         if (name.size() > ext.size() && name.ends_with(ext)) {
             return true;
         }
@@ -25,10 +30,18 @@ bool has_known_init_extension(std::string_view name) {
     return false;
 }
 
-void check_init_script(const std::string& name, std::size_t index, const char* entrypoint_name) {
-    if (!has_known_init_extension(name)) {
+void check_init_script(const std::string& name, std::size_t index, const char* entrypoint_name,
+                       const std::vector<std::string_view>& allowed) {
+    if (!has_known_init_extension(name, allowed)) {
+        std::string allowed_list;
+        for (const std::string_view ext : allowed) {
+            if (!allowed_list.empty()) {
+                allowed_list += ", ";
+            }
+            allowed_list += ext;
+        }
         throw Error("init script '" + name + "' has an extension " + entrypoint_name +
-                    " would silently ignore; use .sql, .sql.gz, .sql.xz, .sql.zst, or .sh");
+                    " would silently ignore; use one of: " + allowed_list);
     }
     if (index >= 10000) {
         throw Error("too many init scripts (the 0000- ordering prefix is four digits)");
@@ -61,19 +74,33 @@ std::string zero_pad4(std::size_t value) {
 
 CopyToContainer stage_init_script(std::filesystem::path host_path, std::size_t index,
                                   const char* entrypoint_name) {
+    return stage_init_script(std::move(host_path), index, entrypoint_name,
+                             default_init_extensions());
+}
+
+CopyToContainer stage_init_script(const std::string& name, std::string content, std::size_t index,
+                                  const char* entrypoint_name) {
+    return stage_init_script(name, std::move(content), index, entrypoint_name,
+                             default_init_extensions());
+}
+
+CopyToContainer stage_init_script(std::filesystem::path host_path, std::size_t index,
+                                  const char* entrypoint_name,
+                                  const std::vector<std::string_view>& allowed_extensions) {
     const std::string name = host_path.filename().string();
-    check_init_script(name, index, entrypoint_name);
+    check_init_script(name, index, entrypoint_name, allowed_extensions);
     return shipped_executable_if_sh(
         name, CopyToContainer::host_file(std::move(host_path), init_target(index, name)));
 }
 
 CopyToContainer stage_init_script(const std::string& name, std::string content, std::size_t index,
-                                  const char* entrypoint_name) {
+                                  const char* entrypoint_name,
+                                  const std::vector<std::string_view>& allowed_extensions) {
     if (name.empty() || name.find('/') != std::string::npos ||
         name.find('\\') != std::string::npos) {
         throw Error("init script name '" + name + "' must be a bare file name");
     }
-    check_init_script(name, index, entrypoint_name);
+    check_init_script(name, index, entrypoint_name, allowed_extensions);
     return shipped_executable_if_sh(
         name, CopyToContainer::content(std::move(content), init_target(index, name)));
 }

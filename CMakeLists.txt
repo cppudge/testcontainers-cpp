@@ -256,6 +256,7 @@ endif()
 # connection getters. Consumed as testcontainers::modules.
 if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
+        src/modules/ClickHouse.cpp
         src/modules/KafkaDetail.cpp
         src/modules/Kafka.cpp
         src/modules/ModuleDetail.cpp
@@ -369,6 +370,7 @@ if(BUILD_TESTING)
         # unit suite everywhere it runs; the TUs exist only when the modules
         # target does.
         target_sources(tc_unit_tests PRIVATE
+            tests/unit/modules/ClickHouseTest.cpp
             tests/unit/modules/KafkaTest.cpp
             tests/unit/modules/MongoDBTest.cpp
             tests/unit/modules/MosquittoTest.cpp
@@ -437,6 +439,7 @@ if(BUILD_TESTING)
         # apart from the core suite.
         if(TC_BUILD_MODULES)
             add_executable(tc_module_tests
+                tests/integration/modules/ClickHouseModuleTest.cpp
                 tests/integration/modules/KafkaModuleTest.cpp
                 tests/integration/modules/MariaDBModuleTest.cpp
                 tests/integration/modules/MongoDBModuleTest.cpp

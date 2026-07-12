@@ -722,6 +722,55 @@ broker (the QoS-0 publisher may exit 0 before noticing the disconnect — the su
 timeout is the reliable observable). Out of scope: typed auth (above), websockets listener,
 bridges/plugins.
 
+**ClickHouse module** (2026-07-13, `modules::ClickHouseImage` → `modules::ClickHouseContainer`,
+wave 2) — pinned `clickhouse:26.3` (the Docker Official Image; 26.3 is the current LTS line,
+supported to 2027-03; 24.x/25.3 are EOL — re-pin to the newest LTS ~every 6 months). Ports
+8123 (HTTP) + 9000 (native protocol), both published: clickhouse-cpp speaks native via
+discrete ClientOptions (no DSN parser — the handle leads with discrete getters and
+`native_port()`), HTTP serves curl/JDBC/ODBC via `http_url()`. Credentials test/test/test
+via the CLICKHOUSE_USER/PASSWORD/DB trio, DB env rule (appended LAST, module wins — bash
+entrypoint applies the last duplicate). The credential decision is load-bearing, not just
+house style: the image RESTRICTS a passwordless `default` user to the container's loopback
+(host-side clients can never connect), and provisioning a custom user REMOVES the built-in
+`default` — so empty password throws at render (throw-always; deliberately open servers
+drop to a plain GenericImage), and the provisioned user is the only account. Readiness =
+an ORDERED TRIPLE, each leg load-bearing and each earlier form falsified live during
+implementation: whenever CLICKHOUSE_DB or initdb.d is set (every start of this module) the
+entrypoint first runs a TEMPORARY server bound to 127.0.0.1 for provisioning + init
+scripts — and NO network probe reliably tells it from the real server, because Docker
+Desktop's port proxy reaches loopback-bound listeners through the published port (observed:
+/ping answered 200 out of the init window, and the exec'd SELECT hit the temp server —
+UNKNOWN_TABLE — while init scripts were still running; on a namespace-faithful Linux daemon
+the published-port probe alone WOULD suffice, which is exactly why CI would never have
+caught it). The disambiguator is the process tree, not the network: the entrypoint finishes
+init by EXEC'ing the real server over itself (its own comment: "This replaces the shell
+script with the server"), flipping /proc/1/comm "entrypoint.sh" → "clickhouse-serv". So:
+(1) `successful_shell_command("grep -q clickhouse /proc/1/comm")` — real server is PID 1,
+temp gone, every init script done (a failing script aborts the boot); (2)
+`wait_for::http("/ping", 8123)` through the PUBLISHED port — end-to-end mapping proof, now
+guaranteed real; (3) in-container `clickhouse-client SELECT 1` — the server opens 8123 a
+beat before 9000 (an API exec is fast enough to hit that gap: NETWORK_ERROR observed right
+after the first /ping 200; a hand-run docker exec never caught it — its process-spawn
+latency was the sleep), and it proves the provisioned credentials. Single phase, house 60s
+(cold boot ≈5–15s; no hooks). Init scripts reuse the shared ModuleDetail staging (NNNN-
+registration prefix, .sh shipped 0755) but with a NARROWER whitelist — the clickhouse
+entrypoint executes .sql/.sql.gz/.sh only (no xz/zst; ModuleDetail gained explicit-whitelist
+overloads for exactly this). Two script contracts verified live on 26.3 (both differ from
+postgres): the entrypoint's client runs with NO default database (CLICKHOUSE_DB is created
+but not selected — scripts must qualify names or `USE <db>;`; multiquery is on), and a
+FAILING script aborts the whole boot (container exits carrying the script's error — e.g.
+sleepEachRow is capped at 3s per block, so a 6s single-block sleep kills the start). `with_config_file` ships .xml/.yaml/.yml drop-ins under their
+own names into /etc/clickhouse-server/config.d (.yml merge verified live on 26.3:
+max_connections via yml visible in system.server_settings). `with_wait` REPLACES the
+default probe (postgres semantics); customizer waits ADD. `exec_sql` runs one statement via
+in-container clickhouse-client (--user/--password/--database --query; loopback is safe
+post-start — the only listener there is the real server), TabSeparated output.
+`connection_string()` = clickhouse://user:pass@host:native_port/db (percent-encoded;
+clickhouse-go form); `http_url()` = plain http base (credentials per request). No hooks →
+reuse hash covers everything; adopted containers keep data, init scripts not re-run. Out of
+scope: clusters/replicas/Keeper, the MySQL/PostgreSQL wire-emulation ports (9004/9005, off
+in the default config), typed access-management toggle (rides with_env).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

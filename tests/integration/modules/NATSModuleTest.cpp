@@ -3,7 +3,6 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/write.hpp>
 
@@ -14,6 +13,7 @@
 #include "testcontainers/modules/NATS.hpp"
 
 #include "EngineGuard.hpp"
+#include "HttpGet.hpp"
 
 // Tests in this file (integration; require a Linux-containers Docker daemon —
 // the default image is FROM scratch, so every assertion is host-side: the
@@ -58,24 +58,6 @@ private:
     std::string buffer_;
 };
 
-/// Plain HTTP/1.1 GET against a published port; returns the whole response
-/// (status line + headers + body).
-std::string http_get(const std::string& host, std::uint16_t port, const std::string& target) {
-    asio::io_context io;
-    tcp::resolver resolver(io);
-    tcp::socket socket(io);
-    asio::connect(socket, resolver.resolve(host, std::to_string(port)));
-
-    const std::string request =
-        "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
-    asio::write(socket, asio::buffer(request));
-
-    std::string response;
-    boost::system::error_code ec;
-    asio::read(socket, asio::dynamic_buffer(response), ec); // drain to EOF
-    return response;
-}
-
 } // namespace
 
 // Requires a Linux-containers daemon; skipped otherwise.
@@ -95,7 +77,7 @@ TEST_F(NATSModule, StartsServesAndBuildsUrls) {
     EXPECT_TRUE(nats.username().empty());
     EXPECT_TRUE(nats.password().empty());
 
-    const std::string health = http_get(nats.host(), nats.monitoring_port(), "/healthz");
+    const std::string health = tcit::http_get(nats.host(), nats.monitoring_port(), "/healthz");
     EXPECT_EQ(health.substr(0, 12), "HTTP/1.1 200");
     EXPECT_NE(health.find("\"status\":\"ok\""), std::string::npos);
 }
@@ -131,7 +113,7 @@ TEST_F(NATSModule, JetStreamTurnsOn) {
     // The js-enabled-only filter makes /healthz report failure unless
     // JetStream is actually on.
     const std::string health =
-        http_get(nats.host(), nats.monitoring_port(), "/healthz?js-enabled-only=true");
+        tcit::http_get(nats.host(), nats.monitoring_port(), "/healthz?js-enabled-only=true");
     EXPECT_EQ(health.substr(0, 12), "HTTP/1.1 200");
 }
 

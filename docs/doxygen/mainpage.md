@@ -32,5 +32,6 @@ Prebuilt technology wrappers (link `testcontainers::modules`, include
 testcontainers::modules::PostgreSQLImage, testcontainers::modules::MySQLImage,
 testcontainers::modules::MariaDBImage, testcontainers::modules::KafkaImage,
 testcontainers::modules::RabbitMQImage, testcontainers::modules::MongoDBImage,
-testcontainers::modules::NATSImage, testcontainers::modules::MosquittoImage — each with its
-started-handle twin (`RedisContainer`, …).
+testcontainers::modules::NATSImage, testcontainers::modules::MosquittoImage,
+testcontainers::modules::ClickHouseImage — each with its started-handle twin
+(`RedisContainer`, …).

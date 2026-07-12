@@ -16,9 +16,9 @@ and all seven 0.2.0 modules: **Redis**, **PostgreSQL**, **MySQL**, **MariaDB**,
 in [feature-notes.md](feature-notes.md)). The 0.2.0 release pass landed the
 same day (v0.2.0 published 2026-07-12; the CCI version-add PR still waits on
 conan-io/conan-center-index#30600). Now in progress: **module wave 2**, one
-reviewed stage per module — NATS and Mosquitto (landed 2026-07-12), then
-ClickHouse, MinIO + RustFS, ScyllaDB, OpenSearch (per-module interface designs
-— pins, readiness, precedence — settled up front).
+reviewed stage per module — NATS, Mosquitto, and ClickHouse landed; next
+MinIO + RustFS, ScyllaDB, OpenSearch (per-module interface designs — pins,
+readiness, precedence — settled up front).
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer

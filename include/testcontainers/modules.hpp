@@ -5,6 +5,7 @@
 /// its own umbrella, testcontainers/testcontainers.hpp — the module headers
 /// pull in only the core pieces they build on.
 
+#include "testcontainers/modules/ClickHouse.hpp"
 #include "testcontainers/modules/Kafka.hpp"
 #include "testcontainers/modules/MariaDB.hpp"
 #include "testcontainers/modules/MongoDB.hpp"
