@@ -15,10 +15,18 @@ and all seven 0.2.0 modules: **Redis**, **PostgreSQL**, **MySQL**, **MariaDB**,
 **Kafka**, **RabbitMQ**, **MongoDB** (decisions and per-module traps recorded
 in [feature-notes.md](feature-notes.md)). The 0.2.0 release pass landed the
 same day (v0.2.0 published 2026-07-12; the CCI version-add PR still waits on
-conan-io/conan-center-index#30600). Now in progress: **module wave 2**, one
-reviewed stage per module — NATS, Mosquitto, ClickHouse, the MinIO + RustFS
-pair, and ScyllaDB landed; OpenSearch remains (per-module interface designs —
-pins, readiness, precedence — settled up front).
+conan-io/conan-center-index#30600). **Module wave 2 is complete** (2026-07-13,
+one reviewed stage per module): NATS, Mosquitto, ClickHouse, MinIO + RustFS,
+ScyllaDB, and OpenSearch — fourteen modules total. The wave also fixed two
+core defects its modules exposed: the Http wait's zero-byte-close false
+positive under Docker Desktop's port proxy, and PublishAllPorts dragging in
+surprise image-EXPOSEd ports (scylla exposes 22 — collides with a CI runner's
+sshd); `with_exposed_port` now renders exact PortBindings
+([feature-notes.md](feature-notes.md), "Wave-2 core fixes"). Deferred wave-3
+candidates: LocalStack, MSSQL, etcd, Elasticsearch, Qdrant/Milvus,
+Vault/Consul; quick add-ons Valkey/Memcached; follow-ups: the secure
+OpenSearch variant (needs an https/skip-verify flag on wait_for::http),
+Mosquitto typed auth, ScyllaDB auth opt-in.
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer

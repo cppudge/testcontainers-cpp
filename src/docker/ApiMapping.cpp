@@ -118,17 +118,19 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
         const Healthcheck& hc = *spec.healthcheck;
         nlohmann::json health = nlohmann::json::object();
         health["Test"] = hc.test();
-        if (hc.interval()) {
-            health["Interval"] = static_cast<std::int64_t>(hc.interval()->count());
+        // Bound once per option: the getters return the optional by value,
+        // so check-then-recall would test one temporary and deref another.
+        if (const auto interval = hc.interval()) {
+            health["Interval"] = static_cast<std::int64_t>(interval->count());
         }
-        if (hc.timeout()) {
-            health["Timeout"] = static_cast<std::int64_t>(hc.timeout()->count());
+        if (const auto timeout = hc.timeout()) {
+            health["Timeout"] = static_cast<std::int64_t>(timeout->count());
         }
-        if (hc.start_period()) {
-            health["StartPeriod"] = static_cast<std::int64_t>(hc.start_period()->count());
+        if (const auto start_period = hc.start_period()) {
+            health["StartPeriod"] = static_cast<std::int64_t>(start_period->count());
         }
-        if (hc.retries()) {
-            health["Retries"] = *hc.retries();
+        if (const auto retries = hc.retries()) {
+            health["Retries"] = *retries;
         }
         body["Healthcheck"] = std::move(health);
     }
@@ -136,6 +138,16 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
     nlohmann::json host_config = nlohmann::json::object();
     if (spec.publish_all_ports) {
         host_config["PublishAllPorts"] = true;
+    }
+    if (!spec.published_ports.empty()) {
+        // An empty HostPort asks the daemon for an ephemeral port — exactly
+        // these ports and no others (PublishAllPorts would drag in every
+        // image-EXPOSEd port too).
+        nlohmann::json bindings = nlohmann::json::object();
+        for (const auto& port : spec.published_ports) {
+            bindings[port] = nlohmann::json::array({nlohmann::json{{"HostPort", ""}}});
+        }
+        host_config["PortBindings"] = std::move(bindings);
     }
     if (spec.privileged) {
         host_config["Privileged"] = true;
@@ -235,11 +247,11 @@ nlohmann::json build_create_body(const CreateContainerSpec& spec) {
             entry["ReadOnly"] = m.is_read_only();
             if (m.type() == MountType::Tmpfs && (m.tmpfs_size() || m.tmpfs_mode())) {
                 nlohmann::json tmpfs = nlohmann::json::object();
-                if (m.tmpfs_size()) {
-                    tmpfs["SizeBytes"] = *m.tmpfs_size();
+                if (const auto size = m.tmpfs_size()) {
+                    tmpfs["SizeBytes"] = *size;
                 }
-                if (m.tmpfs_mode()) {
-                    tmpfs["Mode"] = *m.tmpfs_mode();
+                if (const auto mode = m.tmpfs_mode()) {
+                    tmpfs["Mode"] = *mode;
                 }
                 entry["TmpfsOptions"] = std::move(tmpfs);
             }

@@ -24,6 +24,7 @@
 // Tests in this file:
 //   ApiMapping.BuildCreateBodyMinimal - a spec with only an image produces a body with just Image and no optional sections.
 //   ApiMapping.BuildCreateBodyFull - cmd, env, labels, exposed ports, and publish-all map to the correct Docker create-body fields.
+//   ApiMapping.BuildCreateBodyPublishedPorts - published_ports render as explicit empty-HostPort PortBindings (daemon-assigned ephemeral ports) for exactly the listed ports, without PublishAllPorts.
 //   ApiMapping.BuildCreateBodyHealthcheck - a healthcheck maps to a Healthcheck object with the Test array, nanosecond durations, and retries.
 //   ApiMapping.BuildCreateBodyNoHealthcheckByDefault - a spec without a healthcheck emits no Healthcheck field.
 //   ApiMapping.BuildCreateBodyProcessConfig - entrypoint, working dir, and user map to Entrypoint, WorkingDir, and User.
@@ -171,6 +172,24 @@ TEST(ApiMapping, BuildCreateBodyFull) {
     EXPECT_EQ(body["Labels"]["k"], "v");
     EXPECT_TRUE(body["ExposedPorts"].contains("6379/tcp"));
     EXPECT_TRUE(body["HostConfig"]["PublishAllPorts"].get<bool>());
+}
+
+TEST(ApiMapping, BuildCreateBodyPublishedPorts) {
+    CreateContainerSpec spec;
+    spec.image = "redis:7.2";
+    spec.exposed_ports = {"6379/tcp", "8080/tcp"};
+    spec.published_ports = {"6379/tcp", "8080/tcp"};
+
+    // Explicit ephemeral bindings for EXACTLY the requested ports — an empty
+    // HostPort asks the daemon to assign one; PublishAllPorts stays absent
+    // (it would also publish every image-EXPOSEd port).
+    const auto body = build_create_body(spec);
+    EXPECT_FALSE(body["HostConfig"].contains("PublishAllPorts"));
+    const auto& bindings = body["HostConfig"]["PortBindings"];
+    ASSERT_TRUE(bindings.contains("6379/tcp"));
+    ASSERT_TRUE(bindings.contains("8080/tcp"));
+    ASSERT_EQ(bindings["6379/tcp"].size(), 1u);
+    EXPECT_EQ(bindings["6379/tcp"][0]["HostPort"], "");
 }
 
 TEST(ApiMapping, BuildCreateBodyHealthcheck) {

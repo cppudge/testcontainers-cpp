@@ -267,6 +267,7 @@ if(TC_BUILD_MODULES)
         src/modules/MySQL.cpp
         src/modules/MariaDB.cpp
         src/modules/NATS.cpp
+        src/modules/OpenSearch.cpp
         src/modules/PostgreSQL.cpp
         src/modules/RabbitMQ.cpp
         src/modules/Redis.cpp
@@ -380,6 +381,7 @@ if(BUILD_TESTING)
             tests/unit/modules/MosquittoTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
             tests/unit/modules/NATSTest.cpp
+            tests/unit/modules/OpenSearchTest.cpp
             tests/unit/modules/PostgreSQLTest.cpp
             tests/unit/modules/RabbitMQTest.cpp
             tests/unit/modules/RedisTest.cpp
@@ -453,6 +455,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/MosquittoModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
                 tests/integration/modules/NATSModuleTest.cpp
+                tests/integration/modules/OpenSearchModuleTest.cpp
                 tests/integration/modules/PostgreSQLModuleTest.cpp
                 tests/integration/modules/RabbitMQModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp

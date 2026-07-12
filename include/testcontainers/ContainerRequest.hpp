@@ -33,7 +33,7 @@ enum class ImagePullPolicy {
 /// build one by hand rather than via `to_request()`, you own the consistency
 /// of the port trio: `exposed_ports` (typed, declaration order),
 /// `spec.exposed_ports` (the rendered "6379/tcp" strings), and
-/// `spec.publish_all_ports`.
+/// `spec.published_ports` (the explicit ephemeral bindings).
 struct ContainerRequest {
     /// The Docker create body, fully translated: the image reference is already
     /// resolved/substituted, env entries are "KEY=VALUE", exposed ports are

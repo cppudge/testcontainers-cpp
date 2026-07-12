@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -83,6 +84,18 @@ std::chrono::milliseconds probe_budget(std::chrono::steady_clock::time_point dea
 /// yet"). Shared by the Port wait strategy and the compose published-port
 /// wait.
 bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::milliseconds budget);
+
+/// One HTTP probe, bounded by `budget`: open a TCP connection to host:port,
+/// GET `path`, and return the response status — or std::nullopt when the
+/// connection/exchange failed, timed out, or the peer closed without sending
+/// a single response byte (the caller treats all of those as "not ready
+/// yet"). The zero-byte-close case is load-bearing: Docker Desktop's port
+/// proxy accepts connections for a published port and, while the container
+/// backend is not listening yet, closes them gracefully after the request —
+/// which must read as "not ready", never as a status. Drives the Http wait
+/// strategy; exposed for unit testing.
+std::optional<int> http_probe(const std::string& host, std::uint16_t port, const std::string& path,
+                              std::chrono::milliseconds budget);
 
 /// Run each readiness condition in `waits` in order, under a single shared
 /// deadline (`timeout` from the moment this is called). Throws

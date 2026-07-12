@@ -34,5 +34,6 @@ testcontainers::modules::MariaDBImage, testcontainers::modules::KafkaImage,
 testcontainers::modules::RabbitMQImage, testcontainers::modules::MongoDBImage,
 testcontainers::modules::NATSImage, testcontainers::modules::MosquittoImage,
 testcontainers::modules::ClickHouseImage, testcontainers::modules::MinIOImage,
-testcontainers::modules::RustFSImage, testcontainers::modules::ScyllaDBImage — each with
-its started-handle twin (`RedisContainer`, …).
+testcontainers::modules::RustFSImage, testcontainers::modules::ScyllaDBImage,
+testcontainers::modules::OpenSearchImage — each with its started-handle twin
+(`RedisContainer`, …).

@@ -98,11 +98,15 @@ public:
     GenericImage& with_image(const std::string& reference);
 
     GenericImage& with_exposed_port(ContainerPort p) {
-        // Rendered into the spec right away, so the typed/string/publish-all
-        // port trio stays consistent by construction.
+        // Rendered into the spec right away, so the typed/string/published
+        // port trio stays consistent by construction. Published explicitly
+        // (an ephemeral binding per port), NOT via PublishAllPorts: that
+        // would also publish every port the image EXPOSEs — images carry
+        // surprising EXPOSE lists (port 22 included), and a host with sshd
+        // on 22 then fails the whole container start.
         request_.exposed_ports.push_back(p);
         request_.spec.exposed_ports.push_back(to_string(p));
-        request_.spec.publish_all_ports = true;
+        request_.spec.published_ports.push_back(to_string(p));
         return *this;
     }
 

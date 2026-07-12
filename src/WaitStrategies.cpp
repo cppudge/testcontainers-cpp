@@ -288,12 +288,6 @@ bool tcp_probe(const std::string& host, std::uint16_t port, std::chrono::millise
     }
 }
 
-namespace {
-
-/// One HTTP probe, bounded by `budget`: open a TCP connection to host:port and
-/// GET `path`. Returns the response status, or std::nullopt if the
-/// connection/exchange failed or timed out (the caller treats that as "not
-/// ready yet").
 std::optional<int> http_probe(const std::string& host, std::uint16_t port, const std::string& path,
                               std::chrono::milliseconds budget) {
     namespace asio = boost::asio;
@@ -338,11 +332,29 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port, const
 
         boost::beast::flat_buffer buffer;
         http::response<http::string_body> res;
+        std::size_t received = 0;
         http::async_read(stream, buffer, res,
-                         [&](const boost::system::error_code& op_ec, std::size_t) { ec = op_ec; });
+                         [&](const boost::system::error_code& op_ec, std::size_t bytes) {
+                             ec = op_ec;
+                             received = bytes;
+                         });
         io.restart();
         io.run();
         if (ec && ec != http::error::end_of_stream) {
+            return std::nullopt;
+        }
+        if (ec == http::error::end_of_stream && received == 0) {
+            // The peer accepted the connection, swallowed the request, and
+            // closed without ONE response byte — `res` is still
+            // default-constructed, and its default status (200) must not
+            // leak out as an answer. Docker Desktop's port proxy does
+            // exactly this for a published port while the container's
+            // backend is not listening yet: connections are accepted
+            // host-side and closed gracefully when the in-container dial
+            // fails — reading it as 200 released HTTP waits seconds before
+            // the server existed. (A close-DELIMITED real response also ends
+            // in end_of_stream, but with its bytes counted — that one keeps
+            // its parsed status.)
             return std::nullopt;
         }
 
@@ -354,6 +366,8 @@ std::optional<int> http_probe(const std::string& host, std::uint16_t port, const
         return std::nullopt;
     }
 }
+
+namespace {
 
 /// Resolve the mapped host port once, then probe `cond.path` every
 /// `poll_interval` until the response status matches `expected_status`.

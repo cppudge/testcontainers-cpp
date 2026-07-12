@@ -61,6 +61,7 @@ nav:
       - MinIO: modules/minio.md
       - RustFS: modules/rustfs.md
       - ScyllaDB: modules/scylladb.md
+      - OpenSearch: modules/opensearch.md
   - API reference: https://cppudge.github.io/testcontainers-cpp/api/
 
 markdown_extensions:

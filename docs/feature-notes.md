@@ -128,7 +128,8 @@ hooks → start → wait → handle) lives in `detail::Runner`; `GenericImage::s
 `run(to_request())`. Public `run(request)` / `run(client, request)` bootstrap the Reaper and
 delegate; the core skips reaper bootstrap so unit tests drive it against a canned responder.
 A hand-built request owns the consistency of the port trio (typed `exposed_ports` vs rendered
-`spec.exposed_ports` vs `publish_all_ports`). Modules (Postgres/Redis/…, landed 2026-07-12)
+`spec.exposed_ports` vs `spec.published_ports`, the explicit ephemeral bindings). Modules
+(Postgres/Redis/…, landed 2026-07-12)
 are exactly that composition over `GenericImage` — see "Ecosystem modules" below.
 
 **Lifecycle hooks + startup retry** — `with_created/starting/started/stopping_hook`
@@ -884,6 +885,70 @@ matches. Out of scope: auth opt-in (with_command_args + with_wait recipe), Alter
 (DynamoDB API, port 8000), multi-node clusters (break host-side driver discovery),
 family extraction with a future Cassandra module (design flat now, extract with both on
 the table — the MySqlFamily lesson).
+
+**OpenSearch module** (2026-07-13, `modules::OpenSearchImage` → `modules::OpenSearchContainer`,
+wave 2, closing the wave) — pinned `opensearchproject/opensearch:3.7.0` (active 3.x line;
+the hub publishes floating latest/3/2 plus immutable x.y.z only — no minor-line tag, so
+the pin is patch-level, the apache/kafka precedent; ≥2.12 keeps the env contract).
+Security plugin DISABLED by design: plain HTTP on 9200, NO credentials and NO
+username()/password() getters (security-off has no accounts; empty-string stubs invite
+`curl -u :` misuse — the secure follow-up introduces them with real values, blocked on an
+https/skip-verify flag for wait_for::http; the interim recipe — with_wait +
+successful_shell_command with in-container `curl -sk -u admin:<pw>` — is documented on
+with_env). The simplest module of the wave: the managed env QUARTET
+(discovery.type=single-node, DISABLE_SECURITY_PLUGIN, DISABLE_INSTALL_DEMO_CONFIG,
+OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m) is baked in the CONSTRUCTOR, not at render —
+every later with_env lands after it and the entrypoint applies the last duplicate, so the
+Kafka user-wins rule falls out of append order with no render-time machinery (these are
+engine tuning, no getter to desync; single-node discovery also bypasses the bootstrap
+checks, so no vm.max_map_count sysctl). Dotted env keys ARE the settings API (the
+entrypoint turns section.setting into -E options — verified live: cluster.name via env
+lands in the root/health bodies). Readiness = wait_for::http("/_cluster/health", 9200):
+the root endpoint answers from the local node, cluster health only once a cluster manager
+is elected; 120s ctor budget (JVM + ~1GB of plugins; observed 10-20s warm locally). Two
+live-falsified design assumptions worth remembering: (1) asserting "status":"green" right
+after readiness FLAKES — an internal shard can still be initializing (status yellow,
+observed live); the probe's promise is that health ANSWERS, so tests assert the report
+shape, never the color; (2) the AL2023 image DOES ship curl (8.17) — the driver-free
+exec-seeding path holds. Only 9200 published (9300/9600/9650 stay in-container;
+customizer recipe documented). No hooks → reuse hash covers everything. Out of scope:
+secure variant (above), Elasticsearch (separate future module — different image, non-Apache
+license, security-on bootstrap).
+
+## Wave-2 core fixes (found by the modules, fixed in the core)
+
+**http_probe zero-byte-close false positive** (2026-07-13, src/WaitStrategies.cpp) — the
+Http wait's probe treated `end_of_stream` as acceptable and then read the status off the
+response object; when the peer closed WITHOUT sending a single byte, that object was
+still default-constructed — and Beast's default status is 200 OK. Docker Desktop's port
+proxy does exactly that: it accepts connections for a published port host-side and, while
+the container backend is not listening yet, swallows the request and closes gracefully
+when the in-container dial fails — so every wait_for::http released seconds before the
+server existed, LOCALLY ONLY (a namespace-faithful Linux daemon refuses instead, so CI
+was always honest). Unmasked by OpenSearch's slow JVM boot (start() returned in 4s, the
+first exec hit connection-refused); MinIO/RustFS had been silently false-passing their
+health waits locally, masked by 1-3s boots; ClickHouse/NATS were immune (their first wait
+is not HTTP). Fix: count the response bytes — end_of_stream with ZERO bytes is "not ready
+yet"; end_of_stream with bytes is a legitimate close-delimited response and keeps its
+parsed status. http_probe moved to the detail header for unit testing (LoopbackServer
+sessions: zero-byte close → nullopt; 503 with Content-Length → 503; close-delimited 200 →
+200).
+
+**Published ports: exact bindings instead of PublishAllPorts** (2026-07-13,
+GenericImage/ApiMapping) — `with_exposed_port` used to flip HostConfig.PublishAllPorts,
+which publishes every port the IMAGE exposes on top of the requested ones. Surprise
+EXPOSE lists are real: scylladb/scylla EXPOSEs seven ports INCLUDING 22 — and on GitHub
+runners the daemon's attempt to bind a host port for it collided with the runner's own
+sshd ("failed to listen on TCP socket: address already in use"), failing every ScyllaDB
+container start CI-side while Docker Desktop (no sshd on the Windows host) passed
+locally; opensearch EXPOSEs 4 ports, of which the module needs one. Fix: the spec grew
+`published_ports` (rendered as explicit HostConfig.PortBindings entries with an empty
+HostPort — daemon-assigned ephemeral), `with_exposed_port` fills it instead of setting
+publish-all, so a container publishes EXACTLY what the builder asked for — the tc-java/go
+semantic. `spec.publish_all_ports` still exists for direct-spec users that want the old
+behavior (Ryuk, the compose ambassador). Side effects: fewer ephemeral ports burned per
+container, and the create body (hence the reuse hash) now carries the bindings — reuse
+containers from older library versions won't match, by design.
 
 ## Compose & Windows
 

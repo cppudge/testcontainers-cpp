@@ -13,6 +13,7 @@
 #include "testcontainers/modules/Mosquitto.hpp"
 #include "testcontainers/modules/MySQL.hpp"
 #include "testcontainers/modules/NATS.hpp"
+#include "testcontainers/modules/OpenSearch.hpp"
 #include "testcontainers/modules/PostgreSQL.hpp"
 #include "testcontainers/modules/RabbitMQ.hpp"
 #include "testcontainers/modules/Redis.hpp"

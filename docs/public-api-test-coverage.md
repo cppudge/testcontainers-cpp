@@ -419,6 +419,11 @@ which includes it in place of the individual header.
 | `ScyllaDBImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: ScyllaDBModuleConfig.CustomWaitReplacesDefaultPair; the module sets no env — pass-through covered by ScyllaDBModuleConfig.PassThroughsLandOnTheImage) | n/a |
 | `ScyllaDBImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: ScyllaDBModuleConfig.CustomizerRunsLastAndWins, ScyllaDBModuleConfig.PassThroughsLandOnTheImage, ScyllaDBModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
 | `ScyllaDBContainer` getters (`contact_point`, `datacenter`) + `exec_cql` | ✅ | n/a | ✅ ScyllaDBModule.BecomesQueryable, ScyllaDBModule.KeyspaceTableRoundTrip, ScyllaDBModule.CustomDatacenterReported (exec_cql in every ScyllaDBModule test) | n/a |
+| `OpenSearchImage()` defaults + `start()` (managed env quartet + /_cluster/health wait, 120s budget) | ✅ | n/a | ✅ OpenSearchModule.DefaultsStartAndServe, OpenSearchModule.ClusterHealthAnswersFromHost (host-side, through the published port) | n/a |
+| `OpenSearchImage::with_env` (user wins; dotted keys are settings) | ✅ | n/a | ✅ OpenSearchModule.DottedEnvBecomesSetting, OpenSearchModule.HeapOverrideWins (append order unit-tested: OpenSearchModuleConfig.UserEnvAppendsAfterManagedSoUserWins) | n/a |
+| `OpenSearchImage::with_wait` | ✅ | n/a | ❌ (unit-tested: OpenSearchModuleConfig.CustomWaitReplacesDefaultProbe) | n/a |
+| `OpenSearchImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: OpenSearchModuleConfig.CustomizerRunsLastAndWins, OpenSearchModuleConfig.PassThroughsLandOnTheImage, OpenSearchModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `OpenSearchContainer` getters (`http_url`) + `container()` exec | ✅ | n/a | ✅ OpenSearchModule.DefaultsStartAndServe, OpenSearchModule.IndexSearchRoundTrip (a real index/search through in-image curl) | n/a |
 
 ---
 

@@ -22,7 +22,8 @@
 using namespace testcontainers;
 
 // alpine won't actually listen on the exposed port, but Docker still PUBLISHES
-// it (publish_all_ports), so the host-port getters resolve a real mapped port.
+// it (an explicit ephemeral PortBinding per exposed port), so the host-port
+// getters resolve a real mapped port.
 class PortGetters : public tcit::LinuxEngineTest {};
 
 TEST_F(PortGetters, Ipv4AndDefaultAgree) {

@@ -20,11 +20,17 @@ namespace testcontainers {
 /// fields for every option the library surfaces, translated into the daemon's
 /// JSON in one place.
 struct CreateContainerSpec {
-    std::string image;                                       ///< "alpine:3.20"
-    std::vector<std::string> cmd;                            ///< command / args
-    std::vector<std::string> entrypoint;                     ///< Entrypoint override
-    std::vector<std::string> env;                            ///< "KEY=VALUE" entries
-    std::vector<std::string> exposed_ports;                  ///< "6379/tcp"
+    std::string image;                      ///< "alpine:3.20"
+    std::vector<std::string> cmd;           ///< command / args
+    std::vector<std::string> entrypoint;    ///< Entrypoint override
+    std::vector<std::string> env;           ///< "KEY=VALUE" entries
+    std::vector<std::string> exposed_ports; ///< "6379/tcp"
+    /// Ports to publish to daemon-assigned ephemeral host ports
+    /// (HostConfig.PortBindings with an empty HostPort). Publishes EXACTLY
+    /// these — unlike `publish_all_ports`, which also publishes every port
+    /// the image EXPOSEs (surprise bindings: an image exposing 22 collides
+    /// with the host's sshd).
+    std::vector<std::string> published_ports;
     std::vector<std::pair<std::string, std::string>> labels; ///< container labels
     std::optional<std::string> name;                         ///< container name (?name=)
     std::optional<std::string> platform;                     ///< "<os>/<arch>" (?platform=)

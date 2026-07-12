@@ -1,10 +1,16 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/system/error_code.hpp>
+
 #include <chrono>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "LoopbackServer.hpp"
 #include "WaitStrategies.hpp"
 #include "testcontainers/WaitFor.hpp"
 
@@ -39,6 +45,9 @@
 //   WaitFor.OccurrenceCounterDoesNotRescanConsumedBytes - bytes consumed by a match cannot seed a new match with later chunks ("baa"+"a"/"aa" stays 1, like the snapshot count of "baaa").
 //   WaitFor.OccurrenceCounterEmptyNeedleCountsNothing - parity with count_occurrences.
 //   WaitFor.OccurrenceCounterMatchesAfterPrefixTrim - a match still lands after the internal >64KiB consumed-prefix compaction.
+//   WaitFor.HttpProbeZeroByteCloseIsNotReady - a peer that accepts, swallows the request, and closes without one response byte reads as "not ready" (nullopt), never as the default-constructed 200 — the shape of Docker Desktop's port proxy while the container backend is not listening yet.
+//   WaitFor.HttpProbeReturnsRealStatus - a well-formed response's status comes back as-is (503 here — the caller's status check is what decides readiness).
+//   WaitFor.HttpProbeCloseDelimitedResponseKeepsStatus - a close-delimited response (no Content-Length, connection close ends the body) also ends in end_of_stream, but its parsed status must survive the zero-byte-close guard.
 
 using namespace testcontainers;
 
@@ -330,4 +339,81 @@ TEST(WaitFor, OccurrenceCounterMatchesAfterPrefixTrim) {
     EXPECT_EQ(counter.count(), 0u);
     counter.feed("ker");
     EXPECT_EQ(counter.count(), 1u);
+}
+
+namespace {
+
+/// Drain one HTTP request off `socket` (until the blank line; probe requests
+/// have no body), so a scripted response — or a deliberate close — happens
+/// at a deterministic point of the exchange.
+void read_probe_request(boost::asio::ip::tcp::socket& socket) {
+    std::string request;
+    char chunk[512];
+    boost::system::error_code ec;
+    while (request.find("\r\n\r\n") == std::string::npos) {
+        const std::size_t n = socket.read_some(boost::asio::buffer(chunk), ec);
+        if (ec) {
+            return; // the throwaway teardown connection; nothing to drain
+        }
+        request.append(chunk, n);
+    }
+}
+
+} // namespace
+
+TEST(WaitFor, HttpProbeZeroByteCloseIsNotReady) {
+    // The shape of Docker Desktop's port proxy while the container backend
+    // is not listening yet: the connection is accepted, the request is
+    // swallowed, and the socket closes gracefully with zero response bytes.
+    // That must read as "not ready" — the default-constructed response's
+    // status (200) leaking out released HTTP waits before the server existed.
+    tcunit::LoopbackServer server([](boost::asio::ip::tcp::socket& socket) {
+        read_probe_request(socket);
+        boost::system::error_code ignore;
+        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore);
+        socket.close(ignore);
+    });
+
+    const std::optional<int> status =
+        detail::http_probe("127.0.0.1", server.port(), "/health", std::chrono::seconds(5));
+    EXPECT_FALSE(status.has_value());
+}
+
+TEST(WaitFor, HttpProbeReturnsRealStatus) {
+    tcunit::LoopbackServer server([](boost::asio::ip::tcp::socket& socket) {
+        read_probe_request(socket);
+        boost::system::error_code ignore;
+        boost::asio::write(socket,
+                           boost::asio::buffer(std::string("HTTP/1.1 503 Service Unavailable\r\n"
+                                                           "Content-Length: 0\r\n\r\n")),
+                           ignore);
+        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore);
+        socket.close(ignore);
+    });
+
+    const std::optional<int> status =
+        detail::http_probe("127.0.0.1", server.port(), "/health", std::chrono::seconds(5));
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, 503);
+}
+
+TEST(WaitFor, HttpProbeCloseDelimitedResponseKeepsStatus) {
+    // No Content-Length: the connection close IS the end of the body, so the
+    // read finishes with end_of_stream — with response bytes on the wire.
+    // The zero-byte-close guard must not eat this legitimate answer.
+    tcunit::LoopbackServer server([](boost::asio::ip::tcp::socket& socket) {
+        read_probe_request(socket);
+        boost::system::error_code ignore;
+        boost::asio::write(socket,
+                           boost::asio::buffer(std::string("HTTP/1.1 200 OK\r\n"
+                                                           "Connection: close\r\n\r\nok")),
+                           ignore);
+        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore);
+        socket.close(ignore);
+    });
+
+    const std::optional<int> status =
+        detail::http_probe("127.0.0.1", server.port(), "/health", std::chrono::seconds(5));
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, 200);
 }

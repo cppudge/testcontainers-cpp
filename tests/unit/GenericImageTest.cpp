@@ -27,7 +27,7 @@
 //   GenericImage.LifecycleHooksGrowVectors - each with_*_hook builder appends to the matching hook vector (in order across repeated calls).
 //   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
 //   GenericImage.LifecycleBuildersChainOnRvalue - the hook/attempts builders chain on a temporary rvalue.
-//   GenericImage.ToRequestSnapshotsBuilderState - to_request() carries the translated create spec (image ref, "K=V" env, "port/proto" strings, publish-all) plus every orchestration field, one-to-one with the builders.
+//   GenericImage.ToRequestSnapshotsBuilderState - to_request() carries the translated create spec (image ref, "K=V" env, "port/proto" strings, the explicit published-port bindings) plus every orchestration field, one-to-one with the builders.
 //   GenericImage.ExposedHostPortsDefaultEmpty - a freshly constructed image exposes no host ports.
 //   GenericImage.ExposedHostPortsAccumulateAndSnapshot - with_exposed_host_port accumulates in call order, chains on an rvalue, and to_request() carries the ports without touching the create spec (no ExtraHosts entry until run()).
 //   GenericImage.PullPolicyOverloadsReplaceEachOther - the age overload sets Default + pull_max_age (carried into to_request), the enum overload clears a previously-set budget, and a fresh image has no budget.
@@ -327,7 +327,10 @@ TEST(GenericImage, ToRequestSnapshotsBuilderState) {
     EXPECT_EQ(req.spec.cmd, (std::vector<std::string>{"redis-server"}));
     EXPECT_EQ(req.spec.env, (std::vector<std::string>{"MODE=standalone"}));
     EXPECT_EQ(req.spec.exposed_ports, (std::vector<std::string>{"6379/tcp"}));
-    EXPECT_TRUE(req.spec.publish_all_ports);
+    // Published explicitly (an ephemeral binding for exactly this port), not
+    // via PublishAllPorts — that would also publish every image-EXPOSEd port.
+    EXPECT_EQ(req.spec.published_ports, (std::vector<std::string>{"6379/tcp"}));
+    EXPECT_FALSE(req.spec.publish_all_ports);
     // The snapshot carries EXACTLY the builder's labels: the session/reuse
     // labels are layered on by run() (they depend on the run, not the request).
     EXPECT_EQ(req.spec.labels, (std::vector<std::pair<std::string, std::string>>{{"owner", "tc"}}));

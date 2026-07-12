@@ -134,6 +134,6 @@ defaults, in that order). Remote daemons, TLS, registry credentials, and the
 - [Core concepts](core-concepts.md) — the container lifecycle, wait strategies, cleanup,
   exec/logs, networks, compose.
 - [Modules](modules/index.md) — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB,
-  NATS, Mosquitto, ClickHouse, MinIO, RustFS, ScyllaDB.
+  NATS, Mosquitto, ClickHouse, MinIO, RustFS, ScyllaDB, OpenSearch.
 - [API reference](https://cppudge.github.io/testcontainers-cpp/api/) — every public class and
   method, generated from the headers.
