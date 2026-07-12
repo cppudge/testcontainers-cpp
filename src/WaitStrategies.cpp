@@ -16,6 +16,7 @@
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
 
+#include "Deadline.hpp"
 #include "HostAddress.hpp"
 #include "docker/Ports.hpp"
 #include "testcontainers/ContainerPort.hpp"
@@ -165,8 +166,9 @@ void wait_for_log(DockerClient& client, const std::string& id, const wait_for::L
         // FollowEnd::StreamEnded: the container stopped. Its logs are final
         // unless it restarts (restart policy), so pause briefly and re-follow;
         // an expired budget lands in the final snapshot check above.
-        std::this_thread::sleep_until(std::min(Clock::now() + std::chrono::milliseconds(200),
-                                               deadline + std::chrono::milliseconds(1)));
+        std::this_thread::sleep_until(
+            std::min(Clock::now() + std::chrono::milliseconds(200),
+                     detail::saturated_add(deadline, std::chrono::milliseconds(1))));
     }
 }
 
@@ -486,8 +488,11 @@ void wait_for_command(DockerClient& client, const std::string& id, const wait_fo
         if (Clock::now() >= deadline) {
             throw timeout_error();
         }
+        // Both legs saturate: `interval` is a user knob (poll_interval) and
+        // `deadline` may already sit at the clamped far future.
         std::this_thread::sleep_until(
-            std::min(Clock::now() + interval, deadline + std::chrono::milliseconds(1)));
+            std::min(detail::saturated_add(Clock::now(), interval),
+                     detail::saturated_add(deadline, std::chrono::milliseconds(1))));
     }
 }
 
@@ -508,7 +513,11 @@ void wait_until_ready(DockerClient& client, const std::string& id,
     // and docs/TODO.md for the analysis.
     const DockerClient::Session session(client);
 
-    const Clock::time_point deadline = Clock::now() + timeout;
+    // saturated_add, not '+': the startup timeout is a raw user knob, and a
+    // "wait forever"-sized value must clamp instead of wrapping into the past
+    // (which failed healthy starts instantly — and only on the stdlib whose
+    // clock rep is fine enough to overflow).
+    const Clock::time_point deadline = detail::saturated_add(Clock::now(), timeout);
 
     for (const WaitFor& w : waits) {
         std::visit(

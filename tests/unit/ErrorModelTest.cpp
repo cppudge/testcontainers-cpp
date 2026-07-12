@@ -27,6 +27,7 @@
 //   ErrorModel.Http500KeepsStatusOnDockerError - a 500 reply surfaces as a plain DockerError carrying status_code()==500.
 //   ErrorModel.HtmlThrough200BecomesDockerError - a 200 reply with an HTML body makes inspect_container throw the guarded-parse DockerError instead of json::parse_error.
 //   ErrorModel.CreateContainer404PullsAndRetries - create_container's 404 -> pull -> retry sequence succeeds against a canned 404/200/201 daemon (explicit auth skips the host's cred-helper lookup).
+//   ErrorModel.CreateContainer404NetworkDoesNotPull - a create 404 whose body names a missing NETWORK throws NotFoundError without triggering the lazy image pull (exactly ping + one create on the wire).
 
 namespace {
 
@@ -218,4 +219,19 @@ TEST(ErrorModel, CreateContainer404PullsAndRetries) {
     // config / credential helpers — the unit test must not shell out.
     const std::string id = client.create_container(spec, testcontainers::RegistryAuth{});
     EXPECT_EQ(id, "abc123");
+}
+
+TEST(ErrorModel, CreateContainer404NetworkDoesNotPull) {
+    // create also answers 404 for a missing NETWORK (HostConfig.NetworkMode):
+    // the lazy image pull must not fire there — it would re-download a
+    // present image and then misattribute the failure to it.
+    CannedHttpServer server(std::vector<std::string>{
+        ping_ok(), http_response(404, "Not Found", R"({"message":"network nope not found"})")});
+    testcontainers::DockerClient client{server.host()};
+
+    testcontainers::CreateContainerSpec spec;
+    spec.image = "busybox:latest";
+    spec.network = "nope";
+    EXPECT_THROW(client.create_container(spec, testcontainers::RegistryAuth{}), NotFoundError);
+    EXPECT_EQ(server.requests().size(), 2u); // ping + the one create; no pull
 }

@@ -1,6 +1,7 @@
 #include "testcontainers/DockerComposeContainer.hpp"
 
 #include "Config.hpp"
+#include "Deadline.hpp"
 #include "HostAddress.hpp"
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
@@ -604,8 +605,10 @@ void DockerComposeContainer::start() {
                 : get_service_port(exposed.service, exposed.instance, exposed.port);
         const std::string host = get_service_host(exposed.service);
 
-        // The same user-configurable timeout that governs compose's --wait.
-        const auto deadline = std::chrono::steady_clock::now() + wait_timeout_;
+        // The same user-configurable timeout that governs compose's --wait
+        // (saturated: a "wait forever"-sized value clamps, never wraps).
+        const auto deadline =
+            detail::saturated_add(std::chrono::steady_clock::now(), wait_timeout_);
         bool connected = false;
         while (std::chrono::steady_clock::now() < deadline) {
             if (detail::tcp_probe(host, host_port, detail::probe_budget(deadline))) {

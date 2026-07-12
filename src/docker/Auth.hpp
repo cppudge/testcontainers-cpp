@@ -4,7 +4,6 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include "testcontainers/RegistryAuth.hpp"
 
@@ -113,13 +112,5 @@ std::string apply_hub_image_prefix(const std::string& image, const std::string& 
 /// key of ~/.testcontainers.properties) and apply it via apply_hub_image_prefix.
 /// (The config read is the only impurity; keep apply_hub_image_prefix pure.)
 std::string substitute_image_name(const std::string& image);
-
-/// Split a "name[:tag]" reference for builders that take name and tag
-/// separately (GenericImage). The tag separator is the last ':' AFTER the
-/// last '/' — a ':' before that is a registry port (localhost:5000/redis has
-/// no tag); a reference without one gets tag "latest". Pure. Digest
-/// references (name@sha256:...) do not fit the name:tag shape the callers
-/// join with ':' and are not supported here.
-std::pair<std::string, std::string> split_image_ref(const std::string& image);
 
 } // namespace testcontainers::docker

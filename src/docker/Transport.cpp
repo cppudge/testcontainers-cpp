@@ -2,6 +2,7 @@
 
 #include "AsioRun.hpp"
 #include "Config.hpp"
+#include "Deadline.hpp"
 #include "Env.hpp"
 #include "Strings.hpp"
 #include "docker/DuplexExchange.hpp"
@@ -138,7 +139,9 @@ class TcpTransport final : public TransportBase {
 public:
     TcpTransport(const std::string& host, std::uint16_t port, const TransportTimeouts& timeouts)
         : TransportBase(timeouts.io), socket_(ioc_) {
-        const auto deadline = Clock::now() + timeouts.connect;
+        // Fully qualified: docker::detail (this file's sibling namespace)
+        // would otherwise shadow the core detail namespace.
+        const auto deadline = testcontainers::detail::saturated_add(Clock::now(), timeouts.connect);
         const auto endpoints = resolve_endpoints(ioc_, host, port, deadline);
 
         boost::system::error_code ec;
@@ -239,7 +242,9 @@ public:
             stream_.set_verify_callback(asio::ssl::host_name_verification(host));
         }
 
-        const auto deadline = Clock::now() + timeouts.connect;
+        // Fully qualified: docker::detail (this file's sibling namespace)
+        // would otherwise shadow the core detail namespace.
+        const auto deadline = testcontainers::detail::saturated_add(Clock::now(), timeouts.connect);
         const auto endpoints = resolve_endpoints(ioc_, host, port, deadline);
 
         boost::system::error_code ec;
@@ -451,7 +456,9 @@ public:
         // use) waits. ONE connect budget covers all attempts (per-attempt waits
         // use whatever is left of it, floored at 1ms — 0 would mean
         // NMPWAIT_USE_DEFAULT_WAIT).
-        const auto deadline = Clock::now() + timeouts.connect;
+        // Fully qualified: docker::detail (this file's sibling namespace)
+        // would otherwise shadow the core detail namespace.
+        const auto deadline = testcontainers::detail::saturated_add(Clock::now(), timeouts.connect);
         HANDLE handle = INVALID_HANDLE_VALUE;
         for (;;) {
             handle = ::CreateFileA(win_path.c_str(), GENERIC_READ | GENERIC_WRITE,

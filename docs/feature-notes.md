@@ -299,8 +299,12 @@ says nothing about freshness, so derive the tag from a hash of the build inputs 
 change. `GenericImage::inspect(name, tag)` / `img.inspect()` (backed by
 `DockerClient::inspect_image[_raw]`, which also takes full references/digests) return a typed
 `ImageInspect` — id, repo tags/digests, created, os/arch, size, and the image config (labels,
-env, cmd, entrypoint, exposed ports, workdir, user); the instance form uses `image():tag()`
-verbatim, no substitutor. Built images are session-scoped: `build()` ships the managed-by /
+env, cmd, entrypoint, exposed ports, workdir, user); the instance form re-joins
+`image()`/`tag()` digest-aware, no substitutor. Digest-pinned references
+(`name@sha256:...`) work end to end (2026-07-12): `from_reference`/`with_image` split them
+at the '@' (the digest becomes the tag slot), and every re-join — the create-spec
+reference, the pull query (`?tag=` accepts a digest), the utility-image overrides — goes
+through the shared digest-aware `join_image` ('@', never ':'). Built images are session-scoped: `build()` ships the managed-by /
 session labels via `?labels=` (merged with the Dockerfile's own LABELs; on a duplicate key the
 query label wins, `docker build --label` parity) and boots the reaper, so Ryuk removes the
 image shortly after the process exits — base images and pulled layers are untouched. With the

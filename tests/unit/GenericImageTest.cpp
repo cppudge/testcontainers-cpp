@@ -22,7 +22,7 @@
 //   GenericImage.ChainsOnRvalue - with_* chains on a temporary rvalue and accumulates all settings.
 //   GenericImage.ReusableAfterWith - a named image survives a with_* call and reflects both early and later settings (no use-after-move).
 //   GenericImage.FromReference - from_reference splits "name[:tag]" into image and tag, defaulting to "latest" and handling a registry host:port.
-//   GenericImage.WithImageReplacesReferenceKeepingOptions - with_image swaps name and tag (same parsing as from_reference) while every other configured option survives.
+//   GenericImage.WithImageReplacesReferenceKeepingOptions - with_image swaps name and tag (same parsing as from_reference) while every other configured option survives; a digest reference splits at '@' and re-joins with '@' in the rendered create-spec reference.
 //   GenericImage.LifecycleHookDefaults - a freshly constructed image has no created/starting/started/stopping hooks and a single startup attempt.
 //   GenericImage.LifecycleHooksGrowVectors - each with_*_hook builder appends to the matching hook vector (in order across repeated calls).
 //   GenericImage.StartupAttemptsBuilder - with_startup_attempts records the count and clamps values < 1 to 1.
@@ -240,6 +240,13 @@ TEST(GenericImage, WithImageReplacesReferenceKeepingOptions) {
     img.with_image("host:5000/repo:1.2");
     EXPECT_EQ(img.image(), "host:5000/repo");
     EXPECT_EQ(img.tag(), "1.2");
+
+    // Digest references: split at '@', and the rendered create-spec reference
+    // re-joins with '@' (a ':' join would be an invalid reference).
+    img.with_image("ghcr.io/owner/img@sha256:0123abcd");
+    EXPECT_EQ(img.image(), "ghcr.io/owner/img");
+    EXPECT_EQ(img.tag(), "sha256:0123abcd");
+    EXPECT_EQ(img.to_request().spec.image, "ghcr.io/owner/img@sha256:0123abcd");
 }
 
 TEST(GenericImage, LifecycleHookDefaults) {

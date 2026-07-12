@@ -24,7 +24,7 @@
 #include "Config.hpp"
 #include "RandomHex.hpp"
 #include "Runner.hpp"
-#include "docker/Auth.hpp" // split_image_ref (sshd.container.image override)
+#include "docker/ApiMapping.hpp" // split_image (sshd.container.image override)
 #include "testcontainers/Container.hpp"
 #include "testcontainers/ContainerRequest.hpp"
 #include "testcontainers/Error.hpp"
@@ -42,8 +42,8 @@ using asio::ip::tcp;
 /// openssh; its own entrypoint+command set ${USERNAME} (root) to ${PASSWORD}
 /// and run sshd in the foreground with GatewayPorts=yes. Overridable via env
 /// TESTCONTAINERS_SSHD_CONTAINER_IMAGE / properties key sshd.container.image
-/// (a name[:tag] reference); the hub prefix applies through GenericImage's
-/// default substitutor either way.
+/// (a name[:tag] or name@sha256:... reference); the hub prefix applies
+/// through GenericImage's default substitutor either way.
 constexpr const char* kSshdImage = "testcontainers/sshd";
 constexpr const char* kSshdTag = "1.3.0";
 
@@ -53,7 +53,7 @@ std::pair<std::string, std::string> sshd_image_and_tag() {
     if (!override_ref) {
         return {kSshdImage, kSshdTag};
     }
-    return docker::split_image_ref(*override_ref);
+    return docker::split_image(*override_ref);
 }
 
 /// Per-direction buffer cap per forwarded connection. When a buffer is full

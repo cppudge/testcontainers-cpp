@@ -142,9 +142,18 @@ std::string expect_string_field(const std::string& body, const char* field,
 /// throw DockerError if it reports an error (Docker returns HTTP 200 even then).
 void throw_if_pull_error(const std::string& pull_stream, const std::string& image);
 
-/// Split "name[:tag]" into {name, tag}; tag defaults to "latest". Handles a
-/// registry host with a port (e.g. "my-reg:5000/img" -> {"my-reg:5000/img", "latest"}).
+/// Split "name[:tag]" or "name@sha256:<hex>" into {name, tag-or-digest}: the
+/// tag separator is the last ':' after the last '/' (a registry host:port is
+/// not a tag), an '@' after the last '/' starts a digest (returned verbatim,
+/// "sha256:..."), and no tag — a bare trailing ':' included — means "latest".
+/// `join_image` is the inverse; every re-join must go through it, since a
+/// digest re-attaches with '@', not ':'.
 std::pair<std::string, std::string> split_image(const std::string& image);
+
+/// Re-join a split_image pair into a reference the daemon accepts: '@' when
+/// the tag is a digest, ':' otherwise. (A legal tag cannot contain ':'; a
+/// digest always does.)
+std::string join_image(const std::string& name, const std::string& tag);
 
 /// Build the query string (incl. leading '?') for `POST /build`: t, dockerfile,
 /// nocache, pull, target (when set), and buildargs / labels (JSON objects,

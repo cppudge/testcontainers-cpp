@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "Deadline.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers {
@@ -58,7 +59,9 @@ struct ClampedWaitPlan {
 inline ClampedWaitPlan clamped_wait_plan(std::chrono::steady_clock::time_point now,
                                          std::chrono::milliseconds value,
                                          std::chrono::steady_clock::time_point deadline) {
-    const std::chrono::steady_clock::time_point wake = now + value;
+    // saturated_add, not '+': a milliseconds::max()-sized duration must clamp
+    // to the far future (and so time out), not overflow into the past.
+    const std::chrono::steady_clock::time_point wake = detail::saturated_add(now, value);
     return {wake < deadline ? wake : deadline, wake > deadline};
 }
 

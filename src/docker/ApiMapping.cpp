@@ -927,11 +927,31 @@ void throw_if_pull_error(const std::string& pull_stream, const std::string& imag
 
 std::pair<std::string, std::string> split_image(const std::string& image) {
     const std::size_t slash = image.rfind('/');
+    const std::size_t at = image.rfind('@');
+    if (at != std::string::npos && (slash == std::string::npos || at > slash)) {
+        // Digest reference. The daemon accepts the digest wherever a tag
+        // goes (pull's ?tag= parameter takes "Tag or digest"); only the
+        // re-join differs — join_image uses '@'. A bare trailing '@' is
+        // normalized like a bare trailing ':'.
+        if (at + 1 == image.size()) {
+            return {image.substr(0, at), "latest"};
+        }
+        return {image.substr(0, at), image.substr(at + 1)};
+    }
     const std::size_t colon = image.rfind(':');
     if (colon != std::string::npos && (slash == std::string::npos || colon > slash)) {
+        if (colon + 1 == image.size()) {
+            return {image.substr(0, colon), "latest"}; // "redis:" means "redis"
+        }
         return {image.substr(0, colon), image.substr(colon + 1)};
     }
     return {image, "latest"};
+}
+
+std::string join_image(const std::string& name, const std::string& tag) {
+    // A legal tag ([A-Za-z0-9_][A-Za-z0-9._-]{0,127}) cannot contain ':'; a
+    // digest ("sha256:<hex>") always does.
+    return tag.find(':') != std::string::npos ? name + "@" + tag : name + ":" + tag;
 }
 
 std::string build_build_query(const BuildOptions& options,

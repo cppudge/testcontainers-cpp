@@ -18,7 +18,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <chrono>
 #include <map>
 #include <mutex>
@@ -38,7 +37,13 @@ std::string url_encode(std::string_view value) {
     std::string out;
     out.reserve(value.size());
     for (const unsigned char c : value) {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+        // Explicit ASCII test, not std::isalnum: the CRT's character tables
+        // are locale-sensitive, and a host process calling setlocale() must
+        // not change what goes on the wire (mirrors ConnectionString's
+        // encoder).
+        const bool alnum =
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (alnum || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
             out.push_back(static_cast<char>(c));
         } else {
             out.push_back('%');
@@ -623,8 +628,14 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
         {"Content-Type", "application/json"}};
 
     Response res = request("POST", target, body, headers);
-    if (res.status_code == 404) {
+    if (res.status_code == 404 &&
+        detail::to_lower(res.body).find("no such image") != std::string::npos) {
         // Image not present locally — pull it (with auth) and retry once.
+        // Gated on the daemon's message: create also answers 404 for a
+        // missing NETWORK (HostConfig.NetworkMode), where an unconditional
+        // pull would re-download a present image and then misattribute the
+        // failure to it. Case-insensitive: moby capitalizes ("No such
+        // image: ..."), other daemons' compat layers do not.
         pull_image(spec.image, auth);
         res = request("POST", target, body, headers);
     }

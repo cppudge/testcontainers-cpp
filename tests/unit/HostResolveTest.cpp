@@ -8,6 +8,7 @@
 // Tests in this file:
 //   HostResolve.Sha256EmptyVector - sha256_hex("") matches the standard empty-string digest.
 //   HostResolve.Sha256AbcVector - sha256_hex("abc") matches the standard "abc" digest.
+//   HostResolve.Sha256PaddingBoundaryVectors - the 55/56/64-byte inputs pin the padding boundaries (length field just fits / spills into a second block / a whole padding block is appended) that single-block vectors never touch.
 //   HostResolve.Sha256IsLowercaseHex64 - sha256_hex output is always 64 lowercase-hex characters.
 //   HostResolve.ConfigReadsCurrentContext - currentContext is read from a config.json body.
 //   HostResolve.ConfigAbsentIsNullopt - a config without currentContext yields nullopt.
@@ -27,6 +28,20 @@ TEST(HostResolve, Sha256EmptyVector) {
 TEST(HostResolve, Sha256AbcVector) {
     EXPECT_EQ(sha256_hex("abc"),
               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+TEST(HostResolve, Sha256PaddingBoundaryVectors) {
+    // 55 bytes: the 0x80 pad + 8-byte length JUST fit the first block. 56
+    // bytes (the NIST two-block vector): the length spills into a second
+    // block. 64 bytes: a whole padding block is appended. The single-block
+    // vectors above never exercise these branches — the classic sha256
+    // regression breaks exactly here while "" and "abc" stay green.
+    EXPECT_EQ(sha256_hex(std::string(55, 'a')),
+              "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318");
+    EXPECT_EQ(sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+              "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    EXPECT_EQ(sha256_hex(std::string(64, 'a')),
+              "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb");
 }
 
 TEST(HostResolve, Sha256IsLowercaseHex64) {

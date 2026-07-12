@@ -83,7 +83,8 @@
 //   ApiMapping.ParseInspectHostConfigEcho - inspect JSON's HostConfig echo parses into host_config: memory/shm/nano-cpus/cpuset, pids limit, restart policy, dns triple, sysctls, and devices.
 //   ApiMapping.ParseInspectHostConfigAbsentAndNulls - a missing HostConfig object, null members, and a null PidsLimit parse into the zero state (0 / "" / empty / nullopt) instead of throwing.
 //   ApiMapping.ParseContainerList - a /containers/json array parses into ContainerSummary entries with id, names, image, state, and labels.
-//   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" and handling a registry host:port.
+//   ApiMapping.SplitImage - "name[:tag]" splits into name and tag, defaulting to "latest" (bare trailing ':' included) and handling a registry host:port; a digest reference splits at the '@' with the "sha256:..." digest as the tag.
+//   ApiMapping.JoinImage - join_image re-attaches a tag with ':' and a digest with '@' (round-trips every split_image shape).
 //   ApiMapping.PullErrorThrows - a pull progress stream containing an error entry throws DockerError.
 //   ApiMapping.PullSuccessDoesNotThrow - a clean pull progress stream does not throw.
 //   ApiMapping.PullNonStringErrorThrows - a pull stream entry whose "error" is not a string still throws DockerError (dumped payload), never a raw json type_error.
@@ -1270,8 +1271,29 @@ TEST(ApiMapping, SplitImage) {
     using P = std::pair<std::string, std::string>;
     EXPECT_EQ(split_image("alpine"), (P{"alpine", "latest"}));
     EXPECT_EQ(split_image("alpine:3.20"), (P{"alpine", "3.20"}));
+    EXPECT_EQ(split_image("alpine:"), (P{"alpine", "latest"})); // trailing ':' = no tag
     EXPECT_EQ(split_image("ghcr.io/owner/img:1.2"), (P{"ghcr.io/owner/img", "1.2"}));
     EXPECT_EQ(split_image("my-reg:5000/img"), (P{"my-reg:5000/img", "latest"}));
+
+    // Digest references split at the '@'; the ':' INSIDE the digest is not a
+    // tag separator, and a registry port before the last '/' still is not.
+    EXPECT_EQ(split_image("redis@sha256:0123abcd"), (P{"redis", "sha256:0123abcd"}));
+    EXPECT_EQ(split_image("my-reg:5000/ns/img@sha256:0123abcd"),
+              (P{"my-reg:5000/ns/img", "sha256:0123abcd"}));
+    EXPECT_EQ(split_image("img@"), (P{"img", "latest"})); // malformed: like a bare ':'
+}
+
+TEST(ApiMapping, JoinImage) {
+    using testcontainers::docker::join_image;
+    EXPECT_EQ(join_image("alpine", "3.20"), "alpine:3.20");
+    EXPECT_EQ(join_image("my-reg:5000/img", "latest"), "my-reg:5000/img:latest");
+    // A digest re-attaches with '@' — ':' would render an invalid reference.
+    EXPECT_EQ(join_image("redis", "sha256:0123abcd"), "redis@sha256:0123abcd");
+
+    // Round-trips: join(split(x)) reproduces the reference (modulo the
+    // explicit ":latest" a bare name gains).
+    const auto [name, tag] = split_image("my-reg:5000/ns/img@sha256:0123abcd");
+    EXPECT_EQ(join_image(name, tag), "my-reg:5000/ns/img@sha256:0123abcd");
 }
 
 TEST(ApiMapping, PullErrorThrows) {

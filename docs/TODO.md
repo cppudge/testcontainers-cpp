@@ -139,8 +139,8 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
   utility image (2026-07-11); still out of scope by design: `GenericBuildableImage` output
   (the daemon resolves `FROM`), compose YAML services (the file is the user's), and raw
   `DockerClient` calls. The custom `with_image_name_substitutor` remains `GenericImage`-only.
-  Utility-image overrides take `name[:tag]` references — digest (`@sha256:...`) spellings
-  don't fit the sshd sidecar's name:tag builder. The age-based pull policy (2026-07-11)
+  Utility-image overrides take `name[:tag]` or `name@sha256:...` references (digest
+  spellings work since the 2026-07-12 split/join unification: a digest re-joins with '@'). The age-based pull policy (2026-07-11)
   applies to `GenericImage` runs only (utility images and compose stay Default/explicit).
 - **Host access residuals** — remote forwards are never cancelled once added; the
   tunnel pump wakes every 100ms even when idle (fine for test traffic).

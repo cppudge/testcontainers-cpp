@@ -26,11 +26,11 @@ GenericImage& GenericImage::with_image(const std::string& reference) {
 
 bool GenericImage::exists(const std::string& name, const std::string& tag) {
     DockerClient client = DockerClient::from_environment();
-    return client.image_exists(name + ":" + tag);
+    return client.image_exists(docker::join_image(name, tag));
 }
 
 ImageInspect GenericImage::inspect(const std::string& name, const std::string& tag) {
-    return DockerClient::from_environment().inspect_image(name + ":" + tag);
+    return DockerClient::from_environment().inspect_image(docker::join_image(name, tag));
 }
 
 ImageInspect GenericImage::inspect() const { return inspect(image_, tag_); }
@@ -48,7 +48,8 @@ ContainerRequest GenericImage::to_request() const {
 
     // Resolve the effective image reference: a custom substitutor overrides the
     // default env-prefix substitution (TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX).
-    const std::string raw_ref = image_ + ":" + tag_;
+    // join_image, not '+ ":" +': a digest tag re-attaches with '@'.
+    const std::string raw_ref = docker::join_image(image_, tag_);
     request.spec.image =
         substitutor_ ? substitutor_(raw_ref) : docker::substitute_image_name(raw_ref);
 

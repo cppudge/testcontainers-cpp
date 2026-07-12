@@ -29,6 +29,8 @@
 //   WaitFor.ClampedPlanExactFitIsNotTimeout - ending exactly ON the deadline spends the budget without overspending it (no throw).
 //   WaitFor.ClampedPlanExpiredDeadline - a deadline already in the past wakes immediately (wake in the past) and flags the timeout.
 //   WaitFor.ClampedPlanZeroDuration - a zero-length wait wakes at once and is within budget.
+//   WaitFor.ClampedPlanHugeDurationSaturates - a milliseconds::max()-sized duration saturates to the far future (no signed-overflow wrap into the past) and times out against any real deadline.
+//   WaitFor.SaturatedAddClampsAndPassesThrough - detail::saturated_add passes normal deltas through, clamps max()-sized ones to time_point::max(), never wraps near-max ones on any clock rep, and returns `at` unchanged for non-positive deltas.
 //   WaitFor.CountOccurrencesBasics - count_occurrences counts disjoint matches, including at the ends, and 0 for no match.
 //   WaitFor.CountOccurrencesNonOverlapping - overlapping candidates count once per consumed match ("aaaa"/"aa" -> 2).
 //   WaitFor.CountOccurrencesEmptyNeedleIsZero - an empty needle yields 0 (never "instantly satisfied").
@@ -207,6 +209,37 @@ TEST(WaitFor, ClampedPlanZeroDuration) {
     const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds(0), deadline);
     EXPECT_EQ(plan.wake, now);
     EXPECT_FALSE(plan.times_out);
+}
+
+TEST(WaitFor, ClampedPlanHugeDurationSaturates) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto deadline = now + std::chrono::milliseconds(200);
+    // The classic footgun: "wait forever" spelled as milliseconds::max().
+    // The wake must clamp (and flag the timeout), not wrap into the past.
+    const auto plan = detail::clamped_wait_plan(now, std::chrono::milliseconds::max(), deadline);
+    EXPECT_EQ(plan.wake, deadline);
+    EXPECT_TRUE(plan.times_out);
+}
+
+TEST(WaitFor, SaturatedAddClampsAndPassesThrough) {
+    using testcontainers::detail::saturated_add;
+    using clock = std::chrono::steady_clock;
+    const clock::time_point now = clock::now();
+
+    EXPECT_EQ(saturated_add(now, std::chrono::milliseconds(250)),
+              now + std::chrono::milliseconds(250));
+    EXPECT_EQ(saturated_add(now, std::chrono::milliseconds::max()), clock::time_point::max());
+    // A near-max budget must land in the far future on EVERY clock rep: on a
+    // 1ns rep it saturates, on a 100ns rep the plain add still fits — either
+    // way, no wrap into the past.
+    const auto big = saturated_add(
+        now, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::hours(3000000)));
+    EXPECT_GT(big, now + std::chrono::hours(24));
+    EXPECT_EQ(saturated_add(now, std::chrono::milliseconds::zero()), now);
+    EXPECT_EQ(saturated_add(now, std::chrono::milliseconds(-5)), now);
+    // At the far edge any positive delta stays put.
+    EXPECT_EQ(saturated_add(clock::time_point::max(), std::chrono::milliseconds(1)),
+              clock::time_point::max());
 }
 
 TEST(WaitFor, CountOccurrencesBasics) {

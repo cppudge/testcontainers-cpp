@@ -142,7 +142,11 @@ void write_tar_stream(const std::vector<PendingEntry>& entries, const std::strin
                                             : from_file ? static_cast<la_int64_t>(e.file_size)
                                                         : static_cast<la_int64_t>(e.body.size()));
 
-        if (archive_write_header(a.get(), entry.get()) != ARCHIVE_OK) {
+        // ARCHIVE_WARN still writes a usable header (e.g. a pathname the
+        // process locale cannot convert falls back to binary hdrcharset) —
+        // the read paths already tolerate WARN, so the write path must not
+        // abort the whole copy over one.
+        if (archive_write_header(a.get(), entry.get()) < ARCHIVE_WARN) {
             throw_write_error(state, a.get(), ctx, "archive_write_header");
         }
 

@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "Deadline.hpp"
 #include "KafkaDetail.hpp"
 #include "WaitStrategies.hpp"
 #include "testcontainers/CopyToContainer.hpp"
@@ -44,9 +45,10 @@ void run_kafka_boot(DockerClient& client, const std::string& id,
                       .with_mode(0755));
 
     // A fresh budget for this phase: the broker only starts booting now that
-    // the placeholder loop sees the script.
+    // the placeholder loop sees the script. saturated_add: the budget is the
+    // raw user knob.
     const std::chrono::steady_clock::time_point deadline =
-        std::chrono::steady_clock::now() + phase_budget;
+        testcontainers::detail::saturated_add(std::chrono::steady_clock::now(), phase_budget);
     // The core's chunk-boundary-safe substring scanners (modules::detail is
     // the module helpers' namespace, hence the full qualification). Per
     // source, like the core log wait: an interleaved other-stream frame must

@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "Deadline.hpp"
 #include "testcontainers/ConnectionString.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/WaitFor.hpp"
@@ -69,7 +70,7 @@ void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::s
     // failing start() spuriously. One exec at a time, no stdin, no TTY —
     // works on every transport.
     const std::chrono::steady_clock::time_point deadline =
-        std::chrono::steady_clock::now() + phase_budget;
+        testcontainers::detail::saturated_add(std::chrono::steady_clock::now(), phase_budget);
     for (;;) {
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
