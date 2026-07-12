@@ -46,10 +46,32 @@ TEST(Cache, RedisIsReachable) {
 exception hierarchy carrying the HTTP status and resource id. Runnable end-to-end examples live in
 [`tests/integration/`](tests/integration).
 
+Or start from a prebuilt **module** — pinned image, the right readiness probe, and connection
+strings out of the box (link `testcontainers::modules`):
+
+```cpp
+#include <gtest/gtest.h>
+#include "testcontainers/modules.hpp"
+
+using namespace testcontainers;
+
+TEST(Db, PostgresAnswersQueries) {
+    const modules::StartedPostgreSQL pg =
+        modules::PostgreSQLContainer()
+            .with_init_script("schema.sql", "CREATE TABLE t(id int);")
+            .start(); // returns once every init script ran and TCP serves
+
+    // pg.connection_string() -> "postgresql://test:test@localhost:<port>/test"
+    const ExecResult r = pg.exec_sql("SELECT count(*) FROM t");
+    EXPECT_EQ(r.stdout_data, "0\n");
+}
+```
+
 ## Installation
 
-testcontainers-cpp is a **Conan 2** package. A ConanCenter submission is staged for right after the
-`v0.1.0` tag (see [Packaging](#packaging)); until it lands, build the package from this repo into
+testcontainers-cpp is a **Conan 2** package. The ConanCenter submission is in review
+([conan-io/conan-center-index#30600](https://github.com/conan-io/conan-center-index/pull/30600),
+see [Packaging](#packaging)); until it lands, build the package from this repo into
 your local Conan cache:
 
 ```sh
@@ -113,24 +135,26 @@ modes:
 | Linux | unix socket | full unit + integration suite (gcc) |
 | Windows | named pipe | full suite against **real Windows containers** (MSVC) |
 | macOS | unix socket (Docker Desktop) | `conan create` + unit suite (apple-clang) |
-| Remote | `tcp://` / `https://` | TLS unit-tested; end-to-end against a remote daemon not yet verified |
+| Remote | `tcp://` / `https://` | mutual TLS end-to-end in CI (a real `--tlsverify` docker:dind daemon) |
 
 ## Status
 
 **v0.1.0 — first release; feature-complete core, pre-1.0.** The public API is settled enough to use
 but may still evolve before 1.0. The library is exception-based by design (the `DockerError`
-hierarchy). Implemented and covered by **~300 unit + ~115 integration** tests against a real daemon,
+hierarchy). Implemented and covered by **~560 unit + ~210 integration** tests against a real daemon,
 green on Windows (named pipe) and Linux (unix socket):
 
 - `GenericImage` / `GenericBuildableImage` / `Container` / `Network` / `Volume` /
   `DockerComposeContainer`
-- six wait strategies, `exec` (stdin / tty / streaming), copy to/from container, lifecycle hooks
+- seven wait strategies, `exec` (stdin / tty / streaming), copy to/from container, lifecycle hooks
 - container reuse, the Ryuk crash-safety reaper, registry auth incl. credential helpers
 - host-port exposure (`with_exposed_host_port` — sshd sidecar + SSH tunnel), and the TLS transport
+  (mutual TLS verified end to end in CI)
+- the `testcontainers::modules` layer — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ,
+  MongoDB (on `main`; ships with 0.2.0)
 
-Known gaps: **end-to-end TLS against a real remote daemon** is the main unverified path (the pure
-`TlsConfig` resolution is unit-tested); shared builds are **static-only on Windows** (the
-sources carry no symbol-export macros yet). Per-feature limits are tracked in
+Known gaps: shared builds are **static-only on Windows** (the sources carry no symbol-export
+macros yet). Per-feature limits are tracked in
 [`docs/feature-notes.md`](docs/feature-notes.md) and [`docs/TODO.md`](docs/TODO.md).
 
 ---
@@ -165,7 +189,7 @@ the Rust reference also makes), with hot polling loops opting into scoped keep-a
   healthcheck, static IPv4, copy-to, registry auth) and `GenericBuildableImage` (build from a
   Dockerfile + context, live build-log streaming, local-presence `exists`/`inspect` probes).
 - **Wait strategies** — log message, fixed duration, exit code, Docker healthcheck, HTTP probe,
-  listening port; chained under one startup timeout.
+  listening port, successful in-container command; chained under one startup timeout.
 - **Containers** — typed/raw `inspect`, `logs` (snapshot + streaming follow), `exec` (env / cwd /
   user / tty / stdin / detached / streaming), copy to/from, IPv4/IPv6 host-port getters.
 - **Networking & volumes** — user-defined `Network` (driver, IPAM, aliases) and named `Volume`
@@ -238,8 +262,9 @@ package on Linux, Windows, and macOS. The version lives in exactly one place —
 A ConanCenter-shaped recipe is staged verbatim in
 [`packaging/conan-center/`](packaging/conan-center/) (release-tarball sources pinned by sha256, no
 forced dependency options, verified against a fully compiled default Boost on gcc/clang/msvc). It is
-kept byte-in-sync with the in-repo `test_package/` by a CI check. Submission is planned right after
-the `v0.1.0` tag; the process and the recipe-vs-recipe split are documented in its
+kept byte-in-sync with the in-repo `test_package/` by a CI check. Submitted as
+[conan-io/conan-center-index#30600](https://github.com/conan-io/conan-center-index/pull/30600)
+(in review); the process and the recipe-vs-recipe split are documented in its
 [README](packaging/conan-center/README.md).
 
 ## History
