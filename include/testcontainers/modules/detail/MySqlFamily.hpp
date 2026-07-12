@@ -13,9 +13,9 @@ class GenericImage;
 
 namespace testcontainers::modules::detail {
 
-/// Implementation detail shared by MySQLContainer and MariaDBContainer: the
+/// Implementation detail shared by MySQLImage and MariaDBImage: the
 /// bag of domain knobs both builders collect. Not part of the public API —
-/// the field set may change without notice; configure through the containers'
+/// the field set may change without notice; configure through the builders'
 /// with_* setters.
 struct MySqlFamilyOptions {
     std::string username{"test"};

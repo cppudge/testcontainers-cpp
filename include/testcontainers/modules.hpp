@@ -5,10 +5,10 @@
 /// its own umbrella, testcontainers/testcontainers.hpp — the module headers
 /// pull in only the core pieces they build on.
 
-#include "testcontainers/modules/KafkaContainer.hpp"
-#include "testcontainers/modules/MariaDBContainer.hpp"
-#include "testcontainers/modules/MongoDBContainer.hpp"
-#include "testcontainers/modules/MySQLContainer.hpp"
-#include "testcontainers/modules/PostgreSQLContainer.hpp"
-#include "testcontainers/modules/RabbitMQContainer.hpp"
-#include "testcontainers/modules/RedisContainer.hpp"
+#include "testcontainers/modules/Kafka.hpp"
+#include "testcontainers/modules/MariaDB.hpp"
+#include "testcontainers/modules/MongoDB.hpp"
+#include "testcontainers/modules/MySQL.hpp"
+#include "testcontainers/modules/PostgreSQL.hpp"
+#include "testcontainers/modules/RabbitMQ.hpp"
+#include "testcontainers/modules/Redis.hpp"

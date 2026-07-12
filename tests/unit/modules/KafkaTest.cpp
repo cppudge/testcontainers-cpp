@@ -7,7 +7,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/KafkaContainer.hpp"
+#include "testcontainers/modules/Kafka.hpp"
 
 #include "modules/KafkaDetail.hpp"
 
@@ -24,7 +24,7 @@
 //   KafkaDetail.AwaitCommandGatesOnStarterPath - the placeholder command echoes the sentinel, polls for the starter path, and execs it.
 
 using namespace testcontainers;
-using modules::KafkaContainer;
+using modules::KafkaImage;
 
 namespace {
 
@@ -50,7 +50,7 @@ bool env_has_key(const GenericImage& generic, const std::string& key) {
 } // namespace
 
 TEST(KafkaModuleConfig, DefaultRendersEnvPlaceholderSentinelAndHook) {
-    const GenericImage generic = KafkaContainer().to_generic();
+    const GenericImage generic = KafkaImage().to_generic();
 
     EXPECT_EQ(generic.image(), "apache/kafka");
     EXPECT_EQ(generic.tag(), "3.9.1");
@@ -79,7 +79,7 @@ TEST(KafkaModuleConfig, DefaultRendersEnvPlaceholderSentinelAndHook) {
 }
 
 TEST(KafkaModuleConfig, UserEnvAppendedAfterModuleEnv) {
-    const GenericImage generic = KafkaContainer()
+    const GenericImage generic = KafkaImage()
                                      .with_env("KAFKA_NUM_PARTITIONS", "3")
                                      .with_env("KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS", "7")
                                      .to_generic();
@@ -91,10 +91,10 @@ TEST(KafkaModuleConfig, UserEnvAppendedAfterModuleEnv) {
 }
 
 TEST(KafkaModuleConfig, ClusterIdValidatedAtRender) {
-    EXPECT_THROW(KafkaContainer().with_cluster_id("too-short").to_generic(), Error);
-    EXPECT_THROW(KafkaContainer().with_cluster_id("invalid+chars/not-ok==").to_generic(), Error);
+    EXPECT_THROW(KafkaImage().with_cluster_id("too-short").to_generic(), Error);
+    EXPECT_THROW(KafkaImage().with_cluster_id("invalid+chars/not-ok==").to_generic(), Error);
 
-    KafkaContainer cfg;
+    KafkaImage cfg;
     cfg.with_cluster_id("AAAAAAAAAAAAAAAAAAAAAA");
     EXPECT_EQ(cfg.cluster_id(), "AAAAAAAAAAAAAAAAAAAAAA");
     EXPECT_EQ(env_last_value(cfg.to_generic(), "CLUSTER_ID"), "AAAAAAAAAAAAAAAAAAAAAA");
@@ -102,20 +102,20 @@ TEST(KafkaModuleConfig, ClusterIdValidatedAtRender) {
 
 TEST(KafkaModuleConfig, TopicsRenderReuseVisibleLabel) {
     const GenericImage generic =
-        KafkaContainer().with_topic("orders", 3).with_topic("audit").to_generic();
+        KafkaImage().with_topic("orders", 3).with_topic("audit").to_generic();
 
     ASSERT_EQ(generic.labels().size(), 1u);
     EXPECT_EQ(generic.labels()[0].first, "org.testcontainers.kafka.topics");
     EXPECT_EQ(generic.labels()[0].second, "orders:3,audit:1");
 
     // Fail fast instead of an opaque topic-creation error at start().
-    EXPECT_THROW(KafkaContainer().with_topic("bad", 0).to_generic(), Error);
-    EXPECT_THROW(KafkaContainer().with_topic("", 1).to_generic(), Error);
+    EXPECT_THROW(KafkaImage().with_topic("bad", 0).to_generic(), Error);
+    EXPECT_THROW(KafkaImage().with_topic("", 1).to_generic(), Error);
 }
 
 TEST(KafkaModuleConfig, LabelPassThroughKeepsReservedTopicsLabelLast) {
     const GenericImage generic =
-        KafkaContainer().with_label("team", "streaming").with_topic("orders", 3).to_generic();
+        KafkaImage().with_label("team", "streaming").with_topic("orders", 3).to_generic();
 
     // User labels live in the embedded builder; the module's reuse label is
     // appended at render, after them — so it wins on a duplicate key.
@@ -125,7 +125,7 @@ TEST(KafkaModuleConfig, LabelPassThroughKeepsReservedTopicsLabelLast) {
 }
 
 TEST(KafkaModuleConfig, CustomizerRunsLastAndWins) {
-    KafkaContainer cfg;
+    KafkaImage cfg;
     cfg.with_customizer([](GenericImage& generic) {
         // Sees the rendered state (placeholder cmd already installed)...
         ASSERT_EQ(generic.cmd().size(), 3u);

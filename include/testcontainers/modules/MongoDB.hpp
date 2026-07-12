@@ -14,13 +14,13 @@
 
 namespace testcontainers::modules {
 
-class StartedMongoDB;
+class MongoDBContainer;
 
 /// A MongoDB server for tests: a copyable, reusable description of a `mongo`
 /// container that always runs as a SINGLE-NODE REPLICA SET, so sessions,
 /// multi-document transactions, and change streams work out of the box.
 /// `start()` boots the container, initiates the replica set, waits until the
-/// node is the writable PRIMARY, and returns a `StartedMongoDB` that hands
+/// node is the writable PRIMARY, and returns a `MongoDBContainer` that hands
 /// out ready-to-use connection strings. The ~1–2s election cost is the whole
 /// price; a one-node primary serves plain CRUD exactly like a standalone.
 ///
@@ -33,7 +33,7 @@ class StartedMongoDB;
 ///
 /// The `with_*` builders mutate in place and return `*this` by reference, so
 /// a named config can be configured incrementally and started many times.
-class MongoDBContainer {
+class MongoDBImage {
 public:
     /// The pinned default image. Override with `with_image`; any image with
     /// `mongosh` on the PATH works (official `mongo:5.0` or newer — older
@@ -43,24 +43,24 @@ public:
     /// The server port INSIDE the container. Peers on a shared docker
     /// network connect to `<alias-or-name>:kPort` (append
     /// `?directConnection=true` to their URI too); the test process itself
-    /// uses `StartedMongoDB::port()` (the mapped host port) instead.
+    /// uses `MongoDBContainer::port()` (the mapped host port) instead.
     static constexpr std::uint16_t kPort = 27017;
 
     /// A config ready to `start()`: image `mongo:7`, port 27017 exposed,
     /// replica set "rs0", default database "test".
-    MongoDBContainer();
+    MongoDBImage();
 
     // --- In-place builders (single overload; chain on lvalues and temporaries) ---
 
     /// Override the pinned image with a full reference "name[:tag]", e.g. a
     /// hub mirror or "mongo:8".
-    MongoDBContainer& with_image(const std::string& reference);
+    MongoDBImage& with_image(const std::string& reference);
 
     /// Rename the replica set (default "rs0"). Letters, digits, '-' and '_'
     /// only — anything else makes `start()` throw up front. The name never
     /// appears in `connection_string()` (clients connect directly), but is
-    /// visible in `rs.status()` and via `StartedMongoDB::replica_set_name()`.
-    MongoDBContainer& with_replica_set_name(std::string name) {
+    /// visible in `rs.status()` and via `MongoDBContainer::replica_set_name()`.
+    MongoDBImage& with_replica_set_name(std::string name) {
         replica_set_name_ = std::move(name);
         return *this;
     }
@@ -70,7 +70,7 @@ public:
     /// nothing is provisioned server-side. Use a valid MongoDB database name
     /// — the value also becomes `mongosh()`'s positional argument, where a
     /// name with ':' or '/' would parse as a connection string instead.
-    MongoDBContainer& with_database(std::string database) {
+    MongoDBImage& with_database(std::string database) {
         database_ = std::move(database);
         return *this;
     }
@@ -83,24 +83,24 @@ public:
     /// keyfile (see the class note), so `start()` throws up front on either
     /// key. The other MONGO_INITDB_* keys only affect initdb.d scripts,
     /// which this module deliberately does not stage.
-    MongoDBContainer& with_env(std::string key, std::string value) {
+    MongoDBImage& with_env(std::string key, std::string value) {
         image_.with_env(std::move(key), std::move(value));
         return *this;
     }
 
-    MongoDBContainer& with_label(std::string key, std::string value) {
+    MongoDBImage& with_label(std::string key, std::string value) {
         image_.with_label(std::move(key), std::move(value));
         return *this;
     }
 
     /// Join a user-defined network; peers resolve this container by
     /// name/alias at `<alias>:27017` (kPort, not the mapped host port).
-    MongoDBContainer& with_network(std::string network) {
+    MongoDBImage& with_network(std::string network) {
         image_.with_network(std::move(network));
         return *this;
     }
-    MongoDBContainer& with_network(const Network& network);
-    MongoDBContainer& with_network_alias(std::string alias) {
+    MongoDBImage& with_network(const Network& network);
+    MongoDBImage& with_network_alias(std::string alias) {
         image_.with_network_alias(std::move(alias));
         return *this;
     }
@@ -109,7 +109,7 @@ public:
     /// globally — see GenericImage::with_reuse). An adopted container's
     /// replica-set config persists in its data directory, so it is already
     /// the PRIMARY.
-    MongoDBContainer& with_reuse(bool reuse = true) {
+    MongoDBImage& with_reuse(bool reuse = true) {
         image_.with_reuse(reuse);
         return *this;
     }
@@ -119,13 +119,13 @@ public:
     /// PRIMARY election poll) that follows it — so the worst-case total is
     /// about twice this. Default 60s per phase. Image pull time does not
     /// count against it.
-    MongoDBContainer& with_startup_timeout(std::chrono::milliseconds timeout) {
+    MongoDBImage& with_startup_timeout(std::chrono::milliseconds timeout) {
         image_.with_startup_timeout(timeout);
         return *this;
     }
 
     /// Retry the whole create→start→initiate sequence up to `n` times.
-    MongoDBContainer& with_startup_attempts(int n) {
+    MongoDBImage& with_startup_attempts(int n) {
         image_.with_startup_attempts(n);
         return *this;
     }
@@ -139,7 +139,7 @@ public:
     /// any of them disables it — and MONGO_INITDB_* env set here breaks the
     /// boot (see the class note on auth; initdb scripts double-start the
     /// server and write against a not-yet-initiated member).
-    MongoDBContainer& with_customizer(std::function<void(GenericImage&)> customize) {
+    MongoDBImage& with_customizer(std::function<void(GenericImage&)> customize) {
         customizers_.push_back(std::move(customize));
         return *this;
     }
@@ -152,7 +152,7 @@ public:
     /// Render the full configuration — the replica-set command line, both
     /// readiness waits, and the post-start hook that initiates the set and
     /// waits for PRIMARY — into a plain GenericImage: the drop-down escape
-    /// hatch when you need a raw `Container` instead of a StartedMongoDB.
+    /// hatch when you need a raw core `Container` instead of a MongoDBContainer.
     /// Extend the result, don't rebuild it: replacing the command or the
     /// hooks disables the replica-set choreography. Throws Error on an
     /// invalid config (a replica-set name outside [A-Za-z0-9_-];
@@ -165,7 +165,7 @@ public:
     /// throws — and removes the partial container — if any phase fails
     /// (`StartupTimeoutError` when readiness or the election never arrives,
     /// DockerError for daemon failures), like `GenericImage::start()`.
-    StartedMongoDB start() const;
+    MongoDBContainer start() const;
 
 private:
     GenericImage image_;                  ///< pin + port + pass-through state
@@ -177,10 +177,10 @@ private:
 /// A running MongoDB server (a single-node replica-set PRIMARY): connection
 /// getters plus the owned container.
 ///
-/// Move-only — it owns the `Container`, whose destructor force-removes the
+/// Move-only — it owns the core `Container`, whose destructor force-removes the
 /// server (RAII teardown; `container().keep()` or reuse opt out, see
 /// Container).
-class StartedMongoDB {
+class MongoDBContainer {
 public:
     /// The address a client in the test process connects to. Resolved once,
     /// when the container started.
@@ -228,11 +228,11 @@ public:
     const Container& container() const noexcept { return container_; }
 
 private:
-    friend class MongoDBContainer;
-    StartedMongoDB(Container container, std::string replica_set_name, std::string database)
+    friend class MongoDBImage;
+    MongoDBContainer(Container container, std::string replica_set_name, std::string database)
         : container_(std::move(container)), replica_set_name_(std::move(replica_set_name)),
           database_(std::move(database)), host_(container_.host()),
-          port_(container_.get_host_port(tcp(MongoDBContainer::kPort))) {}
+          port_(container_.get_host_port(tcp(MongoDBImage::kPort))) {}
 
     Container container_;
     std::string replica_set_name_;

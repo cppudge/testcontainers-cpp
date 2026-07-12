@@ -7,7 +7,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/MongoDBContainer.hpp"
+#include "testcontainers/modules/MongoDB.hpp"
 
 // Tests in this file (unit; no Docker daemon — the module's rendering rules
 // via to_generic()):
@@ -20,10 +20,10 @@
 //   MongoDBModuleConfig.RenderingIsIdempotent - repeated to_generic() calls render equal cmd/waits/hooks (nothing accumulates).
 
 using namespace testcontainers;
-using modules::MongoDBContainer;
+using modules::MongoDBImage;
 
 TEST(MongoDBModuleConfig, DefaultRendersRsCmdWaitsAndHook) {
-    const GenericImage generic = MongoDBContainer().to_generic();
+    const GenericImage generic = MongoDBImage().to_generic();
 
     EXPECT_EQ(generic.image(), "mongo");
     EXPECT_EQ(generic.tag(), "7");
@@ -43,7 +43,7 @@ TEST(MongoDBModuleConfig, DefaultRendersRsCmdWaitsAndHook) {
 }
 
 TEST(MongoDBModuleConfig, DefaultsAndSettersReflectGetters) {
-    MongoDBContainer cfg;
+    MongoDBImage cfg;
     EXPECT_EQ(cfg.replica_set_name(), "rs0");
     EXPECT_EQ(cfg.database(), "test");
 
@@ -55,16 +55,15 @@ TEST(MongoDBModuleConfig, DefaultsAndSettersReflectGetters) {
 TEST(MongoDBModuleConfig, ReplicaSetNameValidatedAtRender) {
     // The name is single-quoted into the initiate JS — reject anything that
     // could escape it.
-    EXPECT_THROW(MongoDBContainer().with_replica_set_name("rs0'; quit()").to_generic(), Error);
-    EXPECT_THROW(MongoDBContainer().with_replica_set_name("").to_generic(), Error);
+    EXPECT_THROW(MongoDBImage().with_replica_set_name("rs0'; quit()").to_generic(), Error);
+    EXPECT_THROW(MongoDBImage().with_replica_set_name("").to_generic(), Error);
 
-    const GenericImage generic =
-        MongoDBContainer().with_replica_set_name("rs-orders_1").to_generic();
+    const GenericImage generic = MongoDBImage().with_replica_set_name("rs-orders_1").to_generic();
     EXPECT_EQ(generic.cmd()[1], "rs-orders_1");
 }
 
 TEST(MongoDBModuleConfig, CustomizerRunsLastAndWins) {
-    MongoDBContainer cfg;
+    MongoDBImage cfg;
     cfg.with_customizer([](GenericImage& generic) {
         // Sees the rendered state (the choreography is already in place).
         ASSERT_EQ(generic.waits().size(), 2u);
@@ -78,7 +77,7 @@ TEST(MongoDBModuleConfig, CustomizerRunsLastAndWins) {
 
 TEST(MongoDBModuleConfig, EnvPassThroughValidatedAgainstInitdbRoot) {
     const GenericImage generic =
-        MongoDBContainer().with_env("TZ", "UTC").with_label("team", "storage").to_generic();
+        MongoDBImage().with_env("TZ", "UTC").with_label("team", "storage").to_generic();
     ASSERT_EQ(generic.env().size(), 1u);
     EXPECT_EQ(generic.env()[0].first, "TZ");
     ASSERT_EQ(generic.labels().size(), 1u);
@@ -86,21 +85,19 @@ TEST(MongoDBModuleConfig, EnvPassThroughValidatedAgainstInitdbRoot) {
 
     // Auth without a cluster keyfile refuses to start under --replSet — the
     // module rejects the boot-breaking keys up front.
-    EXPECT_THROW(MongoDBContainer().with_env("MONGO_INITDB_ROOT_USERNAME", "root").to_generic(),
-                 Error);
-    EXPECT_THROW(MongoDBContainer().with_env("MONGO_INITDB_ROOT_PASSWORD", "pw").to_generic(),
-                 Error);
+    EXPECT_THROW(MongoDBImage().with_env("MONGO_INITDB_ROOT_USERNAME", "root").to_generic(), Error);
+    EXPECT_THROW(MongoDBImage().with_env("MONGO_INITDB_ROOT_PASSWORD", "pw").to_generic(), Error);
 }
 
 TEST(MongoDBModuleConfig, WithImageRewritesReference) {
-    const GenericImage generic = MongoDBContainer().with_image("mongo:8").to_generic();
+    const GenericImage generic = MongoDBImage().with_image("mongo:8").to_generic();
     EXPECT_EQ(generic.image(), "mongo");
     EXPECT_EQ(generic.tag(), "8");
     EXPECT_EQ(generic.cmd()[0], "--replSet"); // the choreography survives the swap
 }
 
 TEST(MongoDBModuleConfig, RenderingIsIdempotent) {
-    MongoDBContainer cfg;
+    MongoDBImage cfg;
     cfg.with_replica_set_name("tcrs").with_database("orders");
 
     const GenericImage first = cfg.to_generic();

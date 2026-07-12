@@ -429,17 +429,20 @@ the config file itself is still re-read per pull.
 
 **The module layer** (2026-07-12, `testcontainers::modules` — its own library target and
 Conan component) — prebuilt wrappers over `GenericImage`, one per technology: a copyable
-config builder (`modules::RedisContainer`) whose `start()` returns a move-only started
-handle (`modules::StartedRedis`) owning the `Container` and carrying the credentials, host,
-and mapped port by value — resolved once at `start()`, so the connection getters are pure
-(no daemon round-trips; a container restarted by hand gets fresh ephemeral ports — drop to
-`container()` to re-resolve). No client drivers — the handles
+config builder (`modules::RedisImage`) whose `start()` returns a move-only started
+handle (`modules::RedisContainer`) owning the core `Container` and carrying the credentials,
+host, and mapped port by value — resolved once at `start()`, so the connection getters are
+pure (no daemon round-trips; a container restarted by hand gets fresh ephemeral ports — drop
+to `container()` to re-resolve). The naming deliberately mirrors the core split: `XxxImage`
+is the reusable recipe, `XxxContainer` the running instance, exactly like `GenericImage` →
+`Container` (renamed pre-0.2.0 from the node-style `XxxContainer`/`StartedXxx` pair, which
+gave the word "container" opposite meanings on the two layers). No client drivers — the handles
 hand out host/port and DSN strings (assembled with `ConnectionString`); the integration
 proof execs the in-container CLI instead. Two escape hatches set the pattern for every
 module: `with_customizer(fn)` queues a callback over the underlying `GenericImage`, run at
 render time AFTER the module's own rendering (what it sets wins — the same precedence idea
 as `with_create_body_patch` over typed fields), and `to_generic()` renders the full config
-into a plain `GenericImage` for when a raw `Container` is wanted. Each module documents the
+into a plain `GenericImage` for when a raw core `Container` is wanted. Each module documents the
 small surface it owns (cmd/env keys); everything else passes through untouched. Aligned in
 the pre-0.2.0 audit pass (2026-07-12): every module surfaces the same curated pass-through
 set — env / label / network (name or `Network`) / network-alias / reuse / startup-timeout /
@@ -465,7 +468,7 @@ NOT in the sanitizer/TLS jobs — the layer is thin composition over already-san
 paths. One core addition rode along: `GenericImage::with_image("name[:tag]")` re-points a
 configured builder at another image (same parsing as `from_reference`).
 
-**Redis module** (2026-07-12, `modules::RedisContainer` → `modules::StartedRedis`) — pinned
+**Redis module** (2026-07-12, `modules::RedisImage` → `modules::RedisContainer`) — pinned
 `redis:7.2`, port 6379 exposed, readiness = in-container `redis-cli ping` via the command
 wait (a log wait races the listener; a raw TCP probe false-positives through Docker
 Desktop's host proxy). `with_password` renders `{"redis-server","--requirepass",pw}` AND
@@ -485,8 +488,8 @@ argument, so a config file combined with `with_password` is unsupported (drop to
 customizer's `with_cmd`); redis-stack / Sentinel / cluster are out of scope (different
 image families / multi-container topologies).
 
-**PostgreSQL module** (2026-07-12, `modules::PostgreSQLContainer` →
-`modules::StartedPostgreSQL`) — pinned `postgres:16-alpine` (C locale; the header points
+**PostgreSQL module** (2026-07-12, `modules::PostgreSQLImage` →
+`modules::PostgreSQLContainer`) — pinned `postgres:16-alpine` (C locale; the header points
 collation-sensitive tests at the Debian image / POSTGRES_INITDB_ARGS), credentials
 test/test/test, readiness = exec `pg_isready -h 127.0.0.1 -p 5432 -U <user> -d <db>`. The
 TCP-forced probe is the load-bearing choice: the image's first boot runs a TEMPORARY
@@ -505,15 +508,15 @@ executable (a non-executable .sh is *sourced* into the entrypoint's shell, where
 `exit` kills the boot), and is not re-run on a reuse-adopt (data persistence is the point;
 editing a script changes the reuse hash). `with_config_option` renders `postgres -c k=v`;
 `with_wait` REPLACES the default probe (a customizer-added wait runs in addition).
-`StartedPostgreSQL` adds `conninfo()` (libpq keyword/value with its quoting rules; the
+`PostgreSQLContainer` adds `conninfo()` (libpq keyword/value with its quoting rules; the
 password keyword omitted when empty) beside the URI `connection_string()` /
 `connection_string_with_scheme()`, and
 `exec_sql()` through the in-container psql (`-X -tA`, local-socket trust — no password).
 Curated pass-throughs (env / label / network / alias / reuse / timeout / attempts) forward
 to the embedded builder; everything else rides `with_customizer`.
 
-**MySQL + MariaDB modules** (2026-07-12, `modules::MySQLContainer` / `MariaDBContainer` →
-`StartedMySQL` / `StartedMariaDB`) — two flat public classes over one shared core
+**MySQL + MariaDB modules** (2026-07-12, `modules::MySQLImage` / `MariaDBImage` →
+`MySQLContainer` / `MariaDBContainer`) — two flat public classes over one shared core
 (`src/modules/MySqlFamily.*`: the boot matrix, init-script staging, probes, rendering, URL —
 everything that must not fork), keyed by a small flavor table (env-contract names, probe).
 Pins: `mysql:8.4` / `mariadb:11`; both default to a 120s startup budget (a first boot
@@ -542,7 +545,7 @@ limit (recipe in the `with_command_arg` header note, not module-fixable): MySQL 
 disables the `mysql_native_password` plugin by default, so pre-8.0-era client stacks need
 `with_command_arg("--mysql-native-password=ON")` plus an ALTER USER init script.
 
-**Kafka module** (2026-07-12, `modules::KafkaContainer` → `modules::StartedKafka`) — a
+**Kafka module** (2026-07-12, `modules::KafkaImage` → `modules::KafkaContainer`) — a
 single-node KRaft broker (no ZooKeeper), pinned `apache/kafka:3.9.1` (official ASF image:
 small, ships the CLI tools, the last 3.x line for maximum client-protocol compatibility).
 Kafka cannot be "env + port + wait": the broker must ADVERTISE an address, the host-side
@@ -577,7 +580,7 @@ scope: SASL/TLS listeners, multi-broker quorums, Schema Registry et al. (separat
 modules), confluent images (untested best-effort: the starter script's fallback covers
 the boot only — `with_topic` still execs the apache CLI path).
 
-**RabbitMQ module** (2026-07-12, `modules::RabbitMQContainer` → `modules::StartedRabbitMQ`)
+**RabbitMQ module** (2026-07-12, `modules::RabbitMQImage` → `modules::RabbitMQContainer`)
 — pinned `rabbitmq:3.13-management` (the management variant on purpose: its HTTP API is
 the one broker-inspection surface a no-drivers test can hit, and the weight argument is a
 myth — the tag differs from the plain image essentially by `enabled_plugins`, not a fat
@@ -612,7 +615,7 @@ account (image contract); remote guest works only by the official image's
 of scope: clustering, TLS/amqps, MQTT/STOMP typed getters, tc-java's ~30-method
 per-object topology builder (definitions import is RabbitMQ's own bulk mechanism).
 
-**MongoDB module** (2026-07-12, `modules::MongoDBContainer` → `modules::StartedMongoDB`) —
+**MongoDB module** (2026-07-12, `modules::MongoDBImage` → `modules::MongoDBContainer`) —
 pinned `mongo:7` (floor `mongo:5.0` — the module execs `mongosh`, argv form only; older
 images ship just the removed legacy shell), and it ALWAYS runs as a single-node replica
 set (`--replSet rs0 --bind_ip_all`): transactions and change streams are why the module

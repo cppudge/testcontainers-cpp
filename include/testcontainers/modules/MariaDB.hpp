@@ -16,10 +16,10 @@
 
 namespace testcontainers::modules {
 
-class StartedMariaDB;
+class MariaDBContainer;
 
 /// A reusable, copyable description of a MariaDB server container. `start()`
-/// returns a `StartedMariaDB` handle owning the running container and
+/// returns a `MariaDBContainer` handle owning the running container and
 /// exposing the connection getters.
 ///
 /// Defaults mirror the MySQL module: user "test" / password "test" /
@@ -31,8 +31,8 @@ class StartedMariaDB;
 /// init-script data is visible when `start()` returns.
 ///
 /// Configuration is provisioned through the MARIADB_* environment contract;
-/// builder semantics are identical to `MySQLContainer`'s.
-class MariaDBContainer {
+/// builder semantics are identical to `MySQLImage`'s.
+class MariaDBImage {
 public:
     /// The pinned default image (the rolling LTS line). Override with
     /// `with_image`; any image honoring the official env contract
@@ -42,40 +42,40 @@ public:
 
     /// The server port INSIDE the container. Peers on a shared docker
     /// network connect to `<alias-or-name>:kPort`; the test process itself
-    /// uses `StartedMariaDB::port()` (the mapped host port) instead.
+    /// uses `MariaDBContainer::port()` (the mapped host port) instead.
     static constexpr std::uint16_t kPort = 3306;
 
     /// A config ready to `start()`: image `mariadb:11`, credentials
     /// test/test/test, port 3306 exposed, the image's own `healthcheck.sh`
     /// readiness probe, and a 120s startup budget (a first boot initializes
     /// the data directory and routinely takes tens of seconds on CI).
-    MariaDBContainer();
+    MariaDBImage();
 
     // --- In-place builders (single overload; chain on lvalues and temporaries) ---
 
     /// Override the pinned image with a full reference "name[:tag]" (tag
     /// defaults to "latest").
-    MariaDBContainer& with_image(const std::string& reference);
+    MariaDBImage& with_image(const std::string& reference);
 
     /// The user provisioned on first boot (default "test") with full
     /// privileges on `database()`. "root" (any letter case — stored
     /// lowercase, since the real account is 'root') provisions no separate
     /// user; the credential getters then describe root itself.
-    MariaDBContainer& with_username(std::string username);
+    MariaDBImage& with_username(std::string username);
 
     /// The password (default "test"); the same value becomes the root
     /// password. Empty is only valid with `with_username("root")`
     /// (passwordless root via MARIADB_ALLOW_EMPTY_ROOT_PASSWORD); any other
     /// user with an empty password makes `start()` throw up front. Test
     /// credentials only: the value is visible via inspect.
-    MariaDBContainer& with_password(std::string password) {
+    MariaDBImage& with_password(std::string password) {
         opts_.password = std::move(password);
         return *this;
     }
 
     /// The database created on first boot (default "test"). An empty name
     /// creates none and drops the path from `connection_string()`.
-    MariaDBContainer& with_database(std::string database) {
+    MariaDBImage& with_database(std::string database) {
         opts_.database = std::move(database);
         return *this;
     }
@@ -87,25 +87,25 @@ public:
     /// would silently skip it); .sh ships executable. A reused (adopted)
     /// container does not re-run init scripts; editing one changes the
     /// reuse hash, so a fresh container is created.
-    MariaDBContainer& with_init_script(std::filesystem::path host_path);
+    MariaDBImage& with_init_script(std::filesystem::path host_path);
 
     /// In-memory variant: queue `content` under the given file name (a bare
     /// name, no directories; same extension rules and ordering as above).
-    MariaDBContainer& with_init_script(const std::string& name, std::string content);
+    MariaDBImage& with_init_script(const std::string& name, std::string content);
 
     /// Append one server option to the container command, e.g.
     /// `with_command_arg("--character-set-server=utf8mb4")`. Option
     /// arguments (starting with '-') are forwarded to mariadbd by the
     /// entrypoint. Do not change `--port` (the probe and `port()` assume
     /// 3306 inside the container).
-    MariaDBContainer& with_command_arg(std::string arg) {
+    MariaDBImage& with_command_arg(std::string arg) {
         opts_.command_args.push_back(std::move(arg));
         return *this;
     }
 
     /// Append several server options at once — the batch twin of
     /// `with_command_arg`. Repeatable; calls accumulate in order.
-    MariaDBContainer& with_command_args(std::vector<std::string> args) {
+    MariaDBImage& with_command_args(std::vector<std::string> args) {
         for (std::string& arg : args) {
             opts_.command_args.push_back(std::move(arg));
         }
@@ -115,31 +115,31 @@ public:
     /// Copy a .cnf file into /etc/mysql/conf.d (included by the image's
     /// configuration; the name must end in ".cnf" or this throws). Copied
     /// with mode 0644 — the server ignores world-writable config files.
-    MariaDBContainer& with_config_file(std::filesystem::path host_cnf);
+    MariaDBImage& with_config_file(std::filesystem::path host_cnf);
 
     // --- Pass-throughs to the underlying builder ---
 
     /// Set an extra environment variable (e.g. MARIADB_AUTO_UPGRADE). The
     /// managed MARIADB_* credential keys belong to the typed setters: the
     /// module applies them last, so they win over raw duplicates set here.
-    MariaDBContainer& with_env(std::string key, std::string value) {
+    MariaDBImage& with_env(std::string key, std::string value) {
         image_.with_env(std::move(key), std::move(value));
         return *this;
     }
 
-    MariaDBContainer& with_label(std::string key, std::string value) {
+    MariaDBImage& with_label(std::string key, std::string value) {
         image_.with_label(std::move(key), std::move(value));
         return *this;
     }
 
     /// Join a user-defined network; peers resolve this container by
     /// name/alias at `<alias>:3306` (kPort, not the mapped host port).
-    MariaDBContainer& with_network(std::string network) {
+    MariaDBImage& with_network(std::string network) {
         image_.with_network(std::move(network));
         return *this;
     }
-    MariaDBContainer& with_network(const Network& network);
-    MariaDBContainer& with_network_alias(std::string alias) {
+    MariaDBImage& with_network(const Network& network);
+    MariaDBImage& with_network_alias(std::string alias) {
         image_.with_network_alias(std::move(alias));
         return *this;
     }
@@ -147,7 +147,7 @@ public:
     /// Enable container reuse (effective only when reuse is also enabled
     /// globally — see GenericImage::with_reuse). Init scripts do not re-run
     /// on an adopted container: its data directory is already initialized.
-    MariaDBContainer& with_reuse(bool reuse = true) {
+    MariaDBImage& with_reuse(bool reuse = true) {
         image_.with_reuse(reuse);
         return *this;
     }
@@ -157,20 +157,20 @@ public:
     /// order under the same timeout). The default probe forces TCP for a
     /// reason: the image's first boot runs a temporary socket-only server
     /// while init scripts execute.
-    MariaDBContainer& with_wait(WaitFor wait) {
+    MariaDBImage& with_wait(WaitFor wait) {
         opts_.waits.push_back(std::move(wait));
         return *this;
     }
 
     /// Replace the default 120s startup budget. Image pull time does not
     /// count against it.
-    MariaDBContainer& with_startup_timeout(std::chrono::milliseconds timeout) {
+    MariaDBImage& with_startup_timeout(std::chrono::milliseconds timeout) {
         image_.with_startup_timeout(timeout);
         return *this;
     }
 
     /// Retry the whole create→start→wait sequence up to `n` times.
-    MariaDBContainer& with_startup_attempts(int n) {
+    MariaDBImage& with_startup_attempts(int n) {
         image_.with_startup_attempts(n);
         return *this;
     }
@@ -182,7 +182,7 @@ public:
     /// rendering — what they set wins over the module. Do not set the
     /// managed MARIADB_* credential env here: it would desync the credential
     /// getters and the DSN.
-    MariaDBContainer& with_customizer(std::function<void(GenericImage&)> customize) {
+    MariaDBImage& with_customizer(std::function<void(GenericImage&)> customize) {
         opts_.customizers.push_back(std::move(customize));
         return *this;
     }
@@ -195,7 +195,7 @@ public:
 
     /// Render the full configuration into a plain GenericImage (the
     /// drop-down escape hatch); same contract and validation as
-    /// `MySQLContainer::to_generic`.
+    /// `MySQLImage::to_generic`.
     GenericImage to_generic() const;
 
     /// Create, start, and wait until the image's healthcheck reports the
@@ -203,7 +203,7 @@ public:
     /// errors, DockerError on daemon failures, StartupTimeoutError when
     /// readiness never arrives — also the symptom of a failing init script
     /// (check the container logs).
-    StartedMariaDB start() const;
+    MariaDBContainer start() const;
 
 private:
     GenericImage image_;              ///< pin + port + timeout + pass-through state
@@ -212,10 +212,10 @@ private:
 
 /// A running MariaDB server: connection getters plus the owned container.
 ///
-/// Move-only — it owns the `Container`, whose destructor force-removes the
+/// Move-only — it owns the core `Container`, whose destructor force-removes the
 /// server (RAII teardown; `container().keep()` or reuse opt out, see
 /// Container).
-class StartedMariaDB {
+class MariaDBContainer {
 public:
     /// The address a client in the test process connects to. Resolved once,
     /// when the container started.
@@ -250,12 +250,12 @@ public:
     const Container& container() const noexcept { return container_; }
 
 private:
-    friend class MariaDBContainer;
-    StartedMariaDB(Container container, std::string username, std::string password,
-                   std::string database)
+    friend class MariaDBImage;
+    MariaDBContainer(Container container, std::string username, std::string password,
+                     std::string database)
         : container_(std::move(container)), username_(std::move(username)),
           password_(std::move(password)), database_(std::move(database)), host_(container_.host()),
-          port_(container_.get_host_port(tcp(MariaDBContainer::kPort))) {}
+          port_(container_.get_host_port(tcp(MariaDBImage::kPort))) {}
 
     Container container_;
     std::string username_;

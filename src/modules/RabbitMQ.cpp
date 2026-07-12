@@ -1,4 +1,4 @@
-#include "testcontainers/modules/RabbitMQContainer.hpp"
+#include "testcontainers/modules/RabbitMQ.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -44,24 +44,23 @@ std::string seed_definitions_json(const std::string& username, const std::string
 
 } // namespace
 
-RabbitMQContainer::RabbitMQContainer()
-    : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
+RabbitMQImage::RabbitMQImage() : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
     // Both ports every test needs; extra listeners (MQTT/STOMP/Prometheus)
     // stay unpublished unless a customizer exposes them.
     image_.with_exposed_port(tcp(kAmqpPort)).with_exposed_port(tcp(kManagementPort));
 }
 
-RabbitMQContainer& RabbitMQContainer::with_image(const std::string& reference) {
+RabbitMQImage& RabbitMQImage::with_image(const std::string& reference) {
     image_.with_image(reference);
     return *this;
 }
 
-std::string RabbitMQContainer::next_definitions_target() const {
+std::string RabbitMQImage::next_definitions_target() const {
     return std::string(kDefinitionsDir) + "/" + detail::zero_pad4(500 + definitions_.size()) +
            "-definitions.json";
 }
 
-RabbitMQContainer& RabbitMQContainer::with_definitions(std::filesystem::path host_json) {
+RabbitMQImage& RabbitMQImage::with_definitions(std::filesystem::path host_json) {
     const std::string name = host_json.filename().string();
     if (name.size() <= 5 || !std::string_view(name).ends_with(".json")) {
         throw Error("definitions file \"" + name +
@@ -76,7 +75,7 @@ RabbitMQContainer& RabbitMQContainer::with_definitions(std::filesystem::path hos
     return *this;
 }
 
-RabbitMQContainer& RabbitMQContainer::with_definitions_json(std::string json) {
+RabbitMQImage& RabbitMQImage::with_definitions_json(std::string json) {
     if (definitions_.size() >= 9500) {
         throw Error("too many definitions files (the 05NN ordering prefix is four digits)");
     }
@@ -86,12 +85,12 @@ RabbitMQContainer& RabbitMQContainer::with_definitions_json(std::string json) {
 }
 
 // Out of line so the header needs no Network definition.
-RabbitMQContainer& RabbitMQContainer::with_network(const Network& network) {
+RabbitMQImage& RabbitMQImage::with_network(const Network& network) {
     image_.with_network(network);
     return *this;
 }
 
-GenericImage RabbitMQContainer::to_generic() const {
+GenericImage RabbitMQImage::to_generic() const {
     // Fail fast, before any daemon contact.
     if (username_.empty()) {
         throw Error("RabbitMQ username must not be empty (with_username)");
@@ -175,11 +174,11 @@ GenericImage RabbitMQContainer::to_generic() const {
     return generic;
 }
 
-StartedRabbitMQ RabbitMQContainer::start() const {
-    return StartedRabbitMQ(to_generic().start(), username_, password_, vhost_);
+RabbitMQContainer RabbitMQImage::start() const {
+    return RabbitMQContainer(to_generic().start(), username_, password_, vhost_);
 }
 
-std::string StartedRabbitMQ::amqp_url() const {
+std::string RabbitMQContainer::amqp_url() const {
     ConnectionString url("amqp");
     url.with_user(username_).with_password(password_).with_host(host_).with_port(amqp_port_);
     if (vhost_ != "/") {
@@ -191,7 +190,7 @@ std::string StartedRabbitMQ::amqp_url() const {
     return url.to_string();
 }
 
-std::string StartedRabbitMQ::management_url() const {
+std::string RabbitMQContainer::management_url() const {
     ConnectionString url("http");
     url.with_host(host_).with_port(management_port_);
     return url.to_string();

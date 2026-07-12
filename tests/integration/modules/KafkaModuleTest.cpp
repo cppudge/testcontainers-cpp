@@ -6,7 +6,7 @@
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Network.hpp"
-#include "testcontainers/modules/KafkaContainer.hpp"
+#include "testcontainers/modules/Kafka.hpp"
 
 #include "EngineGuard.hpp"
 #include "WaitStrategies.hpp"
@@ -20,13 +20,13 @@
 
 using namespace testcontainers;
 using modules::KafkaContainer;
-using modules::StartedKafka;
+using modules::KafkaImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class KafkaModule : public tcit::LinuxEngineTest {};
 
 TEST_F(KafkaModule, StartsAndExposesBootstrap) {
-    const StartedKafka kafka = KafkaContainer().start();
+    const KafkaContainer kafka = KafkaImage().start();
 
     EXPECT_EQ(kafka.bootstrap_servers(),
               kafka.host() + ":" + std::to_string(kafka.port())); // bare, no PLAINTEXT://
@@ -39,7 +39,7 @@ TEST_F(KafkaModule, StartsAndExposesBootstrap) {
 }
 
 TEST_F(KafkaModule, AdvertisedListenersCarryMappedPort) {
-    const StartedKafka kafka = KafkaContainer().start();
+    const KafkaContainer kafka = KafkaImage().start();
 
     // The broker's runtime view of its own config must carry the REAL mapped
     // port — the value that did not exist until after start_container.
@@ -55,7 +55,7 @@ TEST_F(KafkaModule, AdvertisedListenersCarryMappedPort) {
 }
 
 TEST_F(KafkaModule, ProduceConsumeRoundTrip) {
-    const StartedKafka kafka = KafkaContainer().start();
+    const KafkaContainer kafka = KafkaImage().start();
 
     // The pipe lives INSIDE the container (sh -c) — no exec-stdin, so this
     // works on every transport. Bootstrap at the internal listener: the
@@ -75,7 +75,7 @@ TEST_F(KafkaModule, ProduceConsumeRoundTrip) {
 }
 
 TEST_F(KafkaModule, WithTopicPreCreatesPartitions) {
-    const StartedKafka kafka = KafkaContainer().with_topic("multi", 3).start();
+    const KafkaContainer kafka = KafkaImage().with_topic("multi", 3).start();
 
     const ExecResult res =
         kafka.container().exec({"/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server",
@@ -88,8 +88,7 @@ TEST_F(KafkaModule, WithTopicPreCreatesPartitions) {
 TEST_F(KafkaModule, TwoContainersOverNetwork) {
     Network net = Network::builder().create();
 
-    const StartedKafka kafka =
-        KafkaContainer().with_network(net).with_network_alias("kafka").start();
+    const KafkaContainer kafka = KafkaImage().with_network(net).with_network_alias("kafka").start();
     EXPECT_EQ(kafka.internal_bootstrap_servers(), "kafka:9093");
 
     // A plain client box from the SAME image (no extra pull), idling.

@@ -10,7 +10,7 @@
 
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
-#include "testcontainers/modules/PostgreSQLContainer.hpp"
+#include "testcontainers/modules/PostgreSQL.hpp"
 
 #include "EngineGuard.hpp"
 #include "TempPaths.hpp"
@@ -29,7 +29,7 @@
 
 using namespace testcontainers;
 using modules::PostgreSQLContainer;
-using modules::StartedPostgreSQL;
+using modules::PostgreSQLImage;
 
 namespace {
 
@@ -84,7 +84,7 @@ char pg_first_reply_byte(const std::string& host, std::uint16_t port, const std:
 class PostgreSQLModule : public tcit::LinuxEngineTest {};
 
 TEST_F(PostgreSQLModule, DefaultsStartAndConnect) {
-    const StartedPostgreSQL pg = PostgreSQLContainer().start();
+    const PostgreSQLContainer pg = PostgreSQLImage().start();
 
     // Immediately after start(): a socket-based readiness probe would flake
     // here (the init window), the TCP probe must not.
@@ -104,8 +104,8 @@ TEST_F(PostgreSQLModule, DefaultsStartAndConnect) {
 }
 
 TEST_F(PostgreSQLModule, TcpProbeSurvivesInitWindow) {
-    const StartedPostgreSQL pg =
-        PostgreSQLContainer()
+    const PostgreSQLContainer pg =
+        PostgreSQLImage()
             .with_init_script("slow.sql", "SELECT pg_sleep(3);")
             .with_init_script("schema.sql",
                               "CREATE TABLE t(id int); INSERT INTO t VALUES (1), (2);")
@@ -122,11 +122,12 @@ TEST_F(PostgreSQLModule, InitScriptsRunInRegistrationOrder) {
     // "z.sql" is registered first but sorts last — if name order won, "a.sql"
     // would insert into a table that does not exist yet and the boot would
     // fail (ON_ERROR the entrypoint aborts).
-    const StartedPostgreSQL pg = PostgreSQLContainer()
-                                     .with_init_script("z.sql", "CREATE TABLE ordered(v text); "
-                                                                "INSERT INTO ordered VALUES ('z');")
-                                     .with_init_script("a.sql", "INSERT INTO ordered VALUES ('a');")
-                                     .start();
+    const PostgreSQLContainer pg =
+        PostgreSQLImage()
+            .with_init_script("z.sql", "CREATE TABLE ordered(v text); "
+                                       "INSERT INTO ordered VALUES ('z');")
+            .with_init_script("a.sql", "INSERT INTO ordered VALUES ('a');")
+            .start();
 
     const ExecResult r = pg.exec_sql("SELECT count(*) FROM ordered");
     EXPECT_EQ(r.exit_code, 0);
@@ -138,7 +139,7 @@ TEST_F(PostgreSQLModule, InitScriptFromHostFile) {
                                 "INSERT INTO fromhost VALUES (42);",
                                 "tc_pg_", ".sql");
 
-    const StartedPostgreSQL pg = PostgreSQLContainer().with_init_script(script.path()).start();
+    const PostgreSQLContainer pg = PostgreSQLImage().with_init_script(script.path()).start();
 
     const ExecResult r = pg.exec_sql("SELECT id FROM fromhost");
     EXPECT_EQ(r.exit_code, 0);
@@ -146,11 +147,11 @@ TEST_F(PostgreSQLModule, InitScriptFromHostFile) {
 }
 
 TEST_F(PostgreSQLModule, CustomCredentialsDsnAndConninfo) {
-    const StartedPostgreSQL pg = PostgreSQLContainer()
-                                     .with_username("app")
-                                     .with_password("p@ss w'rd")
-                                     .with_database("orders")
-                                     .start();
+    const PostgreSQLContainer pg = PostgreSQLImage()
+                                       .with_username("app")
+                                       .with_password("p@ss w'rd")
+                                       .with_database("orders")
+                                       .start();
 
     const ExecResult who = pg.exec_sql("SELECT current_user || '|' || current_database()");
     EXPECT_EQ(who.exit_code, 0);
@@ -163,8 +164,8 @@ TEST_F(PostgreSQLModule, CustomCredentialsDsnAndConninfo) {
 }
 
 TEST_F(PostgreSQLModule, ConfigOptionsReachServer) {
-    const StartedPostgreSQL pg =
-        PostgreSQLContainer().with_config_option("max_connections", "42").start();
+    const PostgreSQLContainer pg =
+        PostgreSQLImage().with_config_option("max_connections", "42").start();
 
     const ExecResult r = pg.exec_sql("SHOW max_connections");
     EXPECT_EQ(r.exit_code, 0);
@@ -174,17 +175,17 @@ TEST_F(PostgreSQLModule, ConfigOptionsReachServer) {
 TEST_F(PostgreSQLModule, CustomizerReachesCreateBody) {
     const std::string marker = "tc-pg-customizer-" + tcit::random_suffix();
 
-    const StartedPostgreSQL pg = PostgreSQLContainer()
-                                     .with_customizer([&marker](GenericImage& generic) {
-                                         generic.with_label("tc.test.marker", marker);
-                                     })
-                                     .start();
+    const PostgreSQLContainer pg = PostgreSQLImage()
+                                       .with_customizer([&marker](GenericImage& generic) {
+                                           generic.with_label("tc.test.marker", marker);
+                                       })
+                                       .start();
 
     EXPECT_NE(pg.container().inspect_raw().find(marker), std::string::npos);
 }
 
 TEST_F(PostgreSQLModule, HostSidePgHandshake) {
-    const StartedPostgreSQL pg = PostgreSQLContainer().start();
+    const PostgreSQLContainer pg = PostgreSQLImage().start();
 
     const char reply = pg_first_reply_byte(pg.host(), pg.port(), "test", "test");
     // 'R' = authentication request — a real PostgreSQL answered end to end.
@@ -196,7 +197,7 @@ TEST_F(PostgreSQLModule, ReuseAdoptsSeededServer) {
     // including gtest fatal asserts, which return without throwing).
     const tctest::ScopedEnv reuse_enable("TESTCONTAINERS_REUSE_ENABLE", "true");
 
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_reuse(true)
         // A unique marker so this run's config can't collide with a stale
         // container left over from an earlier run.
@@ -206,7 +207,7 @@ TEST_F(PostgreSQLModule, ReuseAdoptsSeededServer) {
 
     std::string adopted_id;
     try {
-        const StartedPostgreSQL first = cfg.start();
+        const PostgreSQLContainer first = cfg.start();
         adopted_id = first.container().id();
         ASSERT_FALSE(adopted_id.empty());
         EXPECT_TRUE(first.container().is_persistent());
@@ -215,7 +216,7 @@ TEST_F(PostgreSQLModule, ReuseAdoptsSeededServer) {
         // The second identical start adopts the running server: same id, the
         // post-start row still present, init scripts NOT re-run (else the
         // count would have reset to 2).
-        const StartedPostgreSQL second = cfg.start();
+        const PostgreSQLContainer second = cfg.start();
         EXPECT_EQ(second.container().id(), adopted_id);
         const ExecResult r = second.exec_sql("SELECT count(*) FROM seed");
         EXPECT_EQ(r.exit_code, 0);

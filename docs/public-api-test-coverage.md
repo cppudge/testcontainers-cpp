@@ -340,50 +340,50 @@ which includes it in place of the individual header.
 | Function | Works on Linux | Works on Windows | Integration-tested (Linux) | Integration-tested (Windows) |
 |---|---|---|---|---|
 | `GenericImage::with_image` (core setter) | ✅ | ✅ | ❌ (unit-tested: GenericImage.WithImageReplacesReferenceKeepingOptions; every module `with_image` uses it) | ❌ |
-| `RedisContainer()` defaults + `start()` | ✅ | n/a (Linux image) | ✅ RedisModule.StartsServesAndBuildsDsn | n/a |
-| `RedisContainer::with_image` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.WithImageRewritesReference) | n/a |
-| `RedisContainer::with_password` | ✅ | n/a | ✅ RedisModule.PasswordIsEnforcedAndWired | n/a |
-| `RedisContainer::with_command_arg[s]` | ✅ | n/a | ✅ RedisModule.CommandArgsReachTheServer (batch form; single twin unit-tested: RedisModuleConfig.CommandArgSingleTwinAccumulates) | n/a |
-| `RedisContainer` pass-throughs (env/label/network/alias/reuse/timeout/attempts) | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.PassThroughsLandOnTheImage, RedisModuleConfig.ManagedAuthEnvConflictThrowsAtRender; thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
-| `RedisContainer::with_customizer` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.CustomizerRunsLastAndWins — pure rendering, no daemon interaction of its own) | n/a |
-| `RedisContainer::to_generic` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.* — `start()` goes through it) | n/a |
-| `StartedRedis::host` / `port` / `connection_string` / `password` | ✅ | n/a | ✅ RedisModule.StartsServesAndBuildsDsn, RedisModule.PasswordIsEnforcedAndWired | n/a |
-| `StartedRedis::container` (exec escape hatch) | ✅ | n/a | ✅ RedisModule.ExecSetGetRoundTrip | n/a |
-| `PostgreSQLContainer()` defaults + `start()` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.TcpProbeSurvivesInitWindow | n/a |
-| `PostgreSQLContainer::with_username` / `with_password` / `with_database` | ✅ | n/a | ✅ PostgreSQLModule.CustomCredentialsDsnAndConninfo | n/a |
-| `PostgreSQLContainer::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ PostgreSQLModule.InitScriptFromHostFile, PostgreSQLModule.InitScriptsRunInRegistrationOrder | n/a |
-| `PostgreSQLContainer::with_config_option` | ✅ | n/a | ✅ PostgreSQLModule.ConfigOptionsReachServer | n/a |
-| `PostgreSQLContainer::with_reuse` | ✅ | n/a | ✅ PostgreSQLModule.ReuseAdoptsSeededServer | n/a |
-| `PostgreSQLContainer::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: PostgreSQLModuleConfig.CustomWaitReplacesDefaultProbe, PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
-| `PostgreSQLContainer` other pass-throughs (label/network/alias/timeout/attempts) | ✅ | n/a | ❌ (thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
-| `PostgreSQLContainer::with_customizer` / `to_generic` | ✅ | n/a | ✅ PostgreSQLModule.CustomizerReachesCreateBody | n/a |
-| `StartedPostgreSQL::host` / `port` / `connection_string[_with_scheme]` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
-| `StartedPostgreSQL::exec_sql` | ✅ | n/a | ✅ every PostgreSQLModule test | n/a |
-| `MySQLContainer()` defaults + `start()` | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect | n/a |
-| `MySQLContainer::with_username/password/database` (incl. root modes) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts, MySQLModule.RootOnlyModes | n/a |
-| `MySQLContainer::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts | n/a |
-| `MySQLContainer::with_command_arg[s]` | ✅ | n/a | ✅ MySQLModule.CharsetCommandArg (batch twin unit-tested: MySqlFamilyConfig.CommandArgsBecomeCmd) | n/a |
-| `MySQLContainer::with_config_file` | ✅ | n/a | ❌ (unit-tested staging: MySqlFamilyConfig.InitScriptsAndConfigFilesStageOrderedAndValidated; the copy mechanics are MariaDB-integration-tested — shared core) | n/a |
-| `MariaDBContainer()` defaults + `start()` (healthcheck.sh wait) | ✅ | n/a | ✅ MariaDBModule.DefaultsBootAndConnect | n/a |
-| `MariaDBContainer::with_init_script` / `with_config_file` | ✅ | n/a | ✅ MariaDBModule.InitScriptAndConfigFile | n/a |
+| `RedisImage()` defaults + `start()` | ✅ | n/a (Linux image) | ✅ RedisModule.StartsServesAndBuildsDsn | n/a |
+| `RedisImage::with_image` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.WithImageRewritesReference) | n/a |
+| `RedisImage::with_password` | ✅ | n/a | ✅ RedisModule.PasswordIsEnforcedAndWired | n/a |
+| `RedisImage::with_command_arg[s]` | ✅ | n/a | ✅ RedisModule.CommandArgsReachTheServer (batch form; single twin unit-tested: RedisModuleConfig.CommandArgSingleTwinAccumulates) | n/a |
+| `RedisImage` pass-throughs (env/label/network/alias/reuse/timeout/attempts) | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.PassThroughsLandOnTheImage, RedisModuleConfig.ManagedAuthEnvConflictThrowsAtRender; thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
+| `RedisImage::with_customizer` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.CustomizerRunsLastAndWins — pure rendering, no daemon interaction of its own) | n/a |
+| `RedisImage::to_generic` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.* — `start()` goes through it) | n/a |
+| `RedisContainer::host` / `port` / `connection_string` / `password` | ✅ | n/a | ✅ RedisModule.StartsServesAndBuildsDsn, RedisModule.PasswordIsEnforcedAndWired | n/a |
+| `RedisContainer::container` (exec escape hatch) | ✅ | n/a | ✅ RedisModule.ExecSetGetRoundTrip | n/a |
+| `PostgreSQLImage()` defaults + `start()` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.TcpProbeSurvivesInitWindow | n/a |
+| `PostgreSQLImage::with_username` / `with_password` / `with_database` | ✅ | n/a | ✅ PostgreSQLModule.CustomCredentialsDsnAndConninfo | n/a |
+| `PostgreSQLImage::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ PostgreSQLModule.InitScriptFromHostFile, PostgreSQLModule.InitScriptsRunInRegistrationOrder | n/a |
+| `PostgreSQLImage::with_config_option` | ✅ | n/a | ✅ PostgreSQLModule.ConfigOptionsReachServer | n/a |
+| `PostgreSQLImage::with_reuse` | ✅ | n/a | ✅ PostgreSQLModule.ReuseAdoptsSeededServer | n/a |
+| `PostgreSQLImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: PostgreSQLModuleConfig.CustomWaitReplacesDefaultProbe, PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
+| `PostgreSQLImage` other pass-throughs (label/network/alias/timeout/attempts) | ✅ | n/a | ❌ (thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
+| `PostgreSQLImage::with_customizer` / `to_generic` | ✅ | n/a | ✅ PostgreSQLModule.CustomizerReachesCreateBody | n/a |
+| `PostgreSQLContainer::host` / `port` / `connection_string[_with_scheme]` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
+| `PostgreSQLContainer::exec_sql` | ✅ | n/a | ✅ every PostgreSQLModule test | n/a |
+| `MySQLImage()` defaults + `start()` | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect | n/a |
+| `MySQLImage::with_username/password/database` (incl. root modes) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts, MySQLModule.RootOnlyModes | n/a |
+| `MySQLImage::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts | n/a |
+| `MySQLImage::with_command_arg[s]` | ✅ | n/a | ✅ MySQLModule.CharsetCommandArg (batch twin unit-tested: MySqlFamilyConfig.CommandArgsBecomeCmd) | n/a |
+| `MySQLImage::with_config_file` | ✅ | n/a | ❌ (unit-tested staging: MySqlFamilyConfig.InitScriptsAndConfigFilesStageOrderedAndValidated; the copy mechanics are MariaDB-integration-tested — shared core) | n/a |
+| `MariaDBImage()` defaults + `start()` (healthcheck.sh wait) | ✅ | n/a | ✅ MariaDBModule.DefaultsBootAndConnect | n/a |
+| `MariaDBImage::with_init_script` / `with_config_file` | ✅ | n/a | ✅ MariaDBModule.InitScriptAndConfigFile | n/a |
 | MySQL/MariaDB `with_wait` / `with_env` / other pass-throughs / `with_customizer` / `to_generic` | ✅ | n/a | ❌ (unit-tested: MySqlFamilyConfig.* — shared rendering core; thin forwards integration-tested under GenericImage above) | n/a |
-| `StartedMySQL` / `StartedMariaDB` getters + `connection_string` (mysql:// both) | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect, MySQLModule.RootOnlyModes, MariaDBModule.DefaultsBootAndConnect | n/a |
-| `KafkaContainer()` defaults + `start()` (two-phase boot) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.AdvertisedListenersCarryMappedPort (the mapped-port money test), KafkaModule.ProduceConsumeRoundTrip | n/a |
-| `KafkaContainer::with_topic` | ✅ | n/a | ✅ KafkaModule.WithTopicPreCreatesPartitions | n/a |
-| `KafkaContainer::with_network` / `with_network_alias` (advertised internal listener) | ✅ | n/a | ✅ KafkaModule.TwoContainersOverNetwork | n/a |
-| `KafkaContainer::with_env` / `with_label` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, label order vs the reserved topics label, cluster-id validation, starter script, placeholder command) | n/a |
-| `StartedKafka` getters (`bootstrap_servers` bare host:port, `internal_bootstrap_servers`, `cluster_id`) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.TwoContainersOverNetwork | n/a |
-| `RabbitMQContainer()` defaults + `start()` (ordered log→exec readiness) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls | n/a |
-| `RabbitMQContainer::with_username/password/vhost` | ✅ | n/a | ✅ RabbitMQModule.CustomCredentialsAndVhost | n/a |
-| `RabbitMQContainer::with_definitions[_json]` (+ the seeded account) | ✅ | n/a | ✅ RabbitMQModule.DefinitionsPreloadWithSeededAccount (the zero-users trap in executable form) | n/a |
-| `RabbitMQContainer::with_plugin` | ✅ | n/a | ✅ RabbitMQModule.PluginEnabled | n/a |
-| `RabbitMQContainer::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ✅ customizer: RabbitMQModule.ManagementHttpServes; rest ❌ (unit-tested: RabbitMQModuleConfig.*) | n/a |
-| `StartedRabbitMQ` getters (`amqp_url` no-path-for-"/", `management_url`) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls, RabbitMQModule.CustomCredentialsAndVhost | n/a |
-| `MongoDBContainer()` defaults + `start()` (RS initiate + PRIMARY wait) | ✅ | n/a | ✅ MongoDBModule.BecomesWritablePrimary, MongoDBModule.InsertFindRoundTrip | n/a |
-| `MongoDBContainer::with_replica_set_name` | ✅ | n/a | ✅ MongoDBModule.CustomReplicaSetName | n/a |
-| `MongoDBContainer::with_database` + `StartedMongoDB::connection_string` (directConnection, mandatory '/') | ✅ | n/a | ✅ MongoDBModule.ConnectionStringShape | n/a |
-| `StartedMongoDB::mongosh` (transactions payoff) | ✅ | n/a | ✅ MongoDBModule.TransactionCommitAndAbort (+ every MongoDBModule test) | n/a |
-| `MongoDBContainer::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MongoDBModuleConfig.* — cmd/waits/hook shape, rs-name validation) | n/a |
+| `MySQLContainer` / `MariaDBContainer` getters + `connection_string` (mysql:// both) | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect, MySQLModule.RootOnlyModes, MariaDBModule.DefaultsBootAndConnect | n/a |
+| `KafkaImage()` defaults + `start()` (two-phase boot) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.AdvertisedListenersCarryMappedPort (the mapped-port money test), KafkaModule.ProduceConsumeRoundTrip | n/a |
+| `KafkaImage::with_topic` | ✅ | n/a | ✅ KafkaModule.WithTopicPreCreatesPartitions | n/a |
+| `KafkaImage::with_network` / `with_network_alias` (advertised internal listener) | ✅ | n/a | ✅ KafkaModule.TwoContainersOverNetwork | n/a |
+| `KafkaImage::with_env` / `with_label` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, label order vs the reserved topics label, cluster-id validation, starter script, placeholder command) | n/a |
+| `KafkaContainer` getters (`bootstrap_servers` bare host:port, `internal_bootstrap_servers`, `cluster_id`) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.TwoContainersOverNetwork | n/a |
+| `RabbitMQImage()` defaults + `start()` (ordered log→exec readiness) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls | n/a |
+| `RabbitMQImage::with_username/password/vhost` | ✅ | n/a | ✅ RabbitMQModule.CustomCredentialsAndVhost | n/a |
+| `RabbitMQImage::with_definitions[_json]` (+ the seeded account) | ✅ | n/a | ✅ RabbitMQModule.DefinitionsPreloadWithSeededAccount (the zero-users trap in executable form) | n/a |
+| `RabbitMQImage::with_plugin` | ✅ | n/a | ✅ RabbitMQModule.PluginEnabled | n/a |
+| `RabbitMQImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ✅ customizer: RabbitMQModule.ManagementHttpServes; rest ❌ (unit-tested: RabbitMQModuleConfig.*) | n/a |
+| `RabbitMQContainer` getters (`amqp_url` no-path-for-"/", `management_url`) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls, RabbitMQModule.CustomCredentialsAndVhost | n/a |
+| `MongoDBImage()` defaults + `start()` (RS initiate + PRIMARY wait) | ✅ | n/a | ✅ MongoDBModule.BecomesWritablePrimary, MongoDBModule.InsertFindRoundTrip | n/a |
+| `MongoDBImage::with_replica_set_name` | ✅ | n/a | ✅ MongoDBModule.CustomReplicaSetName | n/a |
+| `MongoDBImage::with_database` + `MongoDBContainer::connection_string` (directConnection, mandatory '/') | ✅ | n/a | ✅ MongoDBModule.ConnectionStringShape | n/a |
+| `MongoDBContainer::mongosh` (transactions payoff) | ✅ | n/a | ✅ MongoDBModule.TransactionCommitAndAbort (+ every MongoDBModule test) | n/a |
+| `MongoDBImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MongoDBModuleConfig.* — cmd/waits/hook shape, rs-name validation) | n/a |
 
 ---
 

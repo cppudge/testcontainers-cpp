@@ -215,7 +215,7 @@ class TestcontainersCppRecipe(ConanFile):
             # still links it transitively.
             core.system_libs = ["pthread"]
 
-        # The ecosystem module wrappers (RedisContainer, ...): same target
+        # The ecosystem module wrappers (RedisImage, ...): same target
         # spelling as the non-Conan install's exported testcontainers::modules.
         modules = self.cpp_info.components["modules"]
         modules.set_property("cmake_target_name", "testcontainers::modules")

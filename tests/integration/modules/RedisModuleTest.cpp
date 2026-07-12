@@ -3,26 +3,26 @@
 #include <string>
 
 #include "testcontainers/ExecResult.hpp"
-#include "testcontainers/modules/RedisContainer.hpp"
+#include "testcontainers/modules/Redis.hpp"
 
 #include "EngineGuard.hpp"
 #include "RedisPing.hpp"
 
 // Tests in this file (integration; require a Linux-containers Docker daemon):
-//   RedisModule.StartsServesAndBuildsDsn - a default RedisContainer starts, answers a raw TCP PING on host()/port(), and connection_string() renders redis://host:port (with /db for a nonzero database index).
+//   RedisModule.StartsServesAndBuildsDsn - a default RedisImage starts, answers a raw TCP PING on host()/port(), and connection_string() renders redis://host:port (with /db for a nonzero database index).
 //   RedisModule.ExecSetGetRoundTrip - the in-container redis-cli round-trips a SET/GET through container().exec (the no-driver behavioral proof).
 //   RedisModule.PasswordIsEnforcedAndWired - with_password really turns auth on (raw PING gets -NOAUTH) while in-container redis-cli authenticates via REDISCLI_AUTH, and the DSN carries :password@.
 //   RedisModule.CommandArgsReachTheServer - with_command_args flags reach the running server (config get maxmemory reports the set value).
 
 using namespace testcontainers;
 using modules::RedisContainer;
-using modules::StartedRedis;
+using modules::RedisImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class RedisModule : public tcit::LinuxEngineTest {};
 
 TEST_F(RedisModule, StartsServesAndBuildsDsn) {
-    const StartedRedis redis = RedisContainer().start();
+    const RedisContainer redis = RedisImage().start();
 
     const std::string reply = tcit::redis_ping(redis.host(), redis.port());
     EXPECT_EQ(reply.substr(0, 5), "+PONG");
@@ -34,7 +34,7 @@ TEST_F(RedisModule, StartsServesAndBuildsDsn) {
 }
 
 TEST_F(RedisModule, ExecSetGetRoundTrip) {
-    const StartedRedis redis = RedisContainer().start();
+    const RedisContainer redis = RedisImage().start();
 
     EXPECT_EQ(redis.container().exec({"redis-cli", "set", "greeting", "hello"}).exit_code, 0);
 
@@ -44,7 +44,7 @@ TEST_F(RedisModule, ExecSetGetRoundTrip) {
 }
 
 TEST_F(RedisModule, PasswordIsEnforcedAndWired) {
-    const StartedRedis redis = RedisContainer().with_password("s3cr3t").start();
+    const RedisContainer redis = RedisImage().with_password("s3cr3t").start();
 
     // Auth is really on: an unauthenticated raw PING is refused...
     const std::string reply = tcit::redis_ping(redis.host(), redis.port());
@@ -61,7 +61,7 @@ TEST_F(RedisModule, PasswordIsEnforcedAndWired) {
 }
 
 TEST_F(RedisModule, CommandArgsReachTheServer) {
-    const StartedRedis redis = RedisContainer().with_command_args({"--maxmemory", "64mb"}).start();
+    const RedisContainer redis = RedisImage().with_command_args({"--maxmemory", "64mb"}).start();
 
     const ExecResult res = redis.container().exec({"redis-cli", "config", "get", "maxmemory"});
     EXPECT_EQ(res.exit_code, 0);

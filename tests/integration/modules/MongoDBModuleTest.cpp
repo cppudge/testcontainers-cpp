@@ -3,7 +3,7 @@
 #include <string>
 
 #include "testcontainers/ExecResult.hpp"
-#include "testcontainers/modules/MongoDBContainer.hpp"
+#include "testcontainers/modules/MongoDB.hpp"
 
 #include "EngineGuard.hpp"
 
@@ -16,13 +16,13 @@
 
 using namespace testcontainers;
 using modules::MongoDBContainer;
-using modules::StartedMongoDB;
+using modules::MongoDBImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class MongoDBModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MongoDBModule, BecomesWritablePrimary) {
-    const StartedMongoDB mongo = MongoDBContainer().start();
+    const MongoDBContainer mongo = MongoDBImage().start();
 
     const ExecResult hello = mongo.mongosh("print(db.hello().isWritablePrimary)");
     EXPECT_EQ(hello.exit_code, 0) << hello.stderr_data;
@@ -35,7 +35,7 @@ TEST_F(MongoDBModule, BecomesWritablePrimary) {
 }
 
 TEST_F(MongoDBModule, ConnectionStringShape) {
-    const StartedMongoDB mongo = MongoDBContainer().with_database("orders").start();
+    const MongoDBContainer mongo = MongoDBImage().with_database("orders").start();
 
     const std::string origin = mongo.host() + ":" + std::to_string(mongo.port());
     EXPECT_EQ(mongo.connection_string(), "mongodb://" + origin + "/orders?directConnection=true");
@@ -50,7 +50,7 @@ TEST_F(MongoDBModule, ConnectionStringShape) {
 }
 
 TEST_F(MongoDBModule, InsertFindRoundTrip) {
-    const StartedMongoDB mongo = MongoDBContainer().start();
+    const MongoDBContainer mongo = MongoDBImage().start();
 
     // Immediately after start(): if PRIMARY had not been reached, the write
     // would be rejected with NotWritablePrimary.
@@ -63,7 +63,7 @@ TEST_F(MongoDBModule, InsertFindRoundTrip) {
 }
 
 TEST_F(MongoDBModule, TransactionCommitAndAbort) {
-    const StartedMongoDB mongo = MongoDBContainer().start();
+    const MongoDBContainer mongo = MongoDBImage().start();
 
     // Multi-document transactions are the reason the module always runs a
     // replica set — a standalone mongod rejects startTransaction outright.
@@ -82,7 +82,7 @@ TEST_F(MongoDBModule, TransactionCommitAndAbort) {
 }
 
 TEST_F(MongoDBModule, CustomReplicaSetName) {
-    const StartedMongoDB mongo = MongoDBContainer().with_replica_set_name("tcrs").start();
+    const MongoDBContainer mongo = MongoDBImage().with_replica_set_name("tcrs").start();
 
     const ExecResult set = mongo.mongosh("print(rs.status().set)");
     EXPECT_EQ(set.exit_code, 0);

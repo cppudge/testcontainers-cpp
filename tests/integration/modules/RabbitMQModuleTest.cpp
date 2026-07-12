@@ -4,7 +4,7 @@
 
 #include "testcontainers/ExecResult.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/RabbitMQContainer.hpp"
+#include "testcontainers/modules/RabbitMQ.hpp"
 
 #include "EngineGuard.hpp"
 
@@ -17,13 +17,13 @@
 
 using namespace testcontainers;
 using modules::RabbitMQContainer;
-using modules::StartedRabbitMQ;
+using modules::RabbitMQImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class RabbitMQModule : public tcit::LinuxEngineTest {};
 
 TEST_F(RabbitMQModule, DefaultsStartAndUrls) {
-    const StartedRabbitMQ rmq = RabbitMQContainer().start();
+    const RabbitMQContainer rmq = RabbitMQImage().start();
 
     // Default vhost "/": no path segment in the URI (an absent path means
     // the client's default vhost; the explicit /%2F trips naive parsers).
@@ -39,11 +39,8 @@ TEST_F(RabbitMQModule, DefaultsStartAndUrls) {
 }
 
 TEST_F(RabbitMQModule, CustomCredentialsAndVhost) {
-    const StartedRabbitMQ rmq = RabbitMQContainer()
-                                    .with_username("app")
-                                    .with_password("s3cret")
-                                    .with_vhost("orders")
-                                    .start();
+    const RabbitMQContainer rmq =
+        RabbitMQImage().with_username("app").with_password("s3cret").with_vhost("orders").start();
 
     // authenticate_user drives the broker's real auth backend.
     const ExecResult auth =
@@ -63,8 +60,8 @@ TEST_F(RabbitMQModule, DefinitionsPreloadWithSeededAccount) {
     // NO "users" section on purpose: under load_definitions RabbitMQ skips
     // ALL default provisioning, so without the module's seed file this
     // broker would boot with zero users (guest included).
-    const StartedRabbitMQ rmq =
-        RabbitMQContainer()
+    const RabbitMQContainer rmq =
+        RabbitMQImage()
             .with_username("app")
             .with_password("s3cret")
             .with_definitions_json(R"({"queues":[{"name":"preloaded","vhost":"/",)"
@@ -82,7 +79,7 @@ TEST_F(RabbitMQModule, DefinitionsPreloadWithSeededAccount) {
 }
 
 TEST_F(RabbitMQModule, PluginEnabled) {
-    const StartedRabbitMQ rmq = RabbitMQContainer().with_plugin("rabbitmq_shovel").start();
+    const RabbitMQContainer rmq = RabbitMQImage().with_plugin("rabbitmq_shovel").start();
 
     const ExecResult shovel =
         rmq.container().exec({"rabbitmq-plugins", "is_enabled", "rabbitmq_shovel"});
@@ -98,11 +95,11 @@ TEST_F(RabbitMQModule, ManagementHttpServes) {
     // The customizer-added wait lands AFTER the module's ordered pair (the
     // safe position); the UI root serves 200 unauthenticated, so start()
     // returning proves the management listener through the published port.
-    const StartedRabbitMQ rmq = RabbitMQContainer()
-                                    .with_customizer([](GenericImage& generic) {
-                                        generic.with_wait(wait_for::http("/", tcp(15672), 200));
-                                    })
-                                    .start();
+    const RabbitMQContainer rmq = RabbitMQImage()
+                                      .with_customizer([](GenericImage& generic) {
+                                          generic.with_wait(wait_for::http("/", tcp(15672), 200));
+                                      })
+                                      .start();
 
     EXPECT_GT(rmq.management_port(), 0);
 }

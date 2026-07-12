@@ -56,8 +56,8 @@ strings out of the box (link `testcontainers::modules`):
 using namespace testcontainers;
 
 TEST(Db, PostgresAnswersQueries) {
-    const modules::StartedPostgreSQL pg =
-        modules::PostgreSQLContainer()
+    const modules::PostgreSQLContainer pg =
+        modules::PostgreSQLImage()
             .with_init_script("schema.sql", "CREATE TABLE t(id int);")
             .start(); // returns once every init script ran and TCP serves
 
@@ -95,7 +95,7 @@ and wire it into CMake with `find_package` (the CMake package and target are nam
 ```cmake
 find_package(testcontainers REQUIRED)
 target_link_libraries(my_tests PRIVATE testcontainers::testcontainers)
-# For the prebuilt technology wrappers (modules::RedisContainer, ...):
+# For the prebuilt technology wrappers (modules::RedisImage, ...):
 target_link_libraries(my_tests PRIVATE testcontainers::modules)
 ```
 

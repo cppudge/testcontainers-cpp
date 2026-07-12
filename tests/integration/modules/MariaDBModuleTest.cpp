@@ -3,7 +3,7 @@
 #include <string>
 
 #include "testcontainers/ExecResult.hpp"
-#include "testcontainers/modules/MariaDBContainer.hpp"
+#include "testcontainers/modules/MariaDB.hpp"
 
 #include "EngineGuard.hpp"
 #include "TempPaths.hpp"
@@ -14,13 +14,13 @@
 
 using namespace testcontainers;
 using modules::MariaDBContainer;
-using modules::StartedMariaDB;
+using modules::MariaDBImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class MariaDBModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MariaDBModule, DefaultsBootAndConnect) {
-    const StartedMariaDB db = MariaDBContainer().start();
+    const MariaDBContainer db = MariaDBImage().start();
 
     // The image's client binaries carry the mariadb-prefixed names.
     const ExecResult select = db.container().exec(
@@ -37,8 +37,8 @@ TEST_F(MariaDBModule, DefaultsBootAndConnect) {
 TEST_F(MariaDBModule, InitScriptAndConfigFile) {
     const tcit::TempFile tuning("[mysqld]\nmax_connections=77\n", "tc_mariadb_", ".cnf");
 
-    const StartedMariaDB db =
-        MariaDBContainer()
+    const MariaDBContainer db =
+        MariaDBImage()
             .with_init_script("schema.sql", "CREATE TABLE t(v int); INSERT INTO t VALUES (7);")
             .with_config_file(tuning.path())
             .start();

@@ -9,8 +9,8 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/MariaDBContainer.hpp"
-#include "testcontainers/modules/MySQLContainer.hpp"
+#include "testcontainers/modules/MariaDB.hpp"
+#include "testcontainers/modules/MySQL.hpp"
 
 // Tests in this file (unit; no Docker daemon — the MySQL/MariaDB pair's
 // shared rendering rules via to_generic()):
@@ -27,8 +27,8 @@
 //   MySqlFamilyConfig.RenderingIsIdempotent - repeated to_generic() calls render equal env/cmd/copies.
 
 using namespace testcontainers;
-using modules::MariaDBContainer;
-using modules::MySQLContainer;
+using modules::MariaDBImage;
+using modules::MySQLImage;
 
 namespace {
 
@@ -55,7 +55,7 @@ bool env_has_key(const GenericImage& generic, const std::string& key) {
 } // namespace
 
 TEST(MySqlFamilyConfig, MySQLDefaultsRenderMatrixProbeAndPin) {
-    const GenericImage generic = MySQLContainer().to_generic();
+    const GenericImage generic = MySQLImage().to_generic();
 
     EXPECT_EQ(generic.image(), "mysql");
     EXPECT_EQ(generic.tag(), "8.4");
@@ -77,7 +77,7 @@ TEST(MySqlFamilyConfig, MySQLDefaultsRenderMatrixProbeAndPin) {
 }
 
 TEST(MySqlFamilyConfig, MariaDBDefaultsRenderFlavor) {
-    const GenericImage generic = MariaDBContainer().to_generic();
+    const GenericImage generic = MariaDBImage().to_generic();
 
     EXPECT_EQ(generic.image(), "mariadb");
     EXPECT_EQ(generic.tag(), "11");
@@ -95,7 +95,7 @@ TEST(MySqlFamilyConfig, MariaDBDefaultsRenderFlavor) {
 }
 
 TEST(MySqlFamilyConfig, RootOnlyModeOmitsUserEnv) {
-    MySQLContainer cfg;
+    MySQLImage cfg;
     cfg.with_username("Root");
     // Normalized: the real account is 'root' and account names are
     // case-sensitive — a "Root" spelling must not leak into the probe/DSN.
@@ -109,8 +109,7 @@ TEST(MySqlFamilyConfig, RootOnlyModeOmitsUserEnv) {
 }
 
 TEST(MySqlFamilyConfig, PasswordlessRootSetsAllowEmpty) {
-    const GenericImage mysql =
-        MySQLContainer().with_username("root").with_password("").to_generic();
+    const GenericImage mysql = MySQLImage().with_username("root").with_password("").to_generic();
     EXPECT_EQ(env_last_value(mysql, "MYSQL_ALLOW_EMPTY_PASSWORD"), "yes");
     EXPECT_FALSE(env_has_key(mysql, "MYSQL_ROOT_PASSWORD"));
     // No password, no -p in the probe.
@@ -121,23 +120,21 @@ TEST(MySqlFamilyConfig, PasswordlessRootSetsAllowEmpty) {
 
     // MariaDB spells the allow-empty key differently.
     const GenericImage mariadb =
-        MariaDBContainer().with_username("root").with_password("").to_generic();
+        MariaDBImage().with_username("root").with_password("").to_generic();
     EXPECT_EQ(env_last_value(mariadb, "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD"), "yes");
     EXPECT_FALSE(env_has_key(mariadb, "MARIADB_ROOT_PASSWORD"));
 }
 
 TEST(MySqlFamilyConfig, InvalidCredentialsThrowFast) {
-    EXPECT_THROW(MySQLContainer().with_password("").to_generic(), Error);
-    EXPECT_THROW(MariaDBContainer().with_password("").to_generic(), Error);
-    EXPECT_THROW(MySQLContainer().with_username("").to_generic(), Error);
-    EXPECT_THROW(MariaDBContainer().with_username("").to_generic(), Error);
+    EXPECT_THROW(MySQLImage().with_password("").to_generic(), Error);
+    EXPECT_THROW(MariaDBImage().with_password("").to_generic(), Error);
+    EXPECT_THROW(MySQLImage().with_username("").to_generic(), Error);
+    EXPECT_THROW(MariaDBImage().with_username("").to_generic(), Error);
 }
 
 TEST(MySqlFamilyConfig, ManagedMatrixAppendedLastWinsOverRawEnv) {
-    const GenericImage generic = MySQLContainer()
-                                     .with_env("MYSQL_ROOT_PASSWORD", "raw")
-                                     .with_password("s3cr3t")
-                                     .to_generic();
+    const GenericImage generic =
+        MySQLImage().with_env("MYSQL_ROOT_PASSWORD", "raw").with_password("s3cr3t").to_generic();
 
     // The raw duplicate is kept, but the module's entry comes after it — the
     // bash entrypoint applies the last occurrence.
@@ -146,7 +143,7 @@ TEST(MySqlFamilyConfig, ManagedMatrixAppendedLastWinsOverRawEnv) {
     // Distinct values land on their distinct keys (a user/password key swap
     // would be invisible with the all-"test" defaults).
     const GenericImage mapped =
-        MySQLContainer().with_username("u1").with_password("p1").with_database("d1").to_generic();
+        MySQLImage().with_username("u1").with_password("p1").with_database("d1").to_generic();
     EXPECT_EQ(env_last_value(mapped, "MYSQL_USER"), "u1");
     EXPECT_EQ(env_last_value(mapped, "MYSQL_PASSWORD"), "p1");
     EXPECT_EQ(env_last_value(mapped, "MYSQL_ROOT_PASSWORD"), "p1");
@@ -154,12 +151,12 @@ TEST(MySqlFamilyConfig, ManagedMatrixAppendedLastWinsOverRawEnv) {
 }
 
 TEST(MySqlFamilyConfig, EmptyDatabaseOmitsEnvKey) {
-    const GenericImage generic = MySQLContainer().with_database("").to_generic();
+    const GenericImage generic = MySQLImage().with_database("").to_generic();
     EXPECT_FALSE(env_has_key(generic, "MYSQL_DATABASE"));
 }
 
 TEST(MySqlFamilyConfig, InitScriptsAndConfigFilesStageOrderedAndValidated) {
-    MySQLContainer cfg;
+    MySQLImage cfg;
     cfg.with_init_script("z.sql", "CREATE TABLE t(id int);");
     cfg.with_init_script("a.sh", "#!/bin/sh\nexit 0\n");
     cfg.with_config_file(std::filesystem::path("testdata/tuning.cnf"));
@@ -179,9 +176,9 @@ TEST(MySqlFamilyConfig, InitScriptsAndConfigFilesStageOrderedAndValidated) {
 }
 
 TEST(MySqlFamilyConfig, CommandArgsBecomeCmd) {
-    EXPECT_TRUE(MySQLContainer().to_generic().cmd().empty());
+    EXPECT_TRUE(MySQLImage().to_generic().cmd().empty());
 
-    const GenericImage generic = MySQLContainer()
+    const GenericImage generic = MySQLImage()
                                      .with_command_arg("--character-set-server=utf8mb4")
                                      .with_command_arg("--collation-server=utf8mb4_unicode_ci")
                                      .to_generic();
@@ -190,7 +187,7 @@ TEST(MySqlFamilyConfig, CommandArgsBecomeCmd) {
 
     // The batch twin interleaves with the single form in call order (same
     // spelling pair as Redis).
-    const GenericImage mariadb = MariaDBContainer()
+    const GenericImage mariadb = MariaDBImage()
                                      .with_command_arg("--max-connections=42")
                                      .with_command_args({"--skip-name-resolve", "--general-log=1"})
                                      .to_generic();
@@ -199,12 +196,12 @@ TEST(MySqlFamilyConfig, CommandArgsBecomeCmd) {
 }
 
 TEST(MySqlFamilyConfig, CustomWaitReplacesProbeAndCustomizerWins) {
-    MySQLContainer cfg;
+    MySQLImage cfg;
     cfg.with_wait(wait_for::log("ready"));
     ASSERT_EQ(cfg.to_generic().waits().size(), 1u);
     EXPECT_TRUE(std::holds_alternative<wait_for::LogMessage>(cfg.to_generic().waits()[0]));
 
-    MariaDBContainer customized;
+    MariaDBImage customized;
     customized.with_customizer([](GenericImage& generic) {
         // Sees the rendered state and has the last word.
         EXPECT_FALSE(generic.env().empty());
@@ -216,7 +213,7 @@ TEST(MySqlFamilyConfig, CustomWaitReplacesProbeAndCustomizerWins) {
 }
 
 TEST(MySqlFamilyConfig, RenderingIsIdempotent) {
-    MySQLContainer cfg;
+    MySQLImage cfg;
     cfg.with_password("pw").with_command_arg("--skip-name-resolve");
     cfg.with_init_script("seed.sql", "SELECT 1;");
 

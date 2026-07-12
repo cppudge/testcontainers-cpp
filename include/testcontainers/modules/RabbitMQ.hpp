@@ -15,7 +15,7 @@
 
 namespace testcontainers::modules {
 
-class StartedRabbitMQ;
+class RabbitMQContainer;
 
 /// A reusable, copyable description of a RabbitMQ broker: image, credentials,
 /// virtual host, preloaded definitions, and plugins to enable.
@@ -33,7 +33,7 @@ class StartedRabbitMQ;
 /// prevent the broker from starting (a root-owned Erlang cookie the server's
 /// own user then cannot read) — keep the module's waits first if you add more
 /// through `with_customizer`.
-class RabbitMQContainer {
+class RabbitMQImage {
 public:
     /// The pinned default image. The management HTTP API (15672) is enabled;
     /// AMQP listens on 5672. Getters tied to the management API assume a
@@ -45,7 +45,7 @@ public:
 
     /// The AMQP 0-9-1 port INSIDE the container. Peers on a shared docker
     /// network connect to `<alias-or-name>:kAmqpPort`; the test process uses
-    /// `StartedRabbitMQ::amqp_port()` (the mapped host port) instead.
+    /// `RabbitMQContainer::amqp_port()` (the mapped host port) instead.
     static constexpr std::uint16_t kAmqpPort = 5672;
 
     /// The management HTTP API/UI port INSIDE the container.
@@ -54,19 +54,19 @@ public:
     /// A config ready to `start()`: image `rabbitmq:3.13-management`, ports
     /// 5672 + 15672 exposed, credentials guest/guest on vhost "/", ordered
     /// readiness (log line, then one diagnostics exec).
-    RabbitMQContainer();
+    RabbitMQImage();
 
     // --- In-place builders (single overload; chain on lvalues and temporaries) ---
 
     /// Override the pinned image with a full reference "name[:tag]" (tag
     /// defaults to "latest") — e.g. a mirror or a `-management` tag of a
     /// different line.
-    RabbitMQContainer& with_image(const std::string& reference);
+    RabbitMQImage& with_image(const std::string& reference);
 
     /// The broker's provisioned user (`RABBITMQ_DEFAULT_USER`). Default
     /// "guest". The configured user REPLACES the built-in guest account —
     /// after `with_username("app")` there is no "guest" user on the broker.
-    RabbitMQContainer& with_username(std::string username) {
+    RabbitMQImage& with_username(std::string username) {
         username_ = std::move(username);
         return *this;
     }
@@ -75,7 +75,7 @@ public:
     /// "guest". Must not be empty — the broker's internal auth backend
     /// prohibits blank-password logins, so `start()` throws up front. Test
     /// credentials only: the value is visible via inspect.
-    RabbitMQContainer& with_password(std::string password) {
+    RabbitMQImage& with_password(std::string password) {
         password_ = std::move(password);
         return *this;
     }
@@ -84,7 +84,7 @@ public:
     /// broker's standard default vhost). The configured user gets full
     /// permissions on it. Any UTF-8 name is accepted; `amqp_url()` renders it
     /// percent-encoded as one path segment.
-    RabbitMQContainer& with_vhost(std::string vhost) {
+    RabbitMQImage& with_vhost(std::string vhost) {
         vhost_ = std::move(vhost);
         return *this;
     }
@@ -103,10 +103,10 @@ public:
     /// file overrides the seeded one (your file imports later). Objects must
     /// reference vhosts that exist after import — the seeded vhost is
     /// `vhost()`; declare any other one your objects live in.
-    RabbitMQContainer& with_definitions(std::filesystem::path host_json);
+    RabbitMQImage& with_definitions(std::filesystem::path host_json);
 
     /// As `with_definitions`, from in-memory JSON bytes instead of a host file.
-    RabbitMQContainer& with_definitions_json(std::string json);
+    RabbitMQImage& with_definitions_json(std::string json);
 
     /// Enable a plugin that ships with the image (e.g. "rabbitmq_shovel",
     /// "rabbitmq_federation") once the broker is ready, via
@@ -116,7 +116,7 @@ public:
     /// STOMP) are enabled but their ports are not published — expose them
     /// through `with_customizer` if you need them mapped. A failed enable
     /// (e.g. a typo'd name) fails `start()`.
-    RabbitMQContainer& with_plugin(std::string plugin) {
+    RabbitMQImage& with_plugin(std::string plugin) {
         plugins_.push_back(std::move(plugin));
         return *this;
     }
@@ -128,7 +128,7 @@ public:
     /// with_username/with_password/with_vhost: the module applies those keys
     /// last, so they win over raw duplicates set here (the image's bash
     /// entrypoint applies the last duplicate).
-    RabbitMQContainer& with_env(std::string key, std::string value) {
+    RabbitMQImage& with_env(std::string key, std::string value) {
         image_.with_env(std::move(key), std::move(value));
         return *this;
     }
@@ -136,19 +136,19 @@ public:
     /// Attach a metadata label. The module's reuse-visibility label
     /// (`org.testcontainers.rabbitmq.plugins`) is applied after these, so it
     /// wins on a duplicate key.
-    RabbitMQContainer& with_label(std::string key, std::string value) {
+    RabbitMQImage& with_label(std::string key, std::string value) {
         image_.with_label(std::move(key), std::move(value));
         return *this;
     }
 
     /// Join a user-defined network; peers resolve this container by
     /// name/alias at `<alias>:5672` (kAmqpPort, not the mapped host port).
-    RabbitMQContainer& with_network(std::string network) {
+    RabbitMQImage& with_network(std::string network) {
         image_.with_network(std::move(network));
         return *this;
     }
-    RabbitMQContainer& with_network(const Network& network);
-    RabbitMQContainer& with_network_alias(std::string alias) {
+    RabbitMQImage& with_network(const Network& network);
+    RabbitMQImage& with_network_alias(std::string alias) {
         image_.with_network_alias(std::move(alias));
         return *this;
     }
@@ -156,20 +156,20 @@ public:
     /// Enable container reuse (effective only when reuse is also enabled
     /// globally — see GenericImage::with_reuse). An adopted broker keeps its
     /// definitions and runtime-enabled plugins.
-    RabbitMQContainer& with_reuse(bool reuse = true) {
+    RabbitMQImage& with_reuse(bool reuse = true) {
         image_.with_reuse(reuse);
         return *this;
     }
 
     /// Budget for the whole readiness phase (default: 60s; observed cold
     /// boots take ~10s). Image pull time does not count against it.
-    RabbitMQContainer& with_startup_timeout(std::chrono::milliseconds timeout) {
+    RabbitMQImage& with_startup_timeout(std::chrono::milliseconds timeout) {
         image_.with_startup_timeout(timeout);
         return *this;
     }
 
     /// Retry the whole create→start→wait sequence up to `n` times.
-    RabbitMQContainer& with_startup_attempts(int n) {
+    RabbitMQImage& with_startup_attempts(int n) {
         image_.with_startup_attempts(n);
         return *this;
     }
@@ -184,7 +184,7 @@ public:
     /// replace the module's waits. Do not set the RABBITMQ_DEFAULT_* env
     /// here either: it would desync the credential getters and `amqp_url()`
     /// — use the typed setters instead.
-    RabbitMQContainer& with_customizer(std::function<void(GenericImage&)> customize) {
+    RabbitMQImage& with_customizer(std::function<void(GenericImage&)> customize) {
         customizers_.push_back(std::move(customize));
         return *this;
     }
@@ -198,15 +198,15 @@ public:
     /// Render the full configuration — env trio, definitions plumbing
     /// (seeded account + your files + the load_definitions drop-in), ordered
     /// waits, plugin hook, customizers — into a plain GenericImage: the
-    /// drop-down escape hatch when you need a raw `Container` instead of a
-    /// StartedRabbitMQ. Throws Error on an invalid config (empty
+    /// drop-down escape hatch when you need a raw core `Container` instead of a
+    /// RabbitMQContainer. Throws Error on an invalid config (empty
     /// username/vhost) before any daemon contact.
     GenericImage to_generic() const;
 
     /// Create, start, and wait for the broker (the ordered readiness above).
     /// Throws on failure (`StartupTimeoutError` when the broker never becomes
     /// ready, DockerError for daemon failures), like `GenericImage::start()`.
-    StartedRabbitMQ start() const;
+    RabbitMQContainer start() const;
 
 private:
     /// The next user-definitions target: /etc/rabbitmq/definitions.d/05NN-…
@@ -226,10 +226,10 @@ private:
 
 /// A running RabbitMQ broker: connection getters plus the owned container.
 ///
-/// Move-only — it owns the `Container`, whose destructor force-removes the
+/// Move-only — it owns the core `Container`, whose destructor force-removes the
 /// broker (RAII teardown; `container().keep()` or reuse opt out, see
 /// Container).
-class StartedRabbitMQ {
+class RabbitMQContainer {
 public:
     /// The address a client in the test process connects to. Resolved once,
     /// when the container started.
@@ -272,13 +272,13 @@ public:
     const Container& container() const noexcept { return container_; }
 
 private:
-    friend class RabbitMQContainer;
-    StartedRabbitMQ(Container container, std::string username, std::string password,
-                    std::string vhost)
+    friend class RabbitMQImage;
+    RabbitMQContainer(Container container, std::string username, std::string password,
+                      std::string vhost)
         : container_(std::move(container)), username_(std::move(username)),
           password_(std::move(password)), vhost_(std::move(vhost)), host_(container_.host()),
-          amqp_port_(container_.get_host_port(tcp(RabbitMQContainer::kAmqpPort))),
-          management_port_(container_.get_host_port(tcp(RabbitMQContainer::kManagementPort))) {}
+          amqp_port_(container_.get_host_port(tcp(RabbitMQImage::kAmqpPort))),
+          management_port_(container_.get_host_port(tcp(RabbitMQImage::kManagementPort))) {}
 
     Container container_;
     std::string username_;

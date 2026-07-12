@@ -70,7 +70,7 @@ option(TC_BUILD_EXAMPLES "Build examples" ON)
 # the build machine cannot assume), so the Conan recipes pin this OFF and skip
 # compiling the ~20 integration TUs they would never run. Repo builds keep both.
 option(TC_BUILD_INTEGRATION_TESTS "Build the Docker-daemon integration test suite" ON)
-# The ecosystem module wrappers (modules::RedisContainer, ...) live behind
+# The ecosystem module wrappers (modules::RedisImage, ...) live behind
 # their own library target so the core stays lean and consumers link the layer
 # they actually use. Pure composition over the core — zero extra dependencies.
 option(TC_BUILD_MODULES "Build the ecosystem module wrappers (testcontainers::modules)" ON)
@@ -251,21 +251,21 @@ else()
 endif()
 
 # ===== Ecosystem modules =====
-# Prebuilt wrappers over GenericImage (RedisContainer, ...): a copyable config
+# Prebuilt wrappers over GenericImage (RedisImage, ...): a copyable config
 # builder per technology that starts the container and hands back typed
 # connection getters. Consumed as testcontainers::modules.
 if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
         src/modules/KafkaDetail.cpp
-        src/modules/KafkaContainer.cpp
+        src/modules/Kafka.cpp
         src/modules/ModuleDetail.cpp
-        src/modules/MongoDBContainer.cpp
+        src/modules/MongoDB.cpp
         src/modules/MySqlFamily.cpp
-        src/modules/MySQLContainer.cpp
-        src/modules/MariaDBContainer.cpp
-        src/modules/PostgreSQLContainer.cpp
-        src/modules/RabbitMQContainer.cpp
-        src/modules/RedisContainer.cpp
+        src/modules/MySQL.cpp
+        src/modules/MariaDB.cpp
+        src/modules/PostgreSQL.cpp
+        src/modules/RabbitMQ.cpp
+        src/modules/Redis.cpp
     )
     add_library(testcontainers::modules ALIAS testcontainers_modules)
     # Installed/exported as testcontainers::modules, not ::testcontainers_modules.
@@ -275,7 +275,7 @@ if(TC_BUILD_MODULES)
     # Internal core helpers (e.g. the Kafka hook's OccurrenceCounter from
     # src/WaitStrategies.hpp).
     target_include_directories(testcontainers_modules PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    # RabbitMQContainer.cpp synthesizes its definitions seed with
+    # RabbitMQ.cpp synthesizes its definitions seed with
     # nlohmann_json (header-only; an implementation detail — nothing leaks
     # into the public module headers).
     target_link_libraries(testcontainers_modules PRIVATE nlohmann_json::nlohmann_json)
@@ -367,12 +367,12 @@ if(BUILD_TESTING)
         # unit suite everywhere it runs; the TUs exist only when the modules
         # target does.
         target_sources(tc_unit_tests PRIVATE
-            tests/unit/modules/KafkaContainerTest.cpp
-            tests/unit/modules/MongoDBContainerTest.cpp
+            tests/unit/modules/KafkaTest.cpp
+            tests/unit/modules/MongoDBTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
-            tests/unit/modules/PostgreSQLContainerTest.cpp
-            tests/unit/modules/RabbitMQContainerTest.cpp
-            tests/unit/modules/RedisContainerTest.cpp
+            tests/unit/modules/PostgreSQLTest.cpp
+            tests/unit/modules/RabbitMQTest.cpp
+            tests/unit/modules/RedisTest.cpp
         )
         target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
     endif()

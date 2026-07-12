@@ -10,7 +10,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/RabbitMQContainer.hpp"
+#include "testcontainers/modules/RabbitMQ.hpp"
 
 // Tests in this file (unit; no Docker daemon — the module's rendering rules
 // via to_generic()):
@@ -25,7 +25,7 @@
 //   RabbitMQModuleConfig.RenderingIsIdempotent - repeated to_generic() calls render equal env/copies/waits (the seed is not re-appended).
 
 using namespace testcontainers;
-using modules::RabbitMQContainer;
+using modules::RabbitMQImage;
 
 namespace {
 
@@ -42,7 +42,7 @@ std::string env_last_value(const GenericImage& generic, const std::string& key) 
 } // namespace
 
 TEST(RabbitMQModuleConfig, DefaultRendersEnvPortsAndOrderedWaits) {
-    const GenericImage generic = RabbitMQContainer().to_generic();
+    const GenericImage generic = RabbitMQImage().to_generic();
 
     EXPECT_EQ(generic.image(), "rabbitmq");
     EXPECT_EQ(generic.tag(), "3.13-management");
@@ -71,7 +71,7 @@ TEST(RabbitMQModuleConfig, DefaultRendersEnvPortsAndOrderedWaits) {
 }
 
 TEST(RabbitMQModuleConfig, CredentialsAndVhostRender) {
-    const GenericImage generic = RabbitMQContainer()
+    const GenericImage generic = RabbitMQImage()
                                      .with_username("app")
                                      .with_password("s3cret")
                                      .with_vhost("orders")
@@ -83,7 +83,7 @@ TEST(RabbitMQModuleConfig, CredentialsAndVhostRender) {
 }
 
 TEST(RabbitMQModuleConfig, DefinitionsSynthesizeSeedAndConfDropIn) {
-    RabbitMQContainer cfg;
+    RabbitMQImage cfg;
     cfg.with_username("app").with_password("s3cret").with_definitions_json(
         R"({"queues":[{"name":"q1","vhost":"/","durable":true}]})");
 
@@ -113,22 +113,20 @@ TEST(RabbitMQModuleConfig, DefinitionsSynthesizeSeedAndConfDropIn) {
 }
 
 TEST(RabbitMQModuleConfig, DefinitionsHostFileValidatesJsonExtension) {
-    RabbitMQContainer cfg;
+    RabbitMQImage cfg;
     EXPECT_THROW(cfg.with_definitions(std::filesystem::path("topology.yaml")), Error);
     EXPECT_NO_THROW(cfg.with_definitions(std::filesystem::path("fixtures/topology.json")));
 }
 
 TEST(RabbitMQModuleConfig, PluginsRenderStartedHook) {
-    const GenericImage bare = RabbitMQContainer().to_generic();
+    const GenericImage bare = RabbitMQImage().to_generic();
     EXPECT_TRUE(bare.started_hooks().empty());
     EXPECT_TRUE(bare.labels().empty());
 
     // Registered out of order on purpose: the reuse-visibility label is
     // order-normalized (the plugin SET matters, not the call order).
-    const GenericImage generic = RabbitMQContainer()
-                                     .with_plugin("rabbitmq_stomp")
-                                     .with_plugin("rabbitmq_shovel")
-                                     .to_generic();
+    const GenericImage generic =
+        RabbitMQImage().with_plugin("rabbitmq_stomp").with_plugin("rabbitmq_shovel").to_generic();
     EXPECT_EQ(generic.started_hooks().size(), 1u); // one hook enables all names
     ASSERT_EQ(generic.labels().size(), 1u);
     EXPECT_EQ(generic.labels()[0].first, "org.testcontainers.rabbitmq.plugins");
@@ -136,13 +134,13 @@ TEST(RabbitMQModuleConfig, PluginsRenderStartedHook) {
 }
 
 TEST(RabbitMQModuleConfig, ValidationFailsFast) {
-    EXPECT_THROW(RabbitMQContainer().with_username("").to_generic(), Error);
-    EXPECT_THROW(RabbitMQContainer().with_password("").to_generic(), Error);
-    EXPECT_THROW(RabbitMQContainer().with_vhost("").to_generic(), Error);
+    EXPECT_THROW(RabbitMQImage().with_username("").to_generic(), Error);
+    EXPECT_THROW(RabbitMQImage().with_password("").to_generic(), Error);
+    EXPECT_THROW(RabbitMQImage().with_vhost("").to_generic(), Error);
 }
 
 TEST(RabbitMQModuleConfig, EnvAndLabelPassThroughsKeepModuleEntriesLast) {
-    const GenericImage generic = RabbitMQContainer()
+    const GenericImage generic = RabbitMQImage()
                                      .with_env("RABBITMQ_DEFAULT_USER", "raw")
                                      .with_username("app")
                                      .with_label("team", "messaging")
@@ -158,7 +156,7 @@ TEST(RabbitMQModuleConfig, EnvAndLabelPassThroughsKeepModuleEntriesLast) {
 }
 
 TEST(RabbitMQModuleConfig, CustomizerRunsLastAndWins) {
-    RabbitMQContainer cfg;
+    RabbitMQImage cfg;
     cfg.with_customizer([](GenericImage& generic) {
         // Sees the rendered state: the ordered waits are already in place, so
         // a wait added here lands in the SAFE position (after them).
@@ -172,7 +170,7 @@ TEST(RabbitMQModuleConfig, CustomizerRunsLastAndWins) {
 }
 
 TEST(RabbitMQModuleConfig, RenderingIsIdempotent) {
-    RabbitMQContainer cfg;
+    RabbitMQImage cfg;
     cfg.with_username("app").with_definitions_json("{}");
 
     const GenericImage first = cfg.to_generic();

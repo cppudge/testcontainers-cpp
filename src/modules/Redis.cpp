@@ -1,4 +1,4 @@
-#include "testcontainers/modules/RedisContainer.hpp"
+#include "testcontainers/modules/Redis.hpp"
 
 #include <string>
 #include <utility>
@@ -10,8 +10,7 @@
 
 namespace testcontainers::modules {
 
-RedisContainer::RedisContainer()
-    : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
+RedisImage::RedisImage() : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
     // Baked once, never touched by rendering. An exec probe rather than a log
     // or TCP wait: the "Ready to accept connections" log line races the
     // listener, and Docker Desktop's host proxy accepts on a published port
@@ -22,74 +21,74 @@ RedisContainer::RedisContainer()
         .with_wait(wait_for::successful_command({"redis-cli", "ping"}));
 }
 
-RedisContainer& RedisContainer::with_image(const std::string& reference) {
+RedisImage& RedisImage::with_image(const std::string& reference) {
     image_.with_image(reference);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_password(std::string password) {
+RedisImage& RedisImage::with_password(std::string password) {
     password_ = std::move(password);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_command_args(std::vector<std::string> args) {
+RedisImage& RedisImage::with_command_args(std::vector<std::string> args) {
     for (std::string& arg : args) {
         args_.push_back(std::move(arg));
     }
     return *this;
 }
 
-RedisContainer& RedisContainer::with_command_arg(std::string arg) {
+RedisImage& RedisImage::with_command_arg(std::string arg) {
     args_.push_back(std::move(arg));
     return *this;
 }
 
-RedisContainer& RedisContainer::with_env(std::string key, std::string value) {
+RedisImage& RedisImage::with_env(std::string key, std::string value) {
     image_.with_env(std::move(key), std::move(value));
     return *this;
 }
 
-RedisContainer& RedisContainer::with_label(std::string key, std::string value) {
+RedisImage& RedisImage::with_label(std::string key, std::string value) {
     image_.with_label(std::move(key), std::move(value));
     return *this;
 }
 
-RedisContainer& RedisContainer::with_network(std::string network) {
+RedisImage& RedisImage::with_network(std::string network) {
     image_.with_network(std::move(network));
     return *this;
 }
 
-RedisContainer& RedisContainer::with_network(const Network& network) {
+RedisImage& RedisImage::with_network(const Network& network) {
     image_.with_network(network);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_network_alias(std::string alias) {
+RedisImage& RedisImage::with_network_alias(std::string alias) {
     image_.with_network_alias(std::move(alias));
     return *this;
 }
 
-RedisContainer& RedisContainer::with_reuse(bool reuse) {
+RedisImage& RedisImage::with_reuse(bool reuse) {
     image_.with_reuse(reuse);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_startup_timeout(std::chrono::milliseconds timeout) {
+RedisImage& RedisImage::with_startup_timeout(std::chrono::milliseconds timeout) {
     image_.with_startup_timeout(timeout);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_startup_attempts(int n) {
+RedisImage& RedisImage::with_startup_attempts(int n) {
     image_.with_startup_attempts(n);
     return *this;
 }
 
-RedisContainer& RedisContainer::with_customizer(std::function<void(GenericImage&)> customize) {
+RedisImage& RedisImage::with_customizer(std::function<void(GenericImage&)> customize) {
     customizers_.push_back(std::move(customize));
     return *this;
 }
 
-GenericImage RedisContainer::to_generic() const {
+GenericImage RedisImage::to_generic() const {
     if (!password_.empty()) {
         // Fail fast: REDISCLI_AUTH is read by EXEC'D processes (the probe's
         // redis-cli, user execs), where glibc getenv returns the FIRST
@@ -136,9 +135,9 @@ GenericImage RedisContainer::to_generic() const {
     return generic;
 }
 
-StartedRedis RedisContainer::start() const { return StartedRedis(to_generic().start(), password_); }
+RedisContainer RedisImage::start() const { return RedisContainer(to_generic().start(), password_); }
 
-std::string StartedRedis::connection_string(int database) const {
+std::string RedisContainer::connection_string(int database) const {
     ConnectionString url("redis");
     if (!password_.empty()) {
         url.with_password(password_); // renders ":pass@" — the password-sans-user URI form

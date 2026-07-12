@@ -1,4 +1,4 @@
-#include "testcontainers/modules/MongoDBContainer.hpp"
+#include "testcontainers/modules/MongoDB.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -95,23 +95,22 @@ void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::s
 
 } // namespace
 
-MongoDBContainer::MongoDBContainer()
-    : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
+MongoDBImage::MongoDBImage() : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
     image_.with_exposed_port(tcp(kPort));
 }
 
-MongoDBContainer& MongoDBContainer::with_image(const std::string& reference) {
+MongoDBImage& MongoDBImage::with_image(const std::string& reference) {
     image_.with_image(reference);
     return *this;
 }
 
 // Out of line so the header needs no Network definition.
-MongoDBContainer& MongoDBContainer::with_network(const Network& network) {
+MongoDBImage& MongoDBImage::with_network(const Network& network) {
     image_.with_network(network);
     return *this;
 }
 
-GenericImage MongoDBContainer::to_generic() const {
+GenericImage MongoDBImage::to_generic() const {
     if (!valid_replica_set_name(replica_set_name_)) {
         // Fail fast: the name lands on the mongod command line and inside
         // the single-quoted initiate JS.
@@ -166,11 +165,11 @@ GenericImage MongoDBContainer::to_generic() const {
     return generic;
 }
 
-StartedMongoDB MongoDBContainer::start() const {
-    return StartedMongoDB(to_generic().start(), replica_set_name_, database_);
+MongoDBContainer MongoDBImage::start() const {
+    return MongoDBContainer(to_generic().start(), replica_set_name_, database_);
 }
 
-std::string StartedMongoDB::connection_string(const std::string& database) const {
+std::string MongoDBContainer::connection_string(const std::string& database) const {
     ConnectionString url("mongodb");
     url.with_host(host_).with_port(port_);
     // The database segment is ALWAYS set, even when empty: a MongoDB URI is
@@ -181,7 +180,7 @@ std::string StartedMongoDB::connection_string(const std::string& database) const
     return url.to_string();
 }
 
-ExecResult StartedMongoDB::mongosh(const std::string& js) const {
+ExecResult MongoDBContainer::mongosh(const std::string& js) const {
     // The positional argument selects the snippet's default database; an
     // empty configured name falls back to the server default ("test").
     if (database_.empty()) {

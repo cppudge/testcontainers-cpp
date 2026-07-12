@@ -1,4 +1,4 @@
-#include "testcontainers/modules/KafkaContainer.hpp"
+#include "testcontainers/modules/Kafka.hpp"
 
 #include <chrono>
 #include <optional>
@@ -30,13 +30,13 @@ void run_kafka_boot(DockerClient& client, const std::string& id,
                     const std::vector<std::pair<std::string, int>>& topics,
                     std::chrono::milliseconds phase_budget) {
     // The non-owning handle: host() resolves through the same
-    // override/gateway-aware path StartedKafka uses later — the advertised
+    // override/gateway-aware path KafkaContainer uses later — the advertised
     // host and the host handed to the user must be the same string, or
     // clients would bootstrap fine and then dial a dead address from the
     // metadata.
     Container probe = Container::adopt(client, id, AdoptOwnership::Keep);
     const std::string advertised_host = probe.host();
-    const std::uint16_t mapped_port = probe.get_host_port(tcp(KafkaContainer::kPort));
+    const std::uint16_t mapped_port = probe.get_host_port(tcp(KafkaImage::kPort));
     const std::string internal_host = alias ? *alias : id.substr(0, 12);
 
     probe.copy_to(CopyToContainer::content(
@@ -86,8 +86,7 @@ void run_kafka_boot(DockerClient& client, const std::string& id,
                                   id);
     }
 
-    const std::string internal_bootstrap =
-        "localhost:" + std::to_string(KafkaContainer::kInternalPort);
+    const std::string internal_bootstrap = "localhost:" + std::to_string(KafkaImage::kInternalPort);
     for (const auto& [name, partitions] : topics) {
         // The INTERNAL listener on purpose: metadata answered on :9092
         // advertises the host-side address, unreachable from inside the
@@ -103,25 +102,24 @@ void run_kafka_boot(DockerClient& client, const std::string& id,
 
 } // namespace
 
-KafkaContainer::KafkaContainer()
-    : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
+KafkaImage::KafkaImage() : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
     // Only the client port is published; the internal and controller
     // listeners stay docker-network-local.
     image_.with_exposed_port(tcp(kPort));
 }
 
-KafkaContainer& KafkaContainer::with_image(const std::string& reference) {
+KafkaImage& KafkaImage::with_image(const std::string& reference) {
     image_.with_image(reference);
     return *this;
 }
 
 // Out of line so the header needs no Network definition.
-KafkaContainer& KafkaContainer::with_network(const Network& network) {
+KafkaImage& KafkaImage::with_network(const Network& network) {
     image_.with_network(network);
     return *this;
 }
 
-GenericImage KafkaContainer::to_generic() const {
+GenericImage KafkaImage::to_generic() const {
     if (!detail::valid_kafka_cluster_id(cluster_id_)) {
         // Fail fast: the broker's own failure mode is an opaque
         // storage-format error followed by the full startup timeout.
@@ -188,12 +186,12 @@ GenericImage KafkaContainer::to_generic() const {
     return generic;
 }
 
-StartedKafka KafkaContainer::start() const {
+KafkaContainer KafkaImage::start() const {
     Container container = to_generic().start();
     // The same authority the hook advertised: first alias, else short id.
     std::string internal_host = image_.network_aliases().empty() ? container.id().substr(0, 12)
                                                                  : image_.network_aliases().front();
-    return StartedKafka(std::move(container), std::move(internal_host), cluster_id_);
+    return KafkaContainer(std::move(container), std::move(internal_host), cluster_id_);
 }
 
 } // namespace testcontainers::modules

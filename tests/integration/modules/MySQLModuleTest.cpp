@@ -3,7 +3,7 @@
 #include <string>
 
 #include "testcontainers/ExecResult.hpp"
-#include "testcontainers/modules/MySQLContainer.hpp"
+#include "testcontainers/modules/MySQL.hpp"
 
 #include "EngineGuard.hpp"
 #include "TempPaths.hpp"
@@ -16,13 +16,13 @@
 
 using namespace testcontainers;
 using modules::MySQLContainer;
-using modules::StartedMySQL;
+using modules::MySQLImage;
 
 // Requires a Linux-containers daemon; skipped otherwise.
 class MySQLModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MySQLModule, DefaultsBootAndConnect) {
-    const StartedMySQL db = MySQLContainer().start();
+    const MySQLContainer db = MySQLImage().start();
 
     // -h127.0.0.1 forces TCP — the same path the readiness probe proved.
     const ExecResult select = db.container().exec(
@@ -43,19 +43,19 @@ TEST_F(MySQLModule, DefaultsBootAndConnect) {
 TEST_F(MySQLModule, CustomCredsAndOrderedInitScripts) {
     const tcit::TempFile schema("CREATE TABLE orders_t(id int);", "tc_mysql_", ".sql");
 
-    const StartedMySQL db = MySQLContainer()
-                                // A raw duplicate of a managed key: the module's
-                                // matrix lands after it, so "orders" must win in
-                                // the running server (the -Dorders exec below is
-                                // the live proof).
-                                .with_env("MYSQL_DATABASE", "raw")
-                                .with_username("app")
-                                .with_password("s3cr3t")
-                                .with_database("orders")
-                                .with_init_script(schema.path()) // runs first (0000-)
-                                .with_init_script("seed.sql",    // runs second (0001-)
-                                                  "INSERT INTO orders_t VALUES (1), (2);")
-                                .start();
+    const MySQLContainer db = MySQLImage()
+                                  // A raw duplicate of a managed key: the module's
+                                  // matrix lands after it, so "orders" must win in
+                                  // the running server (the -Dorders exec below is
+                                  // the live proof).
+                                  .with_env("MYSQL_DATABASE", "raw")
+                                  .with_username("app")
+                                  .with_password("s3cr3t")
+                                  .with_database("orders")
+                                  .with_init_script(schema.path()) // runs first (0000-)
+                                  .with_init_script("seed.sql",    // runs second (0001-)
+                                                    "INSERT INTO orders_t VALUES (1), (2);")
+                                  .start();
 
     // start() returned => both scripts already ran, in registration order.
     const ExecResult r =
@@ -67,14 +67,14 @@ TEST_F(MySQLModule, CustomCredsAndOrderedInitScripts) {
 
 TEST_F(MySQLModule, RootOnlyModes) {
     // Root with a password: no separate user is provisioned.
-    const StartedMySQL rooted = MySQLContainer().with_username("root").start();
+    const MySQLContainer rooted = MySQLImage().with_username("root").start();
     EXPECT_EQ(rooted.username(), "root");
     const ExecResult as_root = rooted.container().exec(
         {"mysql", "-h127.0.0.1", "-uroot", "-ptest", "-N", "-B", "-e", "SELECT 1"});
     EXPECT_EQ(as_root.exit_code, 0);
 
     // Passwordless root (MYSQL_ALLOW_EMPTY_PASSWORD): connects without -p.
-    const StartedMySQL open = MySQLContainer().with_username("root").with_password("").start();
+    const MySQLContainer open = MySQLImage().with_username("root").with_password("").start();
     const ExecResult no_pass =
         open.container().exec({"mysql", "-h127.0.0.1", "-uroot", "-N", "-B", "-e", "SELECT 1"});
     EXPECT_EQ(no_pass.exit_code, 0);
@@ -83,8 +83,8 @@ TEST_F(MySQLModule, RootOnlyModes) {
 }
 
 TEST_F(MySQLModule, CharsetCommandArg) {
-    const StartedMySQL db =
-        MySQLContainer().with_command_arg("--character-set-server=utf8mb4").start();
+    const MySQLContainer db =
+        MySQLImage().with_command_arg("--character-set-server=utf8mb4").start();
 
     const ExecResult r =
         db.container().exec({"mysql", "-h127.0.0.1", "-utest", "-ptest", "-N", "-B", "-e",

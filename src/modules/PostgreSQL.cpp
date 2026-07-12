@@ -1,4 +1,4 @@
-#include "testcontainers/modules/PostgreSQLContainer.hpp"
+#include "testcontainers/modules/PostgreSQL.hpp"
 
 #include <string>
 #include <utility>
@@ -40,7 +40,7 @@ std::string quote_conninfo_value(const std::string& value) {
 
 } // namespace
 
-PostgreSQLContainer::PostgreSQLContainer()
+PostgreSQLImage::PostgreSQLImage()
     : image_(GenericImage::from_reference(std::string(kDefaultImage))) {
     // Baked once. The exec probe forces TCP ("-h 127.0.0.1") on purpose: the
     // image's first boot runs a TEMPORARY server on the unix socket only
@@ -53,27 +53,27 @@ PostgreSQLContainer::PostgreSQLContainer()
     image_.with_exposed_port(tcp(kPort));
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_image(const std::string& reference) {
+PostgreSQLImage& PostgreSQLImage::with_image(const std::string& reference) {
     image_.with_image(reference);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_username(std::string username) {
+PostgreSQLImage& PostgreSQLImage::with_username(std::string username) {
     username_ = std::move(username);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_password(std::string password) {
+PostgreSQLImage& PostgreSQLImage::with_password(std::string password) {
     password_ = std::move(password);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_database(std::string database) {
+PostgreSQLImage& PostgreSQLImage::with_database(std::string database) {
     database_ = std::move(database);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_init_script(std::filesystem::path host_path) {
+PostgreSQLImage& PostgreSQLImage::with_init_script(std::filesystem::path host_path) {
     // The shared staging pipeline (ModuleDetail) — one copy of the
     // load-bearing guards for the postgres and mysql/mariadb entrypoints.
     init_scripts_.push_back(detail::stage_init_script(std::move(host_path), init_scripts_.size(),
@@ -81,70 +81,68 @@ PostgreSQLContainer& PostgreSQLContainer::with_init_script(std::filesystem::path
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_init_script(const std::string& name,
-                                                           std::string content) {
+PostgreSQLImage& PostgreSQLImage::with_init_script(const std::string& name, std::string content) {
     init_scripts_.push_back(detail::stage_init_script(
         name, std::move(content), init_scripts_.size(), "the postgres entrypoint"));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_config_option(std::string key, std::string value) {
+PostgreSQLImage& PostgreSQLImage::with_config_option(std::string key, std::string value) {
     config_options_.emplace_back(std::move(key), std::move(value));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_env(std::string key, std::string value) {
+PostgreSQLImage& PostgreSQLImage::with_env(std::string key, std::string value) {
     image_.with_env(std::move(key), std::move(value));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_label(std::string key, std::string value) {
+PostgreSQLImage& PostgreSQLImage::with_label(std::string key, std::string value) {
     image_.with_label(std::move(key), std::move(value));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_network(std::string network) {
+PostgreSQLImage& PostgreSQLImage::with_network(std::string network) {
     image_.with_network(std::move(network));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_network(const Network& network) {
+PostgreSQLImage& PostgreSQLImage::with_network(const Network& network) {
     image_.with_network(network);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_network_alias(std::string alias) {
+PostgreSQLImage& PostgreSQLImage::with_network_alias(std::string alias) {
     image_.with_network_alias(std::move(alias));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_reuse(bool reuse) {
+PostgreSQLImage& PostgreSQLImage::with_reuse(bool reuse) {
     image_.with_reuse(reuse);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_wait(WaitFor wait) {
+PostgreSQLImage& PostgreSQLImage::with_wait(WaitFor wait) {
     waits_.push_back(std::move(wait));
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_startup_timeout(std::chrono::milliseconds timeout) {
+PostgreSQLImage& PostgreSQLImage::with_startup_timeout(std::chrono::milliseconds timeout) {
     image_.with_startup_timeout(timeout);
     return *this;
 }
 
-PostgreSQLContainer& PostgreSQLContainer::with_startup_attempts(int n) {
+PostgreSQLImage& PostgreSQLImage::with_startup_attempts(int n) {
     image_.with_startup_attempts(n);
     return *this;
 }
 
-PostgreSQLContainer&
-PostgreSQLContainer::with_customizer(std::function<void(GenericImage&)> customize) {
+PostgreSQLImage& PostgreSQLImage::with_customizer(std::function<void(GenericImage&)> customize) {
     customizers_.push_back(std::move(customize));
     return *this;
 }
 
-GenericImage PostgreSQLContainer::to_generic() const {
+GenericImage PostgreSQLImage::to_generic() const {
     // Fail fast, before any daemon contact: the image's own failure mode for
     // these is a log line followed by the full wait timeout.
     if (username_.empty()) {
@@ -220,11 +218,11 @@ GenericImage PostgreSQLContainer::to_generic() const {
     return generic;
 }
 
-StartedPostgreSQL PostgreSQLContainer::start() const {
-    return StartedPostgreSQL(to_generic().start(), username_, password_, database_);
+PostgreSQLContainer PostgreSQLImage::start() const {
+    return PostgreSQLContainer(to_generic().start(), username_, password_, database_);
 }
 
-std::string StartedPostgreSQL::connection_string_with_scheme(const std::string& scheme) const {
+std::string PostgreSQLContainer::connection_string_with_scheme(const std::string& scheme) const {
     ConnectionString url(scheme);
     url.with_user(username_);
     if (!password_.empty()) {
@@ -234,7 +232,7 @@ std::string StartedPostgreSQL::connection_string_with_scheme(const std::string& 
     return url.to_string();
 }
 
-std::string StartedPostgreSQL::conninfo() const {
+std::string PostgreSQLContainer::conninfo() const {
     std::string info = "host=" + quote_conninfo_value(host_) + " port=" + std::to_string(port_) +
                        " dbname=" + quote_conninfo_value(database_) +
                        " user=" + quote_conninfo_value(username_);
@@ -244,7 +242,7 @@ std::string StartedPostgreSQL::conninfo() const {
     return info;
 }
 
-ExecResult StartedPostgreSQL::exec_sql(const std::string& sql) const {
+ExecResult PostgreSQLContainer::exec_sql(const std::string& sql) const {
     // -X skips any ~/.psqlrc, -tA prints unaligned tuples only; the local
     // socket connection needs no password (the image's pg_hba trusts local).
     return container_.exec({"psql", "-v", "ON_ERROR_STOP=1", "-X", "-tA", "-U", username_, "-d",

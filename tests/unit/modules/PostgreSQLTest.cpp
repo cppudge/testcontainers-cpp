@@ -9,7 +9,7 @@
 #include "testcontainers/Error.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/WaitFor.hpp"
-#include "testcontainers/modules/PostgreSQLContainer.hpp"
+#include "testcontainers/modules/PostgreSQL.hpp"
 
 // Tests in this file (unit; no Docker daemon — the module's rendering rules
 // via to_generic()):
@@ -25,7 +25,7 @@
 //   PostgreSQLModuleConfig.RenderingIsIdempotent - repeated to_generic() calls render equal env/cmd/copies (no accumulation in the config).
 
 using namespace testcontainers;
-using modules::PostgreSQLContainer;
+using modules::PostgreSQLImage;
 
 namespace {
 
@@ -53,7 +53,7 @@ std::string env_last_value(const GenericImage& generic, const std::string& key) 
 } // namespace
 
 TEST(PostgreSQLModuleConfig, DefaultRendersPinPortTrioAndTcpProbe) {
-    const GenericImage generic = PostgreSQLContainer().to_generic();
+    const GenericImage generic = PostgreSQLImage().to_generic();
 
     EXPECT_EQ(generic.image(), "postgres");
     EXPECT_EQ(generic.tag(), "16-alpine");
@@ -74,7 +74,7 @@ TEST(PostgreSQLModuleConfig, DefaultRendersPinPortTrioAndTcpProbe) {
 }
 
 TEST(PostgreSQLModuleConfig, CredentialTrioAppendedLastWinsOverRawEnv) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_env("POSTGRES_USER", "raw").with_username("app").with_database("orders");
 
     const GenericImage generic = cfg.to_generic();
@@ -94,7 +94,7 @@ TEST(PostgreSQLModuleConfig, CredentialTrioAppendedLastWinsOverRawEnv) {
 }
 
 TEST(PostgreSQLModuleConfig, EmptyPasswordSkipsEnvKeyUnderTrust) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_password("").with_env("POSTGRES_HOST_AUTH_METHOD", "trust");
 
     const GenericImage generic = cfg.to_generic();
@@ -103,16 +103,16 @@ TEST(PostgreSQLModuleConfig, EmptyPasswordSkipsEnvKeyUnderTrust) {
 }
 
 TEST(PostgreSQLModuleConfig, ConfigOptionsRenderPostgresDashC) {
-    EXPECT_TRUE(PostgreSQLContainer().to_generic().cmd().empty());
+    EXPECT_TRUE(PostgreSQLImage().to_generic().cmd().empty());
 
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_config_option("fsync", "off").with_config_option("wal_level", "logical");
     EXPECT_EQ(cfg.to_generic().cmd(),
               (std::vector<std::string>{"postgres", "-c", "fsync=off", "-c", "wal_level=logical"}));
 }
 
 TEST(PostgreSQLModuleConfig, InitScriptsKeepRegistrationOrderAndModes) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_init_script("z.sql", "CREATE TABLE t(id int);");
     cfg.with_init_script("a.sh", "#!/bin/sh\nexit 0\n");
 
@@ -127,7 +127,7 @@ TEST(PostgreSQLModuleConfig, InitScriptsKeepRegistrationOrderAndModes) {
 }
 
 TEST(PostgreSQLModuleConfig, InitScriptRejectsUnknownExtensionAndNonBareName) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     // The entrypoint would skip a .txt silently — the worst failure mode, so
     // registration throws instead.
     EXPECT_THROW(cfg.with_init_script("notes.txt", "SELECT 1;"), Error);
@@ -137,13 +137,13 @@ TEST(PostgreSQLModuleConfig, InitScriptRejectsUnknownExtensionAndNonBareName) {
 }
 
 TEST(PostgreSQLModuleConfig, CustomWaitReplacesDefaultProbe) {
-    PostgreSQLContainer replaced;
+    PostgreSQLImage replaced;
     replaced.with_wait(wait_for::log("ready"));
     ASSERT_EQ(replaced.to_generic().waits().size(), 1u);
     EXPECT_TRUE(std::holds_alternative<wait_for::LogMessage>(replaced.to_generic().waits()[0]));
 
     // A customizer-added wait runs IN ADDITION to the default probe.
-    PostgreSQLContainer added;
+    PostgreSQLImage added;
     added.with_customizer([](GenericImage& generic) { generic.with_wait(wait_for::log("extra")); });
     const GenericImage generic = added.to_generic();
     ASSERT_EQ(generic.waits().size(), 2u);
@@ -152,20 +152,20 @@ TEST(PostgreSQLModuleConfig, CustomWaitReplacesDefaultProbe) {
 }
 
 TEST(PostgreSQLModuleConfig, ValidationFailsFast) {
-    EXPECT_THROW(PostgreSQLContainer().with_username("").to_generic(), Error);
-    EXPECT_THROW(PostgreSQLContainer().with_database("").to_generic(), Error);
+    EXPECT_THROW(PostgreSQLImage().with_username("").to_generic(), Error);
+    EXPECT_THROW(PostgreSQLImage().with_database("").to_generic(), Error);
     // The image refuses an empty password; the module converts the confusing
     // 60s wait timeout into an immediate throw...
-    EXPECT_THROW(PostgreSQLContainer().with_password("").to_generic(), Error);
+    EXPECT_THROW(PostgreSQLImage().with_password("").to_generic(), Error);
     // ...unless trust auth was opted into explicitly.
-    EXPECT_NO_THROW(PostgreSQLContainer()
+    EXPECT_NO_THROW(PostgreSQLImage()
                         .with_password("")
                         .with_env("POSTGRES_HOST_AUTH_METHOD", "trust")
                         .to_generic());
 }
 
 TEST(PostgreSQLModuleConfig, CustomizerRunsLastAndWins) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_config_option("fsync", "off").with_customizer([](GenericImage& generic) {
         // Sees the module-rendered state...
         ASSERT_FALSE(generic.cmd().empty());
@@ -178,7 +178,7 @@ TEST(PostgreSQLModuleConfig, CustomizerRunsLastAndWins) {
 }
 
 TEST(PostgreSQLModuleConfig, RenderingIsIdempotent) {
-    PostgreSQLContainer cfg;
+    PostgreSQLImage cfg;
     cfg.with_username("app")
         .with_config_option("fsync", "off")
         .with_init_script("seed.sql", "SELECT 1;");

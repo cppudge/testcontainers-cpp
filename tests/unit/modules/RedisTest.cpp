@@ -25,10 +25,10 @@
 //   RedisModuleConfig.ManagedAuthEnvConflictThrowsAtRender - REDISCLI_AUTH via with_env alongside a password throws at render (exec'd redis-cli reads the FIRST duplicate, so ordering could not make the module win); without a password the key is the user's.
 
 using namespace testcontainers;
-using modules::RedisContainer;
+using modules::RedisImage;
 
 TEST(RedisModuleConfig, DefaultRendersPinPortAndPingWait) {
-    const GenericImage generic = RedisContainer().to_generic();
+    const GenericImage generic = RedisImage().to_generic();
 
     EXPECT_EQ(generic.image(), "redis");
     EXPECT_EQ(generic.tag(), "7.2");
@@ -44,7 +44,7 @@ TEST(RedisModuleConfig, DefaultRendersPinPortAndPingWait) {
 }
 
 TEST(RedisModuleConfig, PasswordOwnsCmdAndAuthEnv) {
-    const GenericImage generic = RedisContainer().with_password("s3cr3t").to_generic();
+    const GenericImage generic = RedisImage().with_password("s3cr3t").to_generic();
 
     EXPECT_EQ(generic.cmd(), (std::vector<std::string>{"redis-server", "--requirepass", "s3cr3t"}));
     ASSERT_EQ(generic.env().size(), 1u);
@@ -53,7 +53,7 @@ TEST(RedisModuleConfig, PasswordOwnsCmdAndAuthEnv) {
 }
 
 TEST(RedisModuleConfig, CommandArgsAccumulateAfterRequirepass) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_password("pw").with_command_args({"--maxmemory", "64mb"});
     cfg.with_command_args({"--appendonly", "no"});
 
@@ -66,14 +66,14 @@ TEST(RedisModuleConfig, CommandArgsAccumulateAfterRequirepass) {
 
 TEST(RedisModuleConfig, ArgsAloneOwnCmdWithoutEnv) {
     const GenericImage generic =
-        RedisContainer().with_command_args({"--maxmemory", "64mb"}).to_generic();
+        RedisImage().with_command_args({"--maxmemory", "64mb"}).to_generic();
 
     EXPECT_EQ(generic.cmd(), (std::vector<std::string>{"redis-server", "--maxmemory", "64mb"}));
     EXPECT_TRUE(generic.env().empty());
 }
 
 TEST(RedisModuleConfig, CustomizerRunsLastAndWins) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_password("pw")
         .with_customizer([](GenericImage& generic) {
             // Runs after the module's rendering, so it sees the rendered cmd.
@@ -95,7 +95,7 @@ TEST(RedisModuleConfig, CustomizerRunsLastAndWins) {
 }
 
 TEST(RedisModuleConfig, WithImageRewritesReference) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_password("pw").with_image("mirror.example/redis:7.4");
 
     const GenericImage generic = cfg.to_generic();
@@ -110,7 +110,7 @@ TEST(RedisModuleConfig, WithImageRewritesReference) {
 }
 
 TEST(RedisModuleConfig, RenderingIsIdempotent) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_password("pw").with_command_args({"--maxmemory", "64mb"});
 
     const GenericImage first = cfg.to_generic();
@@ -121,7 +121,7 @@ TEST(RedisModuleConfig, RenderingIsIdempotent) {
 }
 
 TEST(RedisModuleConfig, CommandArgSingleTwinAccumulates) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_command_arg("--maxmemory").with_command_arg("64mb");
     cfg.with_command_args({"--appendonly", "no"});
 
@@ -130,7 +130,7 @@ TEST(RedisModuleConfig, CommandArgSingleTwinAccumulates) {
 }
 
 TEST(RedisModuleConfig, PassThroughsLandOnTheImage) {
-    RedisContainer cfg;
+    RedisImage cfg;
     cfg.with_env("TZ", "UTC")
         .with_label("team", "cache")
         .with_network("net-a")
@@ -156,10 +156,10 @@ TEST(RedisModuleConfig, ManagedAuthEnvConflictThrowsAtRender) {
     // With a password the module owns REDISCLI_AUTH: exec'd redis-cli reads
     // the FIRST duplicate of a key, so ordering could not make the module's
     // entry win over a raw one.
-    EXPECT_THROW(RedisContainer().with_password("pw").with_env("REDISCLI_AUTH", "x").to_generic(),
+    EXPECT_THROW(RedisImage().with_password("pw").with_env("REDISCLI_AUTH", "x").to_generic(),
                  Error);
     // Without a password the key is the user's (custom auth setups).
-    const GenericImage generic = RedisContainer().with_env("REDISCLI_AUTH", "x").to_generic();
+    const GenericImage generic = RedisImage().with_env("REDISCLI_AUTH", "x").to_generic();
     ASSERT_EQ(generic.env().size(), 1u);
     EXPECT_EQ(generic.env()[0].first, "REDISCLI_AUTH");
 }

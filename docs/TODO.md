@@ -8,7 +8,7 @@ when it lands (adding a short note there if it needs one).
 Batch 10 — the last of the agreed batch order — **landed in full 2026-07-12**:
 the two foundations (2026-07-11: `wait_for::successful_command`; the `host()`
 override + `ConnectionString`) and the whole Tier-4 module layer — the pattern
-(copyable config builder → move-only Started handle with start()-resolved
+(copyable config builder → move-only started handle with start()-resolved
 getters; `with_customizer` + `to_generic()` escape hatches), the
 `testcontainers::modules` target / Conan component / `tc_module_tests` suite,
 and all seven 0.2.0 modules: **Redis**, **PostgreSQL**, **MySQL**, **MariaDB**,
@@ -158,7 +158,7 @@ loopback/named-pipe servers live in tests/unit/{LoopbackServer,PipeServer}.hpp.
 - **Ecosystem modules beyond the 0.2.0 seven** — the Tier-4 layer and all seven agreed
   modules landed 2026-07-12 (see Next candidates). Natural follow-ups if demand shows:
   Schema Registry / Kafka Connect (consuming `internal_bootstrap_servers()`), a
-  ConfluentKafkaContainer twin, redis-stack, MongoDB auth (`with_auth` wiring the full
+  ConfluentKafkaImage twin, redis-stack, MongoDB auth (`with_auth` wiring the full
   keyfile choreography), multi-node topologies. The original exploration doc lived in
   docs/05, removed at v0.1.0 (git history).
 
