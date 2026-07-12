@@ -413,6 +413,12 @@ which includes it in place of the individual header.
 | `RustFSImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: RustFSModuleConfig.CustomWaitReplacesDefaultProbe, RustFSModuleConfig.CredentialPairAppendedLastWinsOverRawEnv) | n/a |
 | `RustFSImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: RustFSModuleConfig.CustomizerRunsLastAndWins, RustFSModuleConfig.PassThroughsLandOnTheImage, RustFSModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
 | `RustFSContainer` getters (`s3_url`, `console_url` incl. /rustfs/console/ prefix, key pair) | ✅ | n/a | ✅ RustFSModule.DefaultsStartHealthAndAuthLayer, RustFSModule.ConsoleServesUnderPrefix | n/a |
+| `ScyllaDBImage()` defaults + `start()` (managed flags + log→cqlsh readiness pair, 120s budget) | ✅ | n/a | ✅ ScyllaDBModule.BecomesQueryable (bootstrapped COMPLETED right after start()) | n/a |
+| `ScyllaDBImage::with_smp/with_memory/with_datacenter/with_command_args` | ✅ | n/a | ✅ ScyllaDBModule.CustomDatacenterReported (flag rendering + user-wins ordering unit-tested: ScyllaDBModuleConfig.TuningSettersAndUserArgsAppendLast, ScyllaDBModuleConfig.InvalidTuningThrowsAtRender) | n/a |
+| `ScyllaDBImage::with_init_script` (host file / in-memory, post-ready hook) | ✅ | n/a | ✅ ScyllaDBModule.InitScriptsSeedBeforeStartReturns (staging + .cql whitelist unit-tested: ScyllaDBModuleConfig.InitScriptsStageOrderedAndValidated) | n/a |
+| `ScyllaDBImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: ScyllaDBModuleConfig.CustomWaitReplacesDefaultPair; the module sets no env — pass-through covered by ScyllaDBModuleConfig.PassThroughsLandOnTheImage) | n/a |
+| `ScyllaDBImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: ScyllaDBModuleConfig.CustomizerRunsLastAndWins, ScyllaDBModuleConfig.PassThroughsLandOnTheImage, ScyllaDBModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `ScyllaDBContainer` getters (`contact_point`, `datacenter`) + `exec_cql` | ✅ | n/a | ✅ ScyllaDBModule.BecomesQueryable, ScyllaDBModule.KeyspaceTableRoundTrip, ScyllaDBModule.CustomDatacenterReported (exec_cql in every ScyllaDBModule test) | n/a |
 
 ---
 

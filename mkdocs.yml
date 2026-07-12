@@ -60,6 +60,7 @@ nav:
       - ClickHouse: modules/clickhouse.md
       - MinIO: modules/minio.md
       - RustFS: modules/rustfs.md
+      - ScyllaDB: modules/scylladb.md
   - API reference: https://cppudge.github.io/testcontainers-cpp/api/
 
 markdown_extensions:

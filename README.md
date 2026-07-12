@@ -156,7 +156,7 @@ green on Windows (named pipe) and Linux (unix socket):
   (mutual TLS verified end to end in CI)
 - the `testcontainers::modules` layer — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ,
   MongoDB (typed connection getters; new in 0.2.0), NATS + Mosquitto + ClickHouse + MinIO +
-  RustFS (post-0.2.0, on main)
+  RustFS + ScyllaDB (post-0.2.0, on main)
 
 Known gaps: shared builds are **static-only on Windows** (the sources carry no symbol-export
 macros yet). Per-feature limits are tracked in

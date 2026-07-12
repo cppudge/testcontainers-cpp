@@ -271,6 +271,7 @@ if(TC_BUILD_MODULES)
         src/modules/RabbitMQ.cpp
         src/modules/Redis.cpp
         src/modules/RustFS.cpp
+        src/modules/ScyllaDB.cpp
     )
     add_library(testcontainers::modules ALIAS testcontainers_modules)
     # Installed/exported as testcontainers::modules, not ::testcontainers_modules.
@@ -383,6 +384,7 @@ if(BUILD_TESTING)
             tests/unit/modules/RabbitMQTest.cpp
             tests/unit/modules/RedisTest.cpp
             tests/unit/modules/RustFSTest.cpp
+            tests/unit/modules/ScyllaDBTest.cpp
         )
         target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
     endif()
@@ -455,6 +457,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/RabbitMQModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp
                 tests/integration/modules/RustFSModuleTest.cpp
+                tests/integration/modules/ScyllaDBModuleTest.cpp
             )
             target_link_libraries(tc_module_tests PRIVATE
                 testcontainers::modules

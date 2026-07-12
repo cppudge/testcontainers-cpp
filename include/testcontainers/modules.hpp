@@ -17,3 +17,4 @@
 #include "testcontainers/modules/RabbitMQ.hpp"
 #include "testcontainers/modules/Redis.hpp"
 #include "testcontainers/modules/RustFS.hpp"
+#include "testcontainers/modules/ScyllaDB.hpp"

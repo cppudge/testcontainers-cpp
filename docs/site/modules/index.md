@@ -70,6 +70,7 @@ guard theirs with a render-time error instead.
 | [ClickHouse](clickhouse.md) | `ClickHouseImage` → `ClickHouseContainer` | `clickhouse:26.3` | 8123 + 9000 | init scripts, config drop-ins, `exec_sql()`, dual HTTP/native endpoints |
 | [MinIO](minio.md) | `MinIOImage` → `MinIOContainer` | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | 9000 + 9001 | S3 endpoint + credential getters, `with_bucket` via the in-image `mc` |
 | [RustFS](rustfs.md) | `RustFSImage` → `RustFSContainer` | `rustfs/rustfs:1.0.0-beta.8` | 9000 + 9001 | MinIO-compatible getter surface, `/health` probe, beta pin |
+| [ScyllaDB](scylladb.md) | `ScyllaDBImage` → `ScyllaDBContainer` | `scylladb/scylla:2026.1` | 9042 | CI-shape flags, `contact_point()`/`datacenter()`, `.cql` init scripts, `exec_cql()` |
 
 Headers live under `testcontainers/modules/<Name>.hpp`, one per module (both classes);
 `testcontainers/modules.hpp` includes them all.

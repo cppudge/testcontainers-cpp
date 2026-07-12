@@ -841,6 +841,50 @@ creates a bucket, and rejects a wrong secret; the cross-module test doubles as t
 network-alias proof. Out of scope: with_bucket (above), TLS (with_wait replaces the plain
 HTTP probe), distributed/multi-volume layouts.
 
+**ScyllaDB module** (2026-07-13, `modules::ScyllaDBImage` → `modules::ScyllaDBContainer`,
+wave 2) — pinned `scylladb/scylla:2026.1` (yearly LTS line, floats over patches; bump
+roughly yearly when the next x.1 LTS has patch releases behind it). LICENSE re-verified
+from the primary source before implementation (the user's go condition): the ScyllaDB
+Software License Agreement v1.1 (2026-04-12) is source-available, free tier 10TB/50 vCPUs
+PER ORGANIZATION (a test container is orders of magnitude inside), CI/automated-testing
+use EXPLICITLY permitted for commercial ScyllaDB customers ("exclusively for
+non-production purposes, including Continuous Integration (CI), automated testing"), and
+the library ships no ScyllaDB code, so the license binds only the image-pulling user —
+same posture as mongo:7's SSPL; prohibitions are SaaS/DBaaS-offering-shaped and cannot
+reach a test container. Docs carry a License note + the `with_image("scylladb/scylla:6.2")`
+AGPL fallback (last OSS release, same entrypoint contract). Port 9042 only — 19042
+(shard-aware) stays unexposed because shard selection is by client SOURCE port, which
+Docker NAT rewrites (degrades to 9042 behavior; customizer recipe documented). Config is
+FLAGS, not env (the entrypoint's argparse): managed CI shape
+`--developer-mode=1 --overprovisioned=1 --smp 1 --memory 512M` rendered first, user
+`with_command_args` appended after — the parser keeps the LAST occurrence, so the user
+wins (Kafka rule; no credential getters to desync — the module is authless by design:
+PasswordAuthenticator creates its superuser ASYNC after CQL comes up, a second
+eventually-consistent phase for zero test value). `--dc` belongs to with_datacenter (raw
+duplicate desyncs the getter; verified live: `--dc tcdc` boots WITHOUT `--rack`, rack
+defaults to rack1). Readiness = ordered pair: wait_for::log("Starting listening for CQL
+clients") — printed only after node init; on 2026.1 it appears TWICE (9042 non-shard-aware
++ 19042 shard-aware), times=1 fires on the first — then
+successful_shell_command(`cqlsh "$(hostname)" -e "SELECT release_version FROM
+system.local"`). `$(hostname)` is regression-proofing: the entrypoint binds CQL to the
+CONTAINER IP, and the bundled cqlsh's default host regressed against that once
+(scylladb#16329; plain cqlsh DOES work again on 2026.1 — verified — but the explicit form
+survives both states). The cqlsh plumbing passes CQL as a POSITIONAL shell parameter
+(`sh -c 'cqlsh "$(hostname)" -e "$1"' cqlsh <cql>`) — no quote escaping anywhere, verified
+with quoted literals. 120s ctor budget (first boot initializes the data dir; observed 5-8s
+locally in dev mode). Init scripts: NO initdb.d in the image — .cql files stage to
+/tmp/testcontainers-NNNN-<name> (module-local staging; ModuleDetail's is initdb.d-shaped)
+and a started hook runs `cqlsh -f` per file in registration order post-ready; a failing
+script fails start(); each statement bounded by cqlsh's own request timeout; hook inputs
+are the copy-to descriptors, already reuse-hash-covered → NO reuse label needed. Keyspace
+contract for tests/docs: 2025.x+ enables TABLETS for fresh keyspaces, which reject
+SimpleStrategy — NetworkTopologyStrategy everywhere (RF=1 warning on stderr is normal).
+exec_cql output is cqlsh's aligned table — substring asserts ("(1 rows)"), not exact
+matches. Out of scope: auth opt-in (with_command_args + with_wait recipe), Alternator
+(DynamoDB API, port 8000), multi-node clusters (break host-side driver discovery),
+family extraction with a future Cassandra module (design flat now, extract with both on
+the table — the MySqlFamily lesson).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out
