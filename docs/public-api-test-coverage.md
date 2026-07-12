@@ -384,6 +384,12 @@ which includes it in place of the individual header.
 | `MongoDBImage::with_database` + `MongoDBContainer::connection_string` (directConnection, mandatory '/') | ✅ | n/a | ✅ MongoDBModule.ConnectionStringShape | n/a |
 | `MongoDBContainer::mongosh` (transactions payoff) | ✅ | n/a | ✅ MongoDBModule.TransactionCommitAndAbort (+ every MongoDBModule test) | n/a |
 | `MongoDBImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MongoDBModuleConfig.* — cmd/waits/hook shape, rs-name validation) | n/a |
+| `NATSImage()` defaults + `start()` (log→/healthz readiness) | ✅ | n/a | ✅ NATSModule.StartsServesAndBuildsUrls (raw-TCP INFO/PING + HTTP /healthz — the scratch image has nothing to exec) | n/a |
+| `NATSImage::with_username` / `with_password` | ✅ | n/a | ✅ NATSModule.AuthIsEnforcedAndWired (pair-or-nothing throw unit-tested: NATSModuleConfig.HalfACredentialPairThrowsAtRender) | n/a |
+| `NATSImage::with_jetstream` | ✅ | n/a | ✅ NATSModule.JetStreamTurnsOn | n/a |
+| `NATSImage::with_command_arg[s]` (+ managed-flag render throw) | ✅ | n/a | ✅ NATSModule.CommandArgsReachTheServer (throw + both twins unit-tested: NATSModuleConfig.ManagedFlagInArgsThrowsAtRender, NATSModuleConfig.CommandArgsAccumulateAfterManagedFlags) | n/a |
+| `NATSImage::with_customizer` / pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: NATSModuleConfig.CustomizerRunsLastAndWins, NATSModuleConfig.PassThroughsLandOnTheImage, NATSModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `NATSContainer` getters (`url` nats://[user:pass@]host:port, `monitoring_url`) | ✅ | n/a | ✅ NATSModule.StartsServesAndBuildsUrls, NATSModule.AuthIsEnforcedAndWired | n/a |
 
 ---
 

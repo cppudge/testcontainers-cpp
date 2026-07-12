@@ -51,10 +51,10 @@ Every module surfaces the same curated pass-throughs to the embedded builder: `w
 Environment precedence is part of each module's contract: the database modules append their
 managed credential keys **after** your `with_env` entries (the module wins — the getters can
 never disagree with the server), while Kafka appends your entries after its own (broker
-tuning — you win). Redis guards its one managed key (`REDISCLI_AUTH`) with a render-time
-error instead.
+tuning — you win). Redis (its `REDISCLI_AUTH` env key) and NATS (its managed server flags)
+guard theirs with a render-time error instead.
 
-## The seven
+## The modules
 
 | Module | Classes | Image pin | Ports | Highlights |
 |---|---|---|---|---|
@@ -65,6 +65,7 @@ error instead.
 | [Kafka](kafka.md) | `KafkaImage` → `KafkaContainer` | `apache/kafka:3.9.1` | 9092 (host) / 9093 (network) | single-node KRaft, `with_topic`, dual bootstrap getters |
 | [RabbitMQ](rabbitmq.md) | `RabbitMQImage` → `RabbitMQContainer` | `rabbitmq:3.13-management` | 5672 + 15672 | `amqp_url()`, definitions import, `with_plugin` |
 | [MongoDB](mongodb.md) | `MongoDBImage` → `MongoDBContainer` | `mongo:7` | 27017 | single-node replica set — transactions work; `mongosh()` |
+| [NATS](nats.md) | `NATSImage` → `NATSContainer` | `nats:2.12` | 4222 + 8222 | `url()`, `with_jetstream`, HTTP monitoring API |
 
 Headers live under `testcontainers/modules/<Name>.hpp`, one per module (both classes);
 `testcontainers/modules.hpp` includes them all.

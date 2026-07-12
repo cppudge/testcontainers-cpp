@@ -647,6 +647,41 @@ the slash. `mongosh(js)` on the Started handle seeds and asserts without a C++ d
 Reuse-adopt skips the hook — correct: the RS config persists in the data directory. Out of
 scope: auth/keyfile choreography, initdb.d scripts, multi-node sets, sharding.
 
+**NATS module** (2026-07-12, `modules::NATSImage` → `modules::NATSContainer`, wave 2) —
+pinned `nats:2.12` (the maintenance train; the plain FROM-scratch variant on purpose:
+neither it nor `-alpine` ships a NATS CLI, so a shell buys the module nothing — there is no
+redis-cli analog to exec). Ports 4222 (client) + 8222 (HTTP monitoring, always on via the
+module's `-m 8222`); 6222 stays unpublished (a single node has no cluster peer). Readiness
+is ORDERED: `wait_for::log("Server is ready")` (the server logs to stderr; the either-stream
+wait survives an upstream logging change) then `wait_for::http("/healthz", 8222)` — the
+end-to-end proof through the published port that a TCP wait can't give against Docker
+Desktop's accept-anything host proxy; under `-js` the same endpoint also gates JetStream
+health. The server reads NO env — the whole config is command-line flags, so the module
+always owns cmd (an override drops the image's stock config file, whose entire content is
+the default ports — monitoring is restated unconditionally, one code path on every image
+variant, and the leading `-` keeps the alpine entrypoint routing args to nats-server).
+Because Go's flag parsing keeps the LAST occurrence of a duplicate, append-last ordering
+protects nothing here (the exact inverse of the DB modules' env rule) — render THROWS on
+managed flags inside `with_command_args`: `--user`/`--pass` (with_username/with_password —
+pair-or-nothing, half a pair throws), `-js`/`--jetstream` (with_jetstream),
+`-m`/`--http_port` (a `-m 0` would starve the /healthz wait for the full budget),
+`-p`/`--port`/`-a`/`--addr`/`--net` (the client listener the getters resolve), and
+`-c`/`--config` (a config file re-sets any of the above invisibly); `-`/`--` and `=`-forms
+all match. Everything else appends verbatim after the managed flags (server tuning — the
+user wins); config-file setups take full command ownership via a customizer's `with_cmd`.
+No hooks, so the reuse hash covers the entire config via Cmd — no module label needed; an
+adopted server keeps its JetStream streams (stream data lives in the container layer
+otherwise — documented on with_jetstream, with a volume-over---store_dir customizer recipe).
+`url()` renders `nats://[user:pass@]host:port` (percent-encoded; the NATS_URL shape),
+`monitoring_url()` plain `http://host:mport`. Integration proof is host-side raw TCP — the
+CRLF text protocol is the driver (INFO greeting, PING→PONG, `Authorization Violation`
+pre-CONNECT, `CONNECT {"user":...}` then PONG, `--name` echoed as INFO server_name) plus a
+raw HTTP /healthz GET. NOTE: nats-server's command line carries only a small option set —
+server tuning like max_payload is config-file-only (usage verified live; the module's flag
+examples stick to real flags: --name, --auth, -DV). Out of scope: clustering/leaf nodes
+(multi-container), `--auth` token as a typed setter (rides with_command_args; a URL form
+would need `nats://token@`).
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

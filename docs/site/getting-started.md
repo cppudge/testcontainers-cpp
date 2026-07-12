@@ -102,8 +102,8 @@ returned — a `DockerError` exception hierarchy carrying the HTTP status and re
 
 ## Or start from a module
 
-The [modules](modules/index.md) skip the image/wait/port boilerplate for seven common
-technologies and add typed connection getters:
+The [modules](modules/index.md) skip the image/wait/port boilerplate for a growing set of
+common technologies and add typed connection getters:
 
 ```cpp
 #include <gtest/gtest.h>
@@ -133,6 +133,7 @@ defaults, in that order). Remote daemons, TLS, registry credentials, and the
 
 - [Core concepts](core-concepts.md) — the container lifecycle, wait strategies, cleanup,
   exec/logs, networks, compose.
-- [Modules](modules/index.md) — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB.
+- [Modules](modules/index.md) — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB,
+  NATS.
 - [API reference](https://cppudge.github.io/testcontainers-cpp/api/) — every public class and
   method, generated from the headers.

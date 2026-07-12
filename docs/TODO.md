@@ -13,9 +13,12 @@ getters; `with_customizer` + `to_generic()` escape hatches), the
 `testcontainers::modules` target / Conan component / `tc_module_tests` suite,
 and all seven 0.2.0 modules: **Redis**, **PostgreSQL**, **MySQL**, **MariaDB**,
 **Kafka**, **RabbitMQ**, **MongoDB** (decisions and per-module traps recorded
-in [feature-notes.md](feature-notes.md)). Next: the 0.2.0 release pass —
-version bump, README refresh, release notes, and the CCI version-add PR once
-conan-io/conan-center-index#30600 merges.
+in [feature-notes.md](feature-notes.md)). The 0.2.0 release pass landed the
+same day (v0.2.0 published 2026-07-12; the CCI version-add PR still waits on
+conan-io/conan-center-index#30600). Now in progress: **module wave 2**, one
+reviewed stage per module — NATS (landed 2026-07-12), then Mosquitto (MQTT),
+ClickHouse, MinIO + RustFS, ScyllaDB, OpenSearch (per-module interface designs
+— pins, readiness, precedence — settled up front).
 
 The 2026-07-11 duplication review landed in full the same day (with the exec internal
 unification): the buffered exec runs over `exec_stream_impl` with "any read-end = the peer

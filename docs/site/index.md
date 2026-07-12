@@ -66,8 +66,8 @@ const modules::PostgreSQLContainer pg =
   modes) and `with_exposed_host_port` (reach services on the test host from containers).
 - **Windows containers** — engine-mode detection, `with_platform` / `with_isolation`, and a
   full Windows-engine test mirror in CI.
-- **Modules** — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB: pinned images,
-  load-bearing readiness probes, typed connection getters.
+- **Modules** — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ, MongoDB, NATS: pinned
+  images, load-bearing readiness probes, typed connection getters.
 
 ## Platform support
 

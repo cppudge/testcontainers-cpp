@@ -55,6 +55,7 @@ nav:
       - Kafka: modules/kafka.md
       - RabbitMQ: modules/rabbitmq.md
       - MongoDB: modules/mongodb.md
+      - NATS: modules/nats.md
   - API reference: https://cppudge.github.io/testcontainers-cpp/api/
 
 markdown_extensions:
