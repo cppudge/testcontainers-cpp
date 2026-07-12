@@ -287,10 +287,11 @@ private:
     /// is best-effort and must never propagate, especially from the destructor).
     void fire_stopping() noexcept;
 
-    // Mutable: the client is just a stateless host config that opens a fresh
-    // connection per call, so issuing requests through it is logically const
-    // from the handle's point of view (const accessors like get_host_port /
-    // is_running / logs need it).
+    // Mutable: requests through the client are logically const from the
+    // handle's point of view (const accessors like get_host_port / is_running
+    // / logs need it). The client is connection-per-request; its lazy state
+    // (the negotiated API-version pin) is instance-internal under the usual
+    // one-instance-one-thread rule.
     mutable DockerClient client_;
     std::string id_;
     bool dropped_ = false;

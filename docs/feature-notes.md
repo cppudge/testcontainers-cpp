@@ -52,8 +52,9 @@ stay independent.
 **API version pin** (2026-07-05) — every typed `DockerClient` method pins its path to
 `/v1.NN`, negotiated once per client instance the way the docker CLI does it: one unversioned
 `GET /_ping`, then `min(kClientApiVersion = 1.44, daemon's Api-Version header)`, compared
-numerically ("1.9" < "1.44"). 1.44 covers everything the library uses (newest need:
-`?platform=` on create, 1.41) and is the negotiation floor of daemons that dropped the old
+numerically ("1.9" < "1.44"). 1.44 covers everything the library uses (newest need: the
+`all` filter on volume prune, 1.42 — see the kClientApiVersion comment) and is the
+negotiation floor of daemons that dropped the old
 versions; an old daemon wins with its own version. Copies inherit the negotiated version (the
 drop-time DELETE of a `Container` handle re-uses it — no second ping); a daemon that reveals no
 parsable version falls back to unversioned paths (its default version, the old behavior). The
@@ -127,8 +128,8 @@ hooks → start → wait → handle) lives in `detail::Runner`; `GenericImage::s
 `run(to_request())`. Public `run(request)` / `run(client, request)` bootstrap the Reaper and
 delegate; the core skips reaper bootstrap so unit tests drive it against a canned responder.
 A hand-built request owns the consistency of the port trio (typed `exposed_ports` vs rendered
-`spec.exposed_ports` vs `publish_all_ports`). Modules (Postgres/Redis/…) remain planned as
-composition over `GenericImage`.
+`spec.exposed_ports` vs `publish_all_ports`). Modules (Postgres/Redis/…, landed 2026-07-12)
+are exactly that composition over `GenericImage` — see "Ecosystem modules" below.
 
 **Lifecycle hooks + startup retry** — `with_created/starting/started/stopping_hook`
 (`LifecycleHook = std::function<void(DockerClient&, const std::string& id)>`) and

@@ -138,8 +138,9 @@ private:
     /// Best-effort remove, swallowing any error. Marks the handle dropped.
     void drop() noexcept;
 
-    // Mutable for the same reason as Container/Network: the client is a stateless
-    // host config that opens a fresh connection per call.
+    // Mutable for the same reason as Container/Network: requests through the
+    // client are logically const; its lazy state (the negotiated API-version
+    // pin) is instance-internal under the one-instance-one-thread rule.
     mutable DockerClient client_;
     std::string name_;
     bool dropped_ = false;

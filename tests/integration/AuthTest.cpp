@@ -15,7 +15,7 @@
 // Tests in this file (integration; require a Docker daemon):
 //   DockerAuth.PublicPullUnaffectedByNoAuth - a public image still pulls with no registry auth (baseline; the auth path is opt-in).
 //   DockerAuth.PublicPullWithExplicitAuthHeader - sending an X-Registry-Auth header for a public image does not break the pull.
-//   DockerAuth.CredentialHelperSmoke - if a real credsStore/credHelpers is configured, running the helper subprocess returns creds-or-nullopt without throwing.
+//   DockerAuthCredentialHelper.CredentialHelperSmoke - if a real credsStore/credHelpers is configured, running the helper subprocess returns creds-or-nullopt without throwing.
 //
 // These are best-effort: a reachable private registry is environment-dependent
 // on Docker Desktop, so anything that goes wrong skips rather than fails. We do

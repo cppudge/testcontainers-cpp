@@ -290,7 +290,8 @@ public:
     /// The selected client kind (default Local).
     ComposeClientKind client_kind() const noexcept { return client_kind_; }
 
-    /// The containerised ambassador image.
+    /// The containerised client's cli image ("ambassador" is the socat relay
+    /// — see ambassador_image()).
     const std::string& compose_image() const noexcept { return compose_image_; }
 
     /// The environment variables set on the compose invocation.

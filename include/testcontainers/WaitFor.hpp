@@ -43,6 +43,8 @@ struct Exit {
 struct Healthcheck {};
 
 /// Wait until an HTTP GET to the mapped host port returns `expected_status`.
+/// Plain HTTP only — probe an HTTPS-serving container in-container instead,
+/// e.g. `successful_shell_command("curl -fsk https://localhost:8443/health")`.
 struct Http {
     std::string path = "/";                       ///< request path
     ContainerPort port;                           ///< container port to probe

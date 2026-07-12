@@ -1,7 +1,7 @@
 # Public API integration-test coverage
 
-Audit date: 2026-07-05. Updated the same day after the gap-closing test batch
-(verified live: Linux engine and Windows engine CI runs green).
+Audit date: 2026-07-05; last updated 2026-07-12 (the module layer and the
+pre-0.2.0 audit fixes; verified live: Linux and Windows engine CI runs green).
 
 This file audits the integration-test coverage of every public interface under
 `include/testcontainers/` against a real Docker daemon, in each of the two engine
@@ -474,9 +474,10 @@ Notes:
 | TLS disabled build (`TC_TLS=OFF`) | ✅ | ✅ | ✅ TlsTransport.DisabledBuildThrowsClearError + unit TransportTimeout.TlsDisabledConnectThrowsNamedError (CI: linux-minimal job) | ✅ (same tests; daemon-independent) |
 | `TransportTimeouts` | ✅ | ✅ | ❌ (unit-tested) | ❌ |
 
-TLS is exercised against an in-process self-signed server, not a real remote
-daemon (see feature-notes: end-to-end TLS against a real daemon is not
-CI-verified). The npipe (Windows) and unix-socket (Linux) transports are
+TLS is exercised against an in-process self-signed server (the tests above)
+AND end to end in CI against a real `--tlsverify` daemon — the `tls-e2e`
+docker:dind job runs mutual TLS (see feature-notes). The npipe (Windows) and
+unix-socket (Linux) transports are
 exercised by every daemon-touching test in their respective modes; TCP is the
 default CI transport shape for the named-pipe/socket cases.
 
@@ -545,5 +546,6 @@ connect, build-context variants, typed 404s on Linux are all now covered).
 5. **Remaining builder options** — Network `Builder::with_name` /
    `with_enable_ipv6` / `with_option`; Volume `Builder::with_driver` /
    `with_driver_opt`; `with_platform`; `with_create_body_patch`.
-6. **`TransportTimeoutError` against a real wedged endpoint** and end-to-end TLS
-   to a real remote daemon (feature-notes.md records both as not CI-verified).
+6. **`TransportTimeoutError` against a real wedged endpoint** (feature-notes.md
+   records it as not CI-verified; end-to-end TLS to a real daemon is covered by
+   the `tls-e2e` dind job since 2026-07-11).

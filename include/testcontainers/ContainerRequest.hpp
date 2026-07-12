@@ -98,10 +98,10 @@ Container run(const ContainerRequest& request);
 
 /// As above, but on a caller-supplied client — for a custom daemon endpoint or
 /// tuned transport timeouts. The reaper is booted on `client`'s daemon (not the
-/// environment one); note it is process-global and binds to the FIRST daemon it
-/// starts against — later runs against a different daemon in the same process
-/// get labels but no crash-safe reaping. The client is copied into the
-/// returned handle.
+/// environment one); reapers are per-daemon, keyed by endpoint URL, so a
+/// second daemon used in the same process gets its own crash-safe reaper (two
+/// URL spellings of one daemon count as two endpoints — harmless, two
+/// reapers). The client is copied into the returned handle.
 Container run(DockerClient client, const ContainerRequest& request);
 
 } // namespace testcontainers

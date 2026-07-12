@@ -31,6 +31,14 @@ only when it is actually being followed.
   using testcontainers::docker::demux_all;
   ```
 
+## Error messages
+- A `throw` message is a lowercase clause (no leading capital, no trailing
+  period) that names what failed first and quotes interesting values in single
+  quotes: `throw Error("init script 'seed.sql' has an extension ...")`. Add
+  context the catcher cannot reconstruct (the resource, the actual value) —
+  not what the exception type already says. Existing messages are aligned
+  opportunistically when a throw site is touched anyway; no big-bang sweep.
+
 ## Backlog
 - Known limitations and deferred work are tracked in [`TODO.md`](TODO.md), not
   scattered through code comments. When you spot tech debt during review, add it there.

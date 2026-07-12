@@ -178,7 +178,8 @@ public:
     /// addresses from the returned Container
     /// (`host()` + `get_host_port(tcp(KafkaContainer::kPort))`). The
     /// `with_customizer` caveats apply here too. Throws Error on an invalid
-    /// config (malformed cluster id) before any daemon contact.
+    /// config (malformed cluster id; an empty topic name or non-positive
+    /// partition count) before any daemon contact.
     GenericImage to_generic() const;
 
     /// Create, start, reconfigure, and wait for the broker; returns the

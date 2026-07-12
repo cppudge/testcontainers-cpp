@@ -72,7 +72,8 @@ std::string filters_query(char sep,
 }
 
 /// A request carrying the headers every Docker call shares (Host, User-Agent)
-/// with keep-alive off (one connection per request for now).
+/// with keep-alive off by default — connection-per-request; the Session GET
+/// path re-enables it per request.
 template <class Body>
 http::request<Body> make_request(http::verb method, const std::string& target,
                                  const DockerHost& host) {

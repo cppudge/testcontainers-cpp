@@ -29,9 +29,10 @@ struct ExecOptions {
     /// interaction.
     bool detach = false;
     /// When set, attach stdin, feed these bytes, then half-close so the reader
-    /// sees EOF. Requires a half-closable transport (TCP / unix socket): on the
-    /// Windows named-pipe and TLS transports exec throws instead (no EOF signal
-    /// is possible there, so a reader like `cat` would hang forever).
+    /// sees EOF. Requires a half-closable transport — TCP, unix socket, or a
+    /// message-mode Windows named pipe (every real daemon's pipe is one): on
+    /// the TLS transport and byte-mode pipes exec throws instead (no EOF
+    /// signal is possible there, so a reader like `cat` would hang forever).
     std::optional<std::string> stdin_data;
     /// Initial console size of a `tty` exec, rows x columns. Commands that
     /// format to the terminal width see this size from their first output

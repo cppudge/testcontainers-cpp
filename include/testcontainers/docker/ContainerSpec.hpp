@@ -15,10 +15,10 @@
 
 namespace testcontainers {
 
-/// Minimal request for `POST /containers/create`.
-///
-/// This is a deliberately small, flat precursor to the full `ContainerRequest`
-/// model; it carries just enough to create and run a container.
+/// The flat create-body DTO for `POST /containers/create`, shared between the
+/// builder layer (`ContainerRequest` renders into it) and the client — typed
+/// fields for every option the library surfaces, translated into the daemon's
+/// JSON in one place.
 struct CreateContainerSpec {
     std::string image;                                       ///< "alpine:3.20"
     std::vector<std::string> cmd;                            ///< command / args
