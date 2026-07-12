@@ -79,6 +79,14 @@ public:
         return *this;
     }
 
+    /// Attach a metadata label. The module's reuse-visibility label
+    /// (`org.testcontainers.kafka.topics`) is applied after these, so it
+    /// wins on a duplicate key.
+    KafkaContainer& with_label(std::string key, std::string value) {
+        image_.with_label(std::move(key), std::move(value));
+        return *this;
+    }
+
     /// Set the KRaft cluster id: 22 characters of URL-safe base64 (a 16-byte
     /// UUID, e.g. from `kafka-storage.sh random-uuid`). Defaults to a fixed
     /// module-wide id, which keeps restarts and container reuse
@@ -145,8 +153,8 @@ public:
     }
 
     /// Register a callback that customizes the underlying `GenericImage` —
-    /// the channel for options this module does not surface (labels, pull
-    /// policy, mounts, ...). Customizers run when the config is rendered
+    /// the channel for options this module does not surface (pull policy,
+    /// mounts, ...). Customizers run when the config is rendered
     /// (`start()` / `to_generic()`), in registration order, AFTER the
     /// module's own rendering. Caveats: the boot choreography lives in the
     /// rendered command, wait, and started hook — replacing any of them

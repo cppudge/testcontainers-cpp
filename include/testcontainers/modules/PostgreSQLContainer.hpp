@@ -207,17 +207,22 @@ public:
     const std::string& password() const noexcept { return password_; }
     const std::string& database() const noexcept { return database_; }
 
-    /// URI-form DSN, `scheme://user[:password]@host:port/database`, every
+    /// URI-form DSN, `postgresql://user[:password]@host:port/database`, every
     /// component percent-encoded — paste into PQconnectdb / pqxx::connection.
-    /// The scheme parameter serves polyglot consumers ("postgres" for
-    /// Go-style tools, "postgresql+psycopg" for SQLAlchemy, ...). For extra
-    /// query parameters (sslmode=disable and friends), rebuild with
+    /// For extra query parameters (sslmode=disable and friends), rebuild with
     /// ConnectionString and the discrete getters.
     ///
     /// This DSN is host-side: a SIBLING CONTAINER on a shared network dials
     /// `<alias>:5432` (PostgreSQLContainer::kPort) instead — build that DSN
     /// with ConnectionString, your alias, and kPort.
-    std::string connection_string(const std::string& scheme = "postgresql") const;
+    std::string connection_string() const { return connection_string_with_scheme("postgresql"); }
+
+    /// The same DSN under a different scheme, for polyglot consumers
+    /// ("postgres" for Go-style tools, "postgresql+psycopg" for SQLAlchemy,
+    /// ...). The scheme has its own method name — not a `connection_string`
+    /// parameter — so it cannot be mistaken for the DATABASE argument that
+    /// `connection_string(...)` takes in other modules.
+    std::string connection_string_with_scheme(const std::string& scheme) const;
 
     /// libpq keyword/value form of the same DSN: `host=... port=...
     /// dbname=... user=... password=...`, values quoted per libpq rules (the

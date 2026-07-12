@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -20,9 +21,9 @@ class StartedRedis;
 ///
 /// The `with_*` builders mutate in place and return `*this` by reference, so a
 /// named config can be configured incrementally and started many times.
-/// Options this module does not surface (network, reuse, pull policy, ...)
-/// are reached through `with_customizer`; `to_generic()` drops down to a
-/// plain `GenericImage` when a raw `Container` is wanted instead.
+/// Core options the module does not surface are reached through
+/// `with_customizer`; `to_generic()` drops down to a plain `GenericImage`
+/// when a raw `Container` is wanted instead.
 class RedisContainer {
 public:
     /// The pinned default image. Override with `with_image`; the hub-prefix
@@ -62,12 +63,47 @@ public:
     /// customizer's `with_cmd` still wins (customizers run last).
     RedisContainer& with_command_args(std::vector<std::string> args);
 
+    /// The single-argument twin of `with_command_args` (same placement and
+    /// accumulation rules).
+    RedisContainer& with_command_arg(std::string arg);
+
+    // --- Pass-throughs to the underlying builder ---
+
+    /// Set an extra environment variable. REDISCLI_AUTH belongs to
+    /// with_password: setting it here alongside a password makes `start()`
+    /// throw up front — unlike the DB modules' bash-read credential keys, it
+    /// is read by EXEC'D processes (the readiness probe's redis-cli), where
+    /// the FIRST duplicate of a key wins, so the module could not override a
+    /// raw entry by ordering. Without a password the key is yours to set
+    /// (custom auth setups).
+    RedisContainer& with_env(std::string key, std::string value);
+
+    RedisContainer& with_label(std::string key, std::string value);
+
+    /// Join a user-defined network; peers resolve this container by
+    /// name/alias at `<alias>:6379` (kPort, not the mapped host port).
+    RedisContainer& with_network(std::string network);
+    RedisContainer& with_network(const Network& network);
+    RedisContainer& with_network_alias(std::string alias);
+
+    /// Enable container reuse (effective only when reuse is also enabled
+    /// globally — see GenericImage::with_reuse). An adopted server keeps its
+    /// keyspace: same config, next run, data intact.
+    RedisContainer& with_reuse(bool reuse = true);
+
+    /// Budget for the whole readiness phase (default: 60s). Image pull time
+    /// does not count against it.
+    RedisContainer& with_startup_timeout(std::chrono::milliseconds timeout);
+
+    /// Retry the whole create→start→wait sequence up to `n` times.
+    RedisContainer& with_startup_attempts(int n);
+
     /// Register a callback that customizes the underlying `GenericImage` —
-    /// the channel for every option this module does not surface:
-    /// `cfg.with_customizer([&](GenericImage& g) { g.with_network(net); });`.
-    /// Customizers run when the config is rendered (`start()` /
-    /// `to_generic()`), in registration order, AFTER the module's own
-    /// rendering — what they set wins over the module.
+    /// the channel for every option this module does not surface (mounts,
+    /// pull policy, ...). Customizers run when the config is rendered
+    /// (`start()` / `to_generic()`), in registration order, AFTER the
+    /// module's own rendering — what they set wins over the module. Do not
+    /// set REDISCLI_AUTH here: with_password manages it (see with_env).
     RedisContainer& with_customizer(std::function<void(GenericImage&)> customize);
 
     // --- Getters ---
@@ -81,6 +117,8 @@ public:
     /// Render the full configuration — module options and customizers applied
     /// — into a plain GenericImage: the drop-down escape hatch when you need
     /// a raw `Container` (or run-level tweaks) instead of a StartedRedis.
+    /// Throws Error — before any daemon contact — when `with_env` carries
+    /// REDISCLI_AUTH alongside a configured password (see with_env).
     GenericImage to_generic() const;
 
     /// Create, start, and wait until the server answers `redis-cli ping`.
@@ -89,7 +127,7 @@ public:
     StartedRedis start() const;
 
 private:
-    GenericImage image_;            ///< pin + port + wait baked at construction
+    GenericImage image_;            ///< pin + port + ping wait + pass-through state
     std::string password_;          ///< rendered into cmd/env when set
     std::vector<std::string> args_; ///< rendered into cmd when non-empty
     std::vector<std::function<void(GenericImage&)>> customizers_; ///< applied last

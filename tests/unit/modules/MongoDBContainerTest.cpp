@@ -15,6 +15,7 @@
 //   MongoDBModuleConfig.DefaultsAndSettersReflectGetters - the builder defaults to rs0/test and the domain setters record into the matching getters.
 //   MongoDBModuleConfig.ReplicaSetNameValidatedAtRender - a name outside [A-Za-z0-9_-] (which is quoted into the initiate JS) throws Error at render; a valid custom name lands in the command line.
 //   MongoDBModuleConfig.CustomizerRunsLastAndWins - a customizer sees the rendered builder and its settings win.
+//   MongoDBModuleConfig.EnvPassThroughValidatedAgainstInitdbRoot - with_env/with_label land on the builder, and the boot-breaking MONGO_INITDB_ROOT_* keys throw at render.
 //   MongoDBModuleConfig.WithImageRewritesReference - with_image swaps the reference while the choreography survives.
 //   MongoDBModuleConfig.RenderingIsIdempotent - repeated to_generic() calls render equal cmd/waits/hooks (nothing accumulates).
 
@@ -73,6 +74,22 @@ TEST(MongoDBModuleConfig, CustomizerRunsLastAndWins) {
     const GenericImage generic = cfg.to_generic();
     ASSERT_EQ(generic.labels().size(), 1u);
     EXPECT_EQ(generic.labels()[0].first, "team");
+}
+
+TEST(MongoDBModuleConfig, EnvPassThroughValidatedAgainstInitdbRoot) {
+    const GenericImage generic =
+        MongoDBContainer().with_env("TZ", "UTC").with_label("team", "storage").to_generic();
+    ASSERT_EQ(generic.env().size(), 1u);
+    EXPECT_EQ(generic.env()[0].first, "TZ");
+    ASSERT_EQ(generic.labels().size(), 1u);
+    EXPECT_EQ(generic.labels()[0].first, "team");
+
+    // Auth without a cluster keyfile refuses to start under --replSet — the
+    // module rejects the boot-breaking keys up front.
+    EXPECT_THROW(MongoDBContainer().with_env("MONGO_INITDB_ROOT_USERNAME", "root").to_generic(),
+                 Error);
+    EXPECT_THROW(MongoDBContainer().with_env("MONGO_INITDB_ROOT_PASSWORD", "pw").to_generic(),
+                 Error);
 }
 
 TEST(MongoDBModuleConfig, WithImageRewritesReference) {

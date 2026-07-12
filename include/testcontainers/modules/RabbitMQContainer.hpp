@@ -123,6 +123,24 @@ public:
 
     // --- Pass-throughs to the underlying builder ---
 
+    /// Set an extra environment variable — image switches beyond the typed
+    /// setters. The managed RABBITMQ_DEFAULT_* trio belongs to
+    /// with_username/with_password/with_vhost: the module applies those keys
+    /// last, so they win over raw duplicates set here (the image's bash
+    /// entrypoint applies the last duplicate).
+    RabbitMQContainer& with_env(std::string key, std::string value) {
+        image_.with_env(std::move(key), std::move(value));
+        return *this;
+    }
+
+    /// Attach a metadata label. The module's reuse-visibility label
+    /// (`org.testcontainers.rabbitmq.plugins`) is applied after these, so it
+    /// wins on a duplicate key.
+    RabbitMQContainer& with_label(std::string key, std::string value) {
+        image_.with_label(std::move(key), std::move(value));
+        return *this;
+    }
+
     /// Join a user-defined network; peers resolve this container by
     /// name/alias at `<alias>:5672` (kAmqpPort, not the mapped host port).
     RabbitMQContainer& with_network(std::string network) {
@@ -158,7 +176,7 @@ public:
 
     /// Register a callback that customizes the underlying `GenericImage` —
     /// the channel for every option this module does not surface (extra
-    /// ports, labels, pull policy, ...). Customizers run when the config is
+    /// ports, pull policy, ...). Customizers run when the config is
     /// rendered (`start()` / `to_generic()`), in registration order, AFTER
     /// the module's own rendering — what they set wins over the module. A
     /// wait added here runs after the module's ordered waits, which is the

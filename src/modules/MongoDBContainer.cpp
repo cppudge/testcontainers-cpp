@@ -1,5 +1,7 @@
 #include "testcontainers/modules/MongoDBContainer.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <utility>
@@ -34,7 +36,8 @@ bool valid_replica_set_name(const std::string& name) {
 /// This cannot be a wait strategy — the Runner runs all waits BEFORE the
 /// started hooks, so a PRIMARY probe would poll before rs.initiate existed.
 /// Until this hook returns, the node rejects writes (NotWritablePrimary).
-void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::string& rs_name) {
+void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::string& rs_name,
+                       std::chrono::milliseconds phase_budget) {
     // The member host is 127.0.0.1 on purpose: it satisfies mongod's
     // initiate-time self-check deterministically (no dependency on the
     // container hostname or an inspect round-trip), and no client ever
@@ -53,19 +56,44 @@ void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::s
             std::nullopt, id);
     }
 
-    // The single-node election normally completes well under 2s; the
-    // in-shell cap (200 x 100ms ~ 20s) is headroom for cold CI. hello() is
-    // wrapped so a transient error during the step-up keeps the poll going
-    // instead of failing start() spuriously. One exec, no stdin, no TTY —
+    // The single-node election normally completes well under 2s; the budget
+    // (the configured startup timeout — a fresh allowance for this phase,
+    // matching the per-phase contract with_startup_timeout documents) is
+    // headroom for cold CI. The poll runs IN-SHELL on 100ms ticks, chunked
+    // into execs of at most ~15s each: the buffered exec runs with the
+    // transport deadline DISABLED (streaming reads wait indefinitely by
+    // design), so the steady_clock deadline below is the one wall-clock
+    // authority — chunking re-evaluates it between execs and gives a
+    // transiently failing mongosh a fresh try. hello() is wrapped so a
+    // transient error during the step-up keeps the poll going instead of
+    // failing start() spuriously. One exec at a time, no stdin, no TTY —
     // works on every transport.
-    const ExecResult primary =
-        client.exec(id, {"mongosh", "--quiet", "--eval",
-                         "let n = 0; while (true) { let ok = false; "
-                         "try { ok = db.hello().isWritablePrimary; } catch (e) {} "
-                         "if (ok) break; if (n++ >= 200) quit(1); sleep(100); }"});
-    if (primary.exit_code != 0) {
-        throw StartupTimeoutError(
-            "mongodb node did not become the writable PRIMARY within ~20s of rs.initiate", id);
+    const std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::now() + phase_budget;
+    for (;;) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (remaining <= std::chrono::milliseconds::zero()) {
+            throw StartupTimeoutError(
+                "mongodb node did not become the writable PRIMARY within " +
+                    std::to_string(
+                        std::chrono::duration_cast<std::chrono::seconds>(phase_budget).count()) +
+                    "s of rs.initiate (the startup timeout, applied per phase)",
+                id);
+        }
+        const long long ticks = std::min<long long>(150, remaining.count() / 100 + 1);
+        const ExecResult poll =
+            client.exec(id, {"mongosh", "--quiet", "--eval",
+                             "let n = 0; while (true) { let ok = false; "
+                             "try { ok = db.hello().isWritablePrimary; } catch (e) {} "
+                             "if (ok) break; if (n++ >= " +
+                                 std::to_string(ticks) + ") quit(1); sleep(100); }"});
+        if (poll.exit_code == 0) {
+            return;
+        }
+        // Exit 1 is the chunk's own tick cap expiring; any other failure (a
+        // mongosh that cannot connect during the step-up, say) retries the
+        // same way — the deadline above is the one authority on giving up.
     }
 }
 
@@ -94,6 +122,16 @@ GenericImage MongoDBContainer::to_generic() const {
         throw Error("replica set name \"" + replica_set_name_ +
                     "\" must be non-empty and use only letters, digits, '-' and '_'");
     }
+    for (const auto& [key, value] : image_.env()) {
+        if (key == "MONGO_INITDB_ROOT_USERNAME" || key == "MONGO_INITDB_ROOT_PASSWORD") {
+            // Fail fast: auth on a replica-set member requires a cluster
+            // keyfile — the image's own failure mode is a refusal to start,
+            // surfacing only as the full wait timeout.
+            throw Error(key + " is not supported by this module: MongoDB requires a cluster "
+                              "keyfile when auth is combined with --replSet (the server runs "
+                              "without authentication; see the class comment)");
+        }
+    }
 
     // Render into a COPY: repeated to_generic()/start() calls must never
     // accumulate state in the config.
@@ -116,8 +154,12 @@ GenericImage MongoDBContainer::to_generic() const {
     generic.with_wait(wait_for::listening_port(tcp(kPort)));
 
     const std::string rs_name = replica_set_name_;
-    generic.with_started_hook([rs_name](DockerClient& client, const std::string& id) {
-        run_mongo_rs_init(client, id, rs_name);
+    // A fresh allowance for the initiation phase, the same size as the
+    // container-level budget (the per-phase startup-timeout contract, like
+    // Kafka's two-phase boot).
+    const std::chrono::milliseconds phase_budget = image_.startup_timeout();
+    generic.with_started_hook([rs_name, phase_budget](DockerClient& client, const std::string& id) {
+        run_mongo_rs_init(client, id, rs_name, phase_budget);
     });
 
     // Customizers last: what the escape hatch sets wins over the module's

@@ -17,6 +17,7 @@
 //   KafkaModuleConfig.UserEnvAppendedAfterModuleEnv - with_env entries land after the module's, so a duplicate key resolves to the user's value in the image's bash launch script.
 //   KafkaModuleConfig.ClusterIdValidatedAtRender - a malformed cluster id throws Error at to_generic(); a valid override lands in CLUSTER_ID.
 //   KafkaModuleConfig.TopicsRenderReuseVisibleLabel - with_topic renders the org.testcontainers.kafka.topics label (name:partitions, registration order); no topics, no label; an empty name or non-positive partition count throws at render.
+//   KafkaModuleConfig.LabelPassThroughKeepsReservedTopicsLabelLast - with_label lands on the builder, and the module's reuse label is appended after user labels (so it wins on a duplicate key).
 //   KafkaModuleConfig.CustomizerRunsLastAndWins - a customizer sees the rendered builder and its settings win.
 //   KafkaDetail.ClusterIdValidation - exactly 22 URL-safe base64 chars pass; wrong length and non-URL-safe chars are rejected.
 //   KafkaDetail.StarterScriptAdvertisesBothListeners - the generated script exports PLAINTEXT with the real mapped port and BROKER with the internal host (never CONTROLLER), and execs the apache run script with the confluent fallback.
@@ -110,6 +111,17 @@ TEST(KafkaModuleConfig, TopicsRenderReuseVisibleLabel) {
     // Fail fast instead of an opaque topic-creation error at start().
     EXPECT_THROW(KafkaContainer().with_topic("bad", 0).to_generic(), Error);
     EXPECT_THROW(KafkaContainer().with_topic("", 1).to_generic(), Error);
+}
+
+TEST(KafkaModuleConfig, LabelPassThroughKeepsReservedTopicsLabelLast) {
+    const GenericImage generic =
+        KafkaContainer().with_label("team", "streaming").with_topic("orders", 3).to_generic();
+
+    // User labels live in the embedded builder; the module's reuse label is
+    // appended at render, after them — so it wins on a duplicate key.
+    ASSERT_EQ(generic.labels().size(), 2u);
+    EXPECT_EQ(generic.labels()[0].first, "team");
+    EXPECT_EQ(generic.labels()[1].first, "org.testcontainers.kafka.topics");
 }
 
 TEST(KafkaModuleConfig, CustomizerRunsLastAndWins) {

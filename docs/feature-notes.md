@@ -428,7 +428,16 @@ module: `with_customizer(fn)` queues a callback over the underlying `GenericImag
 render time AFTER the module's own rendering (what it sets wins — the same precedence idea
 as `with_create_body_patch` over typed fields), and `to_generic()` renders the full config
 into a plain `GenericImage` for when a raw `Container` is wanted. Each module documents the
-small surface it owns (cmd/env keys); everything else passes through untouched. Opt-in by
+small surface it owns (cmd/env keys); everything else passes through untouched. Aligned in
+the pre-0.2.0 audit pass (2026-07-12): every module surfaces the same curated pass-through
+set — env / label / network (name or `Network`) / network-alias / reuse / startup-timeout /
+startup-attempts; `with_startup_timeout` is a PER-PHASE budget (one phase for most modules;
+Kafka and MongoDB run a second, hook-driven phase with a fresh allowance of the same size);
+command-line arguments use one spelling pair wherever they apply (`with_command_arg` single
+/ `with_command_args` batch — Redis and the MySQL family); and a string argument to
+`connection_string(...)` always means the DATABASE (MongoDB) — scheme variants get their
+own name (PostgreSQL's `connection_string_with_scheme`). `testcontainers/modules.hpp` is
+the modules umbrella header (compile-checked by the Redis unit TU). Opt-in by
 include + link: headers under `include/testcontainers/modules/`, target
 `testcontainers::modules` — the one spelling that means the same thing on both consumption
 paths. Around it the paths differ: the plain-CMake install exports
@@ -450,10 +459,14 @@ wait (a log wait races the listener; a raw TCP probe false-positives through Doc
 Desktop's host proxy). `with_password` renders `{"redis-server","--requirepass",pw}` AND
 sets container-level `REDISCLI_AUTH`, so the unchanged probe — and any `redis-cli` the user
 execs — authenticates automatically (honored by redis-cli ≥ 4.0.10; the pin is far past
-it). `with_command_args` appends server arguments after `--requirepass`; argv[0] stays
+it). `with_command_arg[s]` append server arguments after `--requirepass`; argv[0] stays
 `redis-server` so the official entrypoint's protected-mode handling keeps applying. The
 module owns the container command (iff a password or args are set) and the `REDISCLI_AUTH`
-env key — nothing else. `connection_string(db = 0)` renders
+env key — nothing else. The env key is guarded, not just documented: `with_env` carrying
+REDISCLI_AUTH alongside a password throws at render — the key is read by EXEC'D redis-cli,
+where the FIRST duplicate of a key wins, so the append-last ordering that protects the DB
+modules' bash-read credential keys could not make the module's entry win here.
+`connection_string(db = 0)` renders
 `redis://[:pass@]host:port[/db]`; database selection is client-side in Redis, so there is
 no server-side database setter. Known limits: a config FILE must be the first server
 argument, so a config file combined with `with_password` is unsupported (drop to a
@@ -481,7 +494,8 @@ executable (a non-executable .sh is *sourced* into the entrypoint's shell, where
 editing a script changes the reuse hash). `with_config_option` renders `postgres -c k=v`;
 `with_wait` REPLACES the default probe (a customizer-added wait runs in addition).
 `StartedPostgreSQL` adds `conninfo()` (libpq keyword/value with its quoting rules; the
-password keyword omitted when empty) beside the URI `connection_string(scheme)`, and
+password keyword omitted when empty) beside the URI `connection_string()` /
+`connection_string_with_scheme()`, and
 `exec_sql()` through the in-container psql (`-X -tA`, local-socket trust — no password).
 Curated pass-throughs (env / label / network / alias / reuse / timeout / attempts) forward
 to the embedded builder; everything else rides `with_customizer`.
@@ -508,7 +522,7 @@ names). 500ms poll (each attempt is a fresh exec connection; 200ms is churn agai
 measured in tens of seconds). Init scripts and `.cnf` drop-ins reuse the PostgreSQL
 staging rules (NNNN- registration-order prefix, extension whitelist, .sh 0755;
 `/etc/mysql/conf.d` names must end in .cnf — the include glob skips others silently).
-`with_command_arg` values become the container cmd verbatim (the entrypoints forward
+`with_command_arg[s]` values become the container cmd verbatim (the entrypoints forward
 '-'-prefixed args to the server binary). Both `connection_string()`s emit the **mysql://**
 scheme — MariaDB speaks the MySQL wire protocol and URL-parsing clients widely reject
 "mariadb://"; `root_password()` documents the root≡user invariant at call sites. Known
@@ -593,16 +607,21 @@ set (`--replSet rs0 --bind_ip_all`): transactions and change streams are why the
 exists, a standalone rejects both, and the whole cost is a ~1–2s election on top of the
 boot. There is deliberately no standalone mode and no auth surface — MongoDB requires a
 cluster keyfile the moment auth meets a replica set, so MONGO_INITDB_ROOT_* is a
-boot-breaker under --replSet (the header warns customizer users off it; initdb.d scripts
-are equally unsupported — they trigger a temporary double-start whose log line would
-release the wait early). Boot choreography: log wait "Waiting for connections" (exact 4.4+
-casing; appears exactly once since nothing triggers the initdb phase) → listening_port
-(proves the HOST side of the mapping) → a started hook that execs `rs.initiate({_id, 
-members: [{_id: 0, host: '127.0.0.1:27017'}]})` (deterministic self-check member address;
-AlreadyInitialized tolerated for pre-initiated volumes and reuse) and then polls
-`db.hello().isWritablePrimary` in-shell (200×100ms ≈ 20s cap) — the PRIMARY wait cannot be
-a wait strategy because waits run before hooks, i.e. before rs.initiate exists. THE DSN
-decision: `connection_string()` emits
+boot-breaker under --replSet (`with_env` rejects both root keys at render; the header
+warns customizer users off them; initdb.d scripts are equally unsupported — they trigger
+a temporary double-start whose log line would release the wait early). Boot choreography:
+log wait "Waiting for connections" (exact 4.4+ casing; appears exactly once since nothing
+triggers the initdb phase) → listening_port (proves the HOST side of the mapping) → a
+started hook that execs `rs.initiate({_id, members: [{_id: 0, host:
+'127.0.0.1:27017'}]})` (deterministic self-check member address; AlreadyInitialized
+tolerated for pre-initiated volumes and reuse) and then polls
+`db.hello().isWritablePrimary` in-shell on 100ms ticks under a fresh phase budget (the
+configured startup timeout — the same per-phase contract as Kafka's two-phase boot),
+chunked into execs of ~15s so the wall-clock phase deadline is re-evaluated between
+chunks and a transiently failing mongosh retries (the buffered exec itself runs with the
+transport deadline disabled — the hook's steady_clock deadline is the one authority) —
+the PRIMARY wait cannot be a wait strategy because waits run before hooks, i.e. before
+rs.initiate exists. THE DSN decision: `connection_string()` emits
 `mongodb://host:port/<db>?directConnection=true` and NEVER `replicaSet=` —
 direct mode pins single-server behavior in every spec-compliant driver instead of relying
 on per-driver legacy defaults (the "works in tc-java, ServerSelectionTimeoutError in

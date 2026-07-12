@@ -17,7 +17,7 @@
 #include "TestEnv.hpp"
 
 // Tests in this file (integration; require a Linux-containers Docker daemon):
-//   PostgreSQLModule.DefaultsStartAndConnect - defaults start; exec_sql works immediately after start() (the readiness regression a socket probe would flake on); DSN forms render test/test/test.
+//   PostgreSQLModule.DefaultsStartAndConnect - defaults start; exec_sql works immediately after start() (the readiness regression a socket probe would flake on); DSN forms render test/test/test, incl. the connection_string_with_scheme variant.
 //   PostgreSQLModule.TcpProbeSurvivesInitWindow - slow init scripts (pg_sleep) finish before start() returns: the TCP probe cannot false-positive through the temp-server window, so the schema is queryable immediately.
 //   PostgreSQLModule.InitScriptsRunInRegistrationOrder - a script registered first but named last ("z.sql" before "a.sql") runs first: registration order beats the entrypoint's name order.
 //   PostgreSQLModule.InitScriptFromHostFile - a host .sql file is copied into initdb.d and applied.
@@ -104,7 +104,8 @@ TEST_F(PostgreSQLModule, DefaultsStartAndConnect) {
     EXPECT_EQ(pg.database(), "test");
     const std::string origin = pg.host() + ":" + std::to_string(pg.port());
     EXPECT_EQ(pg.connection_string(), "postgresql://test:test@" + origin + "/test");
-    EXPECT_EQ(pg.connection_string("postgres"), "postgres://test:test@" + origin + "/test");
+    EXPECT_EQ(pg.connection_string_with_scheme("postgres"),
+              "postgres://test:test@" + origin + "/test");
     EXPECT_EQ(pg.conninfo(), "host=" + pg.host() + " port=" + std::to_string(pg.port()) +
                                  " dbname=test user=test password=test");
 }

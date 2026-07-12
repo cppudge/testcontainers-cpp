@@ -332,7 +332,9 @@ three has a Windows-mode test (file modes and privileged exec are Unix concepts
 Module images are Linux-only, so the Windows columns are n/a by construction —
 the `tc_module_tests` exe runs on the Windows CI job solely to prove the engine
 guards self-skip. Rendering rules (cmd/env ownership, customizer precedence,
-idempotence) are unit-tested per module via `to_generic()`.
+idempotence) are unit-tested per module via `to_generic()`. The modules umbrella
+header (`testcontainers/modules.hpp`) is compile-checked by the Redis unit TU,
+which includes it in place of the individual header.
 
 | Function | Works on Linux | Works on Windows | Integration-tested (Linux) | Integration-tested (Windows) |
 |---|---|---|---|---|
@@ -340,7 +342,8 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `RedisContainer()` defaults + `start()` | ✅ | n/a (Linux image) | ✅ RedisModule.StartsServesAndBuildsDsn | n/a |
 | `RedisContainer::with_image` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.WithImageRewritesReference) | n/a |
 | `RedisContainer::with_password` | ✅ | n/a | ✅ RedisModule.PasswordIsEnforcedAndWired | n/a |
-| `RedisContainer::with_command_args` | ✅ | n/a | ✅ RedisModule.CommandArgsReachTheServer | n/a |
+| `RedisContainer::with_command_arg[s]` | ✅ | n/a | ✅ RedisModule.CommandArgsReachTheServer (batch form; single twin unit-tested: RedisModuleConfig.CommandArgSingleTwinAccumulates) | n/a |
+| `RedisContainer` pass-throughs (env/label/network/alias/reuse/timeout/attempts) | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.PassThroughsLandOnTheImage, RedisModuleConfig.ManagedAuthEnvConflictThrowsAtRender; thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
 | `RedisContainer::with_customizer` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.CustomizerRunsLastAndWins — pure rendering, no daemon interaction of its own) | n/a |
 | `RedisContainer::to_generic` | ✅ | n/a | ❌ (unit-tested: RedisModuleConfig.* — `start()` goes through it) | n/a |
 | `StartedRedis::host` / `port` / `connection_string` / `password` | ✅ | n/a | ✅ RedisModule.StartsServesAndBuildsDsn, RedisModule.PasswordIsEnforcedAndWired | n/a |
@@ -353,12 +356,12 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `PostgreSQLContainer::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: PostgreSQLModuleConfig.CustomWaitReplacesDefaultProbe, PostgreSQLModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
 | `PostgreSQLContainer` other pass-throughs (label/network/alias/timeout/attempts) | ✅ | n/a | ❌ (thin forwards to core setters, each integration-tested under GenericImage above) | n/a |
 | `PostgreSQLContainer::with_customizer` / `to_generic` | ✅ | n/a | ✅ PostgreSQLModule.CustomizerReachesCreateBody | n/a |
-| `StartedPostgreSQL::host` / `port` / `connection_string` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
+| `StartedPostgreSQL::host` / `port` / `connection_string[_with_scheme]` / `conninfo` | ✅ | n/a | ✅ PostgreSQLModule.DefaultsStartAndConnect, PostgreSQLModule.HostSidePgHandshake | n/a |
 | `StartedPostgreSQL::exec_sql` | ✅ | n/a | ✅ every PostgreSQLModule test | n/a |
 | `MySQLContainer()` defaults + `start()` | ✅ | n/a | ✅ MySQLModule.DefaultsBootAndConnect | n/a |
 | `MySQLContainer::with_username/password/database` (incl. root modes) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts, MySQLModule.RootOnlyModes | n/a |
 | `MySQLContainer::with_init_script` (host file / in-memory) | ✅ | n/a | ✅ MySQLModule.CustomCredsAndOrderedInitScripts | n/a |
-| `MySQLContainer::with_command_arg` | ✅ | n/a | ✅ MySQLModule.CharsetCommandArg | n/a |
+| `MySQLContainer::with_command_arg[s]` | ✅ | n/a | ✅ MySQLModule.CharsetCommandArg (batch twin unit-tested: MySqlFamilyConfig.CommandArgsBecomeCmd) | n/a |
 | `MySQLContainer::with_config_file` | ✅ | n/a | ❌ (unit-tested staging: MySqlFamilyConfig.InitScriptsAndConfigFilesStageOrderedAndValidated; the copy mechanics are MariaDB-integration-tested — shared core) | n/a |
 | `MariaDBContainer()` defaults + `start()` (healthcheck.sh wait) | ✅ | n/a | ✅ MariaDBModule.DefaultsBootAndConnect | n/a |
 | `MariaDBContainer::with_init_script` / `with_config_file` | ✅ | n/a | ✅ MariaDBModule.InitScriptAndConfigFile | n/a |
@@ -367,7 +370,7 @@ idempotence) are unit-tested per module via `to_generic()`.
 | `KafkaContainer()` defaults + `start()` (two-phase boot) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.AdvertisedListenersCarryMappedPort (the mapped-port money test), KafkaModule.ProduceConsumeRoundTrip | n/a |
 | `KafkaContainer::with_topic` | ✅ | n/a | ✅ KafkaModule.WithTopicPreCreatesPartitions | n/a |
 | `KafkaContainer::with_network` / `with_network_alias` (advertised internal listener) | ✅ | n/a | ✅ KafkaModule.TwoContainersOverNetwork | n/a |
-| `KafkaContainer::with_env` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, cluster-id validation, starter script, placeholder command, topics label) | n/a |
+| `KafkaContainer::with_env` / `with_label` / `with_cluster_id` / `with_customizer` / `to_generic` + detail helpers | ✅ | n/a | ❌ (unit-tested: KafkaModuleConfig.*, KafkaDetail.* — env order, label order vs the reserved topics label, cluster-id validation, starter script, placeholder command) | n/a |
 | `StartedKafka` getters (`bootstrap_servers` bare host:port, `internal_bootstrap_servers`, `cluster_id`) | ✅ | n/a | ✅ KafkaModule.StartsAndExposesBootstrap, KafkaModule.TwoContainersOverNetwork | n/a |
 | `RabbitMQContainer()` defaults + `start()` (ordered log→exec readiness) | ✅ | n/a | ✅ RabbitMQModule.DefaultsStartAndUrls | n/a |
 | `RabbitMQContainer::with_username/password/vhost` | ✅ | n/a | ✅ RabbitMQModule.CustomCredentialsAndVhost | n/a |

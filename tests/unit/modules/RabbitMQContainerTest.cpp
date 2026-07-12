@@ -20,6 +20,7 @@
 //   RabbitMQModuleConfig.DefinitionsHostFileValidatesJsonExtension - a non-.json host file throws at registration (the broker imports the directory as JSON).
 //   RabbitMQModuleConfig.PluginsRenderStartedHook - with_plugin registers exactly one started hook plus an order-normalized reuse-visibility label; no plugins, no hook, no label.
 //   RabbitMQModuleConfig.ValidationFailsFast - empty username, password (the broker prohibits blank-password logins), or vhost throws Error at render.
+//   RabbitMQModuleConfig.EnvAndLabelPassThroughsKeepModuleEntriesLast - with_env lands before the managed trio (the image's bash entrypoint applies the last duplicate, so the typed setters win) and the reuse label is appended after user labels.
 //   RabbitMQModuleConfig.CustomizerRunsLastAndWins - a customizer sees the rendered builder (ordered waits in place) and its settings win.
 //   RabbitMQModuleConfig.RenderingIsIdempotent - repeated to_generic() calls render equal env/copies/waits (the seed is not re-appended).
 
@@ -138,6 +139,22 @@ TEST(RabbitMQModuleConfig, ValidationFailsFast) {
     EXPECT_THROW(RabbitMQContainer().with_username("").to_generic(), Error);
     EXPECT_THROW(RabbitMQContainer().with_password("").to_generic(), Error);
     EXPECT_THROW(RabbitMQContainer().with_vhost("").to_generic(), Error);
+}
+
+TEST(RabbitMQModuleConfig, EnvAndLabelPassThroughsKeepModuleEntriesLast) {
+    const GenericImage generic = RabbitMQContainer()
+                                     .with_env("RABBITMQ_DEFAULT_USER", "raw")
+                                     .with_username("app")
+                                     .with_label("team", "messaging")
+                                     .with_plugin("rabbitmq_shovel")
+                                     .to_generic();
+
+    // The managed trio is appended after pass-through env: the image's bash
+    // entrypoint applies the last duplicate, so the typed setter wins.
+    EXPECT_EQ(env_last_value(generic, "RABBITMQ_DEFAULT_USER"), "app");
+    ASSERT_EQ(generic.labels().size(), 2u);
+    EXPECT_EQ(generic.labels()[0].first, "team");
+    EXPECT_EQ(generic.labels()[1].first, "org.testcontainers.rabbitmq.plugins");
 }
 
 TEST(RabbitMQModuleConfig, CustomizerRunsLastAndWins) {

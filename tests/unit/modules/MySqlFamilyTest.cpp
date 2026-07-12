@@ -22,7 +22,7 @@
 //   MySqlFamilyConfig.ManagedMatrixAppendedLastWinsOverRawEnv - a raw with_env duplicate of a managed key is kept but the module's entry lands after it (bash entrypoints apply the last duplicate), and distinct credential values map to their distinct env keys.
 //   MySqlFamilyConfig.EmptyDatabaseOmitsEnvKey - with_database("") emits no *_DATABASE key.
 //   MySqlFamilyConfig.InitScriptsAndConfigFilesStageOrderedAndValidated - init scripts get NNNN- registration-order prefixes and .sh mode 0755; config files land in /etc/mysql/conf.d; unknown init extensions and non-.cnf config names throw.
-//   MySqlFamilyConfig.CommandArgsBecomeCmd - with_command_arg values become the container cmd verbatim (the entrypoint forwards '-'-prefixed args to the server).
+//   MySqlFamilyConfig.CommandArgsBecomeCmd - with_command_arg / with_command_args (the batch twin) values interleave in call order and become the container cmd verbatim (the entrypoint forwards '-'-prefixed args to the server).
 //   MySqlFamilyConfig.CustomWaitReplacesProbeAndCustomizerWins - with_wait drops the default probe; a customizer runs last and its settings win.
 //   MySqlFamilyConfig.RenderingIsIdempotent - repeated to_generic() calls render equal env/cmd/copies.
 
@@ -187,6 +187,15 @@ TEST(MySqlFamilyConfig, CommandArgsBecomeCmd) {
                                      .to_generic();
     EXPECT_EQ(generic.cmd(), (std::vector<std::string>{"--character-set-server=utf8mb4",
                                                        "--collation-server=utf8mb4_unicode_ci"}));
+
+    // The batch twin interleaves with the single form in call order (same
+    // spelling pair as Redis).
+    const GenericImage mariadb = MariaDBContainer()
+                                     .with_command_arg("--max-connections=42")
+                                     .with_command_args({"--skip-name-resolve", "--general-log=1"})
+                                     .to_generic();
+    EXPECT_EQ(mariadb.cmd(), (std::vector<std::string>{"--max-connections=42",
+                                                       "--skip-name-resolve", "--general-log=1"}));
 }
 
 TEST(MySqlFamilyConfig, CustomWaitReplacesProbeAndCustomizerWins) {

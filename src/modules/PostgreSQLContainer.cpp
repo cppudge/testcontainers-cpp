@@ -282,7 +282,7 @@ StartedPostgreSQL PostgreSQLContainer::start() const {
     return StartedPostgreSQL(to_generic().start(), username_, password_, database_);
 }
 
-std::string StartedPostgreSQL::connection_string(const std::string& scheme) const {
+std::string StartedPostgreSQL::connection_string_with_scheme(const std::string& scheme) const {
     ConnectionString url(scheme);
     url.with_user(username_);
     if (!password_.empty()) {

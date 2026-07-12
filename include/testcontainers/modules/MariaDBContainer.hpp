@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/GenericImage.hpp"
@@ -99,6 +100,15 @@ public:
     /// 3306 inside the container).
     MariaDBContainer& with_command_arg(std::string arg) {
         opts_.command_args.push_back(std::move(arg));
+        return *this;
+    }
+
+    /// Append several server options at once — the batch twin of
+    /// `with_command_arg`. Repeatable; calls accumulate in order.
+    MariaDBContainer& with_command_args(std::vector<std::string> args) {
+        for (std::string& arg : args) {
+            opts_.command_args.push_back(std::move(arg));
+        }
         return *this;
     }
 

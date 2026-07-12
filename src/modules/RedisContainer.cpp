@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "testcontainers/ConnectionString.hpp"
+#include "testcontainers/Error.hpp"
 #include "testcontainers/WaitFor.hpp"
 
 namespace testcontainers::modules {
@@ -38,12 +39,72 @@ RedisContainer& RedisContainer::with_command_args(std::vector<std::string> args)
     return *this;
 }
 
+RedisContainer& RedisContainer::with_command_arg(std::string arg) {
+    args_.push_back(std::move(arg));
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_env(std::string key, std::string value) {
+    image_.with_env(std::move(key), std::move(value));
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_label(std::string key, std::string value) {
+    image_.with_label(std::move(key), std::move(value));
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_network(std::string network) {
+    image_.with_network(std::move(network));
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_network(const Network& network) {
+    image_.with_network(network);
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_network_alias(std::string alias) {
+    image_.with_network_alias(std::move(alias));
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_reuse(bool reuse) {
+    image_.with_reuse(reuse);
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_startup_timeout(std::chrono::milliseconds timeout) {
+    image_.with_startup_timeout(timeout);
+    return *this;
+}
+
+RedisContainer& RedisContainer::with_startup_attempts(int n) {
+    image_.with_startup_attempts(n);
+    return *this;
+}
+
 RedisContainer& RedisContainer::with_customizer(std::function<void(GenericImage&)> customize) {
     customizers_.push_back(std::move(customize));
     return *this;
 }
 
 GenericImage RedisContainer::to_generic() const {
+    if (!password_.empty()) {
+        // Fail fast: REDISCLI_AUTH is read by EXEC'D processes (the probe's
+        // redis-cli, user execs), where glibc getenv returns the FIRST
+        // duplicate of a key — a raw with_env entry would beat the module's
+        // appended copy and desync the probe from --requirepass.
+        for (const auto& [key, value] : image_.env()) {
+            if (key == "REDISCLI_AUTH") {
+                throw Error(
+                    "REDISCLI_AUTH is managed by with_password: a raw with_env entry would win "
+                    "over the module's in exec'd processes (the first duplicate wins there) and "
+                    "desync the readiness probe — drop the with_env call");
+            }
+        }
+    }
+
     // Render into a COPY: repeated to_generic()/start() calls must never
     // accumulate state in the config.
     GenericImage generic = image_;
@@ -61,9 +122,10 @@ GenericImage RedisContainer::to_generic() const {
     if (!password_.empty()) {
         // Container-level env: in-container redis-cli — the readiness probe
         // and user execs — reads it and authenticates without an -a flag on
-        // its command line. The module emits this key exactly once
-        // (duplicate-key resolution is process-dependent: bash entrypoints
-        // see the last occurrence, exec'd glibc processes the first).
+        // its command line. The validation above guarantees this stays the
+        // only occurrence (duplicate-key resolution is process-dependent:
+        // bash entrypoints see the last occurrence, exec'd glibc processes
+        // the first — redis-cli is the latter).
         generic.with_env("REDISCLI_AUTH", password_);
     }
     // Customizers last: what the escape hatch sets wins over the module's

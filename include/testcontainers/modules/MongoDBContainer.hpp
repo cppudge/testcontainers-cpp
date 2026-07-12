@@ -77,6 +77,22 @@ public:
 
     // --- Pass-throughs to the underlying builder ---
 
+    /// Set an extra environment variable (TZ and friends). Do not set
+    /// MONGO_INITDB_ROOT_USERNAME / MONGO_INITDB_ROOT_PASSWORD here: an
+    /// auth-enabled replica-set member refuses to start without a cluster
+    /// keyfile (see the class note), so `start()` throws up front on either
+    /// key. The other MONGO_INITDB_* keys only affect initdb.d scripts,
+    /// which this module deliberately does not stage.
+    MongoDBContainer& with_env(std::string key, std::string value) {
+        image_.with_env(std::move(key), std::move(value));
+        return *this;
+    }
+
+    MongoDBContainer& with_label(std::string key, std::string value) {
+        image_.with_label(std::move(key), std::move(value));
+        return *this;
+    }
+
     /// Join a user-defined network; peers resolve this container by
     /// name/alias at `<alias>:27017` (kPort, not the mapped host port).
     MongoDBContainer& with_network(std::string network) {
@@ -98,9 +114,11 @@ public:
         return *this;
     }
 
-    /// Budget for the container-level readiness phase (default: 60s; the
-    /// replica-set initiation that follows carries its own ~20s cap). Image
-    /// pull time does not count against it.
+    /// Budget for EACH of the two startup phases — the container-level
+    /// readiness wait, and the replica-set initiation (rs.initiate + the
+    /// PRIMARY election poll) that follows it — so the worst-case total is
+    /// about twice this. Default 60s per phase. Image pull time does not
+    /// count against it.
     MongoDBContainer& with_startup_timeout(std::chrono::milliseconds timeout) {
         image_.with_startup_timeout(timeout);
         return *this;
@@ -137,8 +155,9 @@ public:
     /// hatch when you need a raw `Container` instead of a StartedMongoDB.
     /// Extend the result, don't rebuild it: replacing the command or the
     /// hooks disables the replica-set choreography. Throws Error on an
-    /// invalid config (a replica-set name outside [A-Za-z0-9_-]) before any
-    /// daemon contact.
+    /// invalid config (a replica-set name outside [A-Za-z0-9_-];
+    /// MONGO_INITDB_ROOT_* env set through with_env) before any daemon
+    /// contact.
     GenericImage to_generic() const;
 
     /// Create and start the container, initiate the replica set, and wait
