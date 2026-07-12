@@ -259,6 +259,7 @@ if(TC_BUILD_MODULES)
         src/modules/ClickHouse.cpp
         src/modules/KafkaDetail.cpp
         src/modules/Kafka.cpp
+        src/modules/MinIO.cpp
         src/modules/ModuleDetail.cpp
         src/modules/MongoDB.cpp
         src/modules/Mosquitto.cpp
@@ -269,6 +270,7 @@ if(TC_BUILD_MODULES)
         src/modules/PostgreSQL.cpp
         src/modules/RabbitMQ.cpp
         src/modules/Redis.cpp
+        src/modules/RustFS.cpp
     )
     add_library(testcontainers::modules ALIAS testcontainers_modules)
     # Installed/exported as testcontainers::modules, not ::testcontainers_modules.
@@ -372,6 +374,7 @@ if(BUILD_TESTING)
         target_sources(tc_unit_tests PRIVATE
             tests/unit/modules/ClickHouseTest.cpp
             tests/unit/modules/KafkaTest.cpp
+            tests/unit/modules/MinIOTest.cpp
             tests/unit/modules/MongoDBTest.cpp
             tests/unit/modules/MosquittoTest.cpp
             tests/unit/modules/MySqlFamilyTest.cpp
@@ -379,6 +382,7 @@ if(BUILD_TESTING)
             tests/unit/modules/PostgreSQLTest.cpp
             tests/unit/modules/RabbitMQTest.cpp
             tests/unit/modules/RedisTest.cpp
+            tests/unit/modules/RustFSTest.cpp
         )
         target_link_libraries(tc_unit_tests PRIVATE testcontainers::modules)
     endif()
@@ -442,6 +446,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/ClickHouseModuleTest.cpp
                 tests/integration/modules/KafkaModuleTest.cpp
                 tests/integration/modules/MariaDBModuleTest.cpp
+                tests/integration/modules/MinIOModuleTest.cpp
                 tests/integration/modules/MongoDBModuleTest.cpp
                 tests/integration/modules/MosquittoModuleTest.cpp
                 tests/integration/modules/MySQLModuleTest.cpp
@@ -449,6 +454,7 @@ if(BUILD_TESTING)
                 tests/integration/modules/PostgreSQLModuleTest.cpp
                 tests/integration/modules/RabbitMQModuleTest.cpp
                 tests/integration/modules/RedisModuleTest.cpp
+                tests/integration/modules/RustFSModuleTest.cpp
             )
             target_link_libraries(tc_module_tests PRIVATE
                 testcontainers::modules

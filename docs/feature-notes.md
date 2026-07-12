@@ -771,6 +771,76 @@ reuse hash covers everything; adopted containers keep data, init scripts not re-
 scope: clusters/replicas/Keeper, the MySQL/PostgreSQL wire-emulation ports (9004/9005, off
 in the default config), typed access-management toggle (rides with_env).
 
+**MinIO module** (2026-07-13, `modules::MinIOImage` → `modules::MinIOContainer`, wave 2) —
+pinned `minio/minio:RELEASE.2025-09-07T16-13-09Z`, and the pin is FROZEN by upstream, not by
+us: MinIO stopped publishing community images 2025-10 and put the community edition in
+maintenance mode, so this is the final tag — there is no routine bump, and it predates the
+source-only CVE-2025-62506 fix (privilege escalation requiring valid credentials; a
+non-issue for a throwaway test server on ephemeral localhost ports — documented, with
+with_image as the escape to a patched rebuild). Ports 9000 (S3) + 9001 (console); the module
+OWNS cmd `server /data --console-address :9001` because without the flag the server picks a
+RANDOM console port each boot — fixing it is what makes exposing 9001 possible (a customizer
+replacing the cmd is documented to orphan console_url()). Credentials minioadmin/minioadmin —
+the house test/test is impossible: the server hard-rejects access keys < 3 and secret keys
+< 8 chars at boot (verified live: FATAL "Invalid credentials"; also: setting only ONE of the
+pair while the other is unset is itself fatal — the module always renders both), so the
+render-time guard mirrors exactly those rules. DB env rule (MINIO_ROOT_USER/PASSWORD
+appended LAST — the entrypoint is `sh` + `exec "$@"`, last duplicate wins; the deprecated
+MINIO_ACCESS_KEY/SECRET_KEY spellings are ignored by the pinned server — doc note, no
+guard). Readiness = wait_for::http("/minio/health/cluster", 9000) through the PUBLISHED
+port: cluster is the ONE unauthenticated health endpoint gated on the object layer having
+write quorum (on a single node: initialized and writable; 503 before), while /live and
+/ready answer as soon as HTTP serves. `with_bucket` is the hook module of the pair:
+post-ready, the started hook runs the in-image `mc` — and the MC_HOST_<alias> env form the
+design planned DOES NOT survive real credentials (verified live: mc signs with the URL text
+VERBATIM — percent-encoded creds fail auth, raw special chars break the URL parse), so the
+hook uses `mc alias set tc http://127.0.0.1:9000 <key> <secret>` with creds as plain argv
+(no encoding anywhere), which ALSO round-trips an authenticated call — wrong plumbing fails
+start() loudly — then `mc mb --ignore-existing tc/<bucket>` per bucket. The alias persists
+in the container's mc config (MC_CONFIG_DIR=/tmp/.mc baked in the image), so follow-up
+test/user execs address `tc/<bucket>` directly. Hook-only state → reuse label
+org.testcontainers.minio.buckets, SORTED comma-join (unlike Kafka's registration-order
+topics label: bucket creation is order-independent, so the hash shouldn't churn on
+registration order). Integration proof: a real S3 PUT/GET through in-image mc (cp + cat), a
+host-side /minio/health/live GET, both buckets via mc ls, URL-hostile credentials
+(s3cr@t/pw+8) with the hook as the positive proof and a wrong-secret `mc alias set` as the
+negative, console GET / == 200. Out of scope: with_bucket policies/versioning, TLS (default
+probe is plain HTTP; with_wait replaces), MINIO_DOMAIN virtual-host addressing (needs
+wildcard DNS).
+
+**RustFS module** (2026-07-13, `modules::RustFSImage` → `modules::RustFSContainer`, wave 2) —
+pinned `rustfs/rustfs:1.0.0-beta.8` (Apache-2.0 MinIO alternative in Rust; NO stable line
+exists yet — the newest beta by deliberate policy, re-checked against Docker Hub at
+implementation: beta.8 is still newest, `latest` points at it; pin moves with upstream
+betas until 1.0.0 GA, then freezes on GA; `-glibc` twins exist, default tags are
+Alpine/musl). The MinIO getter-vocabulary SIBLING on purpose — host()/s3_port()/
+console_port()/access_key()/secret_key()/s3_url()/console_url(), with_access_key/
+with_secret_key — swapping the image class is the whole migration (the wave-2 design docs
+disagreed with each other here: minio.md sketched kPort/port()/s3_url(), rustfs.md
+kS3Port/s3_port()/s3_endpoint(); implementation aligned BOTH on kS3Port/s3_port()/s3_url() —
+two-port modules get qualified port names, and url is the house URL-getter suffix). No
+shared S3-family base class: the modules share vocabulary, not contract (different env,
+health path, command, validation) — revisit only if a third S3 module lands. Ports 9000
+(S3) + 9001 (console), commandless boot (entrypoint launches against baked
+RUSTFS_VOLUMES=/data). Credentials rustfsadmin/rustfsadmin (the image default — the
+zero-config path survives another env-handling regression; the beta line ONCE ignored the
+credential env, issues #375/#1058), DB env rule (RUSTFS_ACCESS_KEY/SECRET_KEY appended
+LAST; entrypoint is `sh` + `exec "$@"`). Emptiness-only render guard — verified live: the
+server imposes NO length rules (1-char keys boot AND authenticate), unlike sibling MinIO.
+Readiness = wait_for::http("/health", 9000) (the project's own compose healthcheck path;
+answers 200 with a storage/IAM/lock ready report), chosen over the log-banner wait other
+ports use — log text is the least stable API a beta has. Console quirk verified live: 9001
+answers 403 at `/`, the UI lives under /rustfs/console/ — console_url() INCLUDES the
+prefix. No hooks → no reuse label; no with_bucket (the image ships curl + sh but no S3 CLI,
+and SigV4-by-hand is not test-helper material — an SDK client creates buckets in one call).
+Integration proof: /health 200 + "ready":true and anonymous GET / == 403 host-side (the
+auth layer answering is more than /health proves), console 200 under the prefix, and the
+credential canary ACROSS a user-defined network — the sibling MinIO module's mc, aliased at
+http://s3:9000 (`mc alias set` round-trips an authenticated call), accepts the custom pair,
+creates a bucket, and rejects a wrong secret; the cross-module test doubles as the
+network-alias proof. Out of scope: with_bucket (above), TLS (with_wait replaces the plain
+HTTP probe), distributed/multi-volume layouts.
+
 ## Compose & Windows
 
 **Docker Compose** (`DockerComposeContainer`) — three client modes: Local (DEFAULT — shells out

@@ -33,5 +33,6 @@ testcontainers::modules::PostgreSQLImage, testcontainers::modules::MySQLImage,
 testcontainers::modules::MariaDBImage, testcontainers::modules::KafkaImage,
 testcontainers::modules::RabbitMQImage, testcontainers::modules::MongoDBImage,
 testcontainers::modules::NATSImage, testcontainers::modules::MosquittoImage,
-testcontainers::modules::ClickHouseImage — each with its started-handle twin
+testcontainers::modules::ClickHouseImage, testcontainers::modules::MinIOImage,
+testcontainers::modules::RustFSImage — each with its started-handle twin
 (`RedisContainer`, …).

@@ -402,6 +402,17 @@ which includes it in place of the individual header.
 | `ClickHouseImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: ClickHouseModuleConfig.CustomWaitReplacesDefaultProbe, ClickHouseModuleConfig.CredentialTrioAppendedLastWinsOverRawEnv) | n/a |
 | `ClickHouseImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: ClickHouseModuleConfig.CustomizerRunsLastAndWins, ClickHouseModuleConfig.PassThroughsLandOnTheImage, ClickHouseModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
 | `ClickHouseContainer` getters (`connection_string` clickhouse://, `http_url`) + `exec_sql` | ✅ | n/a | ✅ ClickHouseModule.DefaultsStartAndConnect, ClickHouseModule.CustomCredentialsAndDsn (+ exec_sql in every ClickHouseModule test but HttpPingFromHost) | n/a |
+| `MinIOImage()` defaults + `start()` (owned cmd + /minio/health/cluster wait) | ✅ | n/a | ✅ MinIOModule.DefaultsStartAndObjectRoundTrip (real S3 PUT/GET via in-image mc), MinIOModule.HealthAnswersFromHost | n/a |
+| `MinIOImage::with_access_key/with_secret_key` | ✅ | n/a | ✅ MinIOModule.CustomCredentialsEnforced (URL-hostile pair accepted, wrong secret rejected; the server's length rules unit-tested: MinIOModuleConfig.CredentialRulesThrowAtRender) | n/a |
+| `MinIOImage::with_bucket` (hook + sorted reuse label) | ✅ | n/a | ✅ MinIOModule.DefaultsStartAndObjectRoundTrip, MinIOModule.BucketsFromRegistrationVisibleViaLs (hook/label rendering unit-tested: MinIOModuleConfig.BucketsRenderHookAndSortedLabel, MinIOModuleConfig.NoBucketsMeansNoHookAndNoLabel) | n/a |
+| `MinIOImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: MinIOModuleConfig.CustomWaitReplacesDefaultProbe, MinIOModuleConfig.CredentialPairAppendedLastWinsOverRawEnv) | n/a |
+| `MinIOImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: MinIOModuleConfig.CustomizerRunsLastAndWins, MinIOModuleConfig.PassThroughsLandOnTheImage, MinIOModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `MinIOContainer` getters (`s3_url`, `console_url`, key pair) + `container()` exec | ✅ | n/a | ✅ MinIOModule.DefaultsStartAndObjectRoundTrip, MinIOModule.ConsoleAnswersFromHost | n/a |
+| `RustFSImage()` defaults + `start()` (commandless boot + /health wait) | ✅ | n/a | ✅ RustFSModule.DefaultsStartHealthAndAuthLayer (health 200 + anonymous 403 host-side) | n/a |
+| `RustFSImage::with_access_key/with_secret_key` | ✅ | n/a | ✅ RustFSModule.CredentialsEnforcedAcrossNetwork (the beta env-regression canary: sibling mc authenticates across a network, wrong secret rejected; empty-field throws unit-tested: RustFSModuleConfig.EmptyCredentialFieldsThrowAtRender) | n/a |
+| `RustFSImage::with_wait` / `with_env` | ✅ | n/a | ❌ (unit-tested: RustFSModuleConfig.CustomWaitReplacesDefaultProbe, RustFSModuleConfig.CredentialPairAppendedLastWinsOverRawEnv) | n/a |
+| `RustFSImage::with_customizer` / other pass-throughs / `to_generic` | ✅ | n/a | ❌ (unit-tested: RustFSModuleConfig.CustomizerRunsLastAndWins, RustFSModuleConfig.PassThroughsLandOnTheImage, RustFSModuleConfig.RenderingIsIdempotent — thin forwards integration-tested under GenericImage above) | n/a |
+| `RustFSContainer` getters (`s3_url`, `console_url` incl. /rustfs/console/ prefix, key pair) | ✅ | n/a | ✅ RustFSModule.DefaultsStartHealthAndAuthLayer, RustFSModule.ConsoleServesUnderPrefix | n/a |
 
 ---
 

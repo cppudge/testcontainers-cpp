@@ -68,6 +68,8 @@ guard theirs with a render-time error instead.
 | [NATS](nats.md) | `NATSImage` → `NATSContainer` | `nats:2.12` | 4222 + 8222 | `url()`, `with_jetstream`, HTTP monitoring API |
 | [Mosquitto](mosquitto.md) | `MosquittoImage` → `MosquittoContainer` | `eclipse-mosquitto:2.0` | 1883 | managed conf (anonymous remote clients), `with_config_option`, `broker_url()` |
 | [ClickHouse](clickhouse.md) | `ClickHouseImage` → `ClickHouseContainer` | `clickhouse:26.3` | 8123 + 9000 | init scripts, config drop-ins, `exec_sql()`, dual HTTP/native endpoints |
+| [MinIO](minio.md) | `MinIOImage` → `MinIOContainer` | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | 9000 + 9001 | S3 endpoint + credential getters, `with_bucket` via the in-image `mc` |
+| [RustFS](rustfs.md) | `RustFSImage` → `RustFSContainer` | `rustfs/rustfs:1.0.0-beta.8` | 9000 + 9001 | MinIO-compatible getter surface, `/health` probe, beta pin |
 
 Headers live under `testcontainers/modules/<Name>.hpp`, one per module (both classes);
 `testcontainers/modules.hpp` includes them all.

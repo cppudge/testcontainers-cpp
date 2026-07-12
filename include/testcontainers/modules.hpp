@@ -8,6 +8,7 @@
 #include "testcontainers/modules/ClickHouse.hpp"
 #include "testcontainers/modules/Kafka.hpp"
 #include "testcontainers/modules/MariaDB.hpp"
+#include "testcontainers/modules/MinIO.hpp"
 #include "testcontainers/modules/MongoDB.hpp"
 #include "testcontainers/modules/Mosquitto.hpp"
 #include "testcontainers/modules/MySQL.hpp"
@@ -15,3 +16,4 @@
 #include "testcontainers/modules/PostgreSQL.hpp"
 #include "testcontainers/modules/RabbitMQ.hpp"
 #include "testcontainers/modules/Redis.hpp"
+#include "testcontainers/modules/RustFS.hpp"

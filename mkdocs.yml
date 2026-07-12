@@ -58,6 +58,8 @@ nav:
       - NATS: modules/nats.md
       - Mosquitto (MQTT): modules/mosquitto.md
       - ClickHouse: modules/clickhouse.md
+      - MinIO: modules/minio.md
+      - RustFS: modules/rustfs.md
   - API reference: https://cppudge.github.io/testcontainers-cpp/api/
 
 markdown_extensions:
