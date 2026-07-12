@@ -115,14 +115,7 @@ void run_redis_roundtrip(DockerComposeContainer& compose) {
 } // namespace
 
 // Requires a reachable Linux Docker daemon; skipped otherwise.
-class Compose : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Compose : public tcit::LinuxEngineTest {};
 
 TEST_F(Compose, LocalClientBringsUpRedis) {
     if (!host_docker_compose_available()) {

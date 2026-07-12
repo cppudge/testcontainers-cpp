@@ -50,21 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ninja + conan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-          pipx install conan
-
-      # The ninja preset keeps the Conan home project-local (./.conan2), so
-      # one cache entry carries all dependency packages. Keyed on the recipe:
-      # a dependency bump invalidates it, restore-keys still seed the rebuild.
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: .conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: conan-${{ runner.os }}-
+      # ninja + conan + the project-local Conan cache, shared across the
+      # Linux jobs (.github/actions/setup-build).
+      - name: Set up build tools + Conan cache
+        uses: ./.github/actions/setup-build
 
       # TC_WERROR hardens the project's -Wall -Wextra into errors on CI only
       # (the option defaults OFF so new-compiler warnings never break users).
@@ -113,23 +102,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ninja + conan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-          pipx install conan
-
-      # Own primary key: this job's graph lacks openssl/libssh2, and a key
-      # shared with the full job would let whichever saves first strip those
-      # packages from the other's cache. restore-keys still seed from it.
-      - name: Cache Conan packages
-        uses: actions/cache@v4
+      # Own primary cache key: this job's graph lacks openssl/libssh2 (the
+      # rationale lives in the composite action's input doc).
+      - name: Set up build tools + Conan cache
+        uses: ./.github/actions/setup-build
         with:
-          path: .conan2
-          key: conan-minimal-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: |
-            conan-minimal-${{ runner.os }}-
-            conan-${{ runner.os }}-
+          cache-key-prefix: conan-minimal
 
       - name: Configure
         run: >
@@ -183,18 +161,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ninja + conan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-          pipx install conan
-
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: .conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: conan-${{ runner.os }}-
+      - name: Set up build tools + Conan cache
+        uses: ./.github/actions/setup-build
 
       - name: Configure
         run: cmake --preset ninja -DTC_WERROR=ON
@@ -474,19 +442,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ninja + conan + clang-tidy (pinned)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-          pipx install conan
-          pipx install clang-tidy==18.1.8
-
-      - name: Cache Conan packages
-        uses: actions/cache@v4
+      - name: Set up build tools + Conan cache (+ pinned clang-tidy)
+        uses: ./.github/actions/setup-build
         with:
-          path: .conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: conan-${{ runner.os }}-
+          extra-pipx: clang-tidy==18.1.8
 
       - name: Configure
         run: cmake --preset ninja
@@ -512,18 +471,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ninja + conan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-          pipx install conan
-
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: .conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: conan-${{ runner.os }}-
+      - name: Set up build tools + Conan cache
+        uses: ./.github/actions/setup-build
 
       # Kernels with 32-bit mmap ASLR entropy break ASan's shadow mapping:
       # the process dies in a recursive "AddressSanitizer:DEADLYSIGNAL" loop

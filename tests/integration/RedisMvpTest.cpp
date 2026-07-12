@@ -20,14 +20,7 @@ using namespace testcontainers;
 using tcit::redis_ping;
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class RedisMvp : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class RedisMvp : public tcit::LinuxEngineTest {};
 
 TEST_F(RedisMvp, StartsConnectsAndAutoRemoves) {
     std::string container_id;

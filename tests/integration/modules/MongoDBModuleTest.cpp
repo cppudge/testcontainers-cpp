@@ -19,14 +19,7 @@ using modules::MongoDBContainer;
 using modules::StartedMongoDB;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class MongoDBModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class MongoDBModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MongoDBModule, BecomesWritablePrimary) {
     const StartedMongoDB mongo = MongoDBContainer().start();

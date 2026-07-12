@@ -81,14 +81,7 @@ char pg_first_reply_byte(const std::string& host, std::uint16_t port, const std:
 } // namespace
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class PostgreSQLModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class PostgreSQLModule : public tcit::LinuxEngineTest {};
 
 TEST_F(PostgreSQLModule, DefaultsStartAndConnect) {
     const StartedPostgreSQL pg = PostgreSQLContainer().start();

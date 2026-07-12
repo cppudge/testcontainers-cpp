@@ -23,14 +23,7 @@ using modules::KafkaContainer;
 using modules::StartedKafka;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class KafkaModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class KafkaModule : public tcit::LinuxEngineTest {};
 
 TEST_F(KafkaModule, StartsAndExposesBootstrap) {
     const StartedKafka kafka = KafkaContainer().start();

@@ -35,14 +35,7 @@ using namespace testcontainers;
 // Requires a reachable Docker daemon; skipped if none is available. The fixture is
 // named `Volumes` (plural) so the gtest suite does not collide with the
 // `testcontainers::Volume` type (same convention as `Networks` in NetworkTest).
-class Volumes : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Volumes : public tcit::LinuxEngineTest {};
 
 TEST_F(Volumes, CreateInspectRemove) {
     Volume v = Volume::create();

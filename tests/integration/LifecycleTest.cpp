@@ -36,14 +36,7 @@ constexpr const char* kImage = "alpine:3.20";
 } // namespace
 
 // Requires a reachable Linux Docker daemon; each test skips if none is available.
-class Lifecycle : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Lifecycle : public tcit::LinuxEngineTest {};
 
 TEST_F(Lifecycle, HooksFireInOrder) {
     std::vector<std::string> order;

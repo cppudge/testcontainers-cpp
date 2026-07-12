@@ -5,6 +5,7 @@
 #include "HostAddress.hpp"
 #include "RandomHex.hpp"
 #include "Reaper.hpp"
+#include "Strings.hpp"
 #include "WaitStrategies.hpp"
 #include "compose/ComposeClients.hpp"
 #include "compose/ComposeCommand.hpp"
@@ -667,13 +668,12 @@ std::string DockerComposeContainer::get_service_container_id(const std::string& 
     const auto& instances = find_service_instances(service);
     const auto it = instances.find(instance);
     if (it == instances.end()) {
-        std::string known;
+        std::vector<std::string> numbers;
+        numbers.reserve(instances.size());
         for (const auto& [number, id] : instances) {
-            if (!known.empty()) {
-                known += ", ";
-            }
-            known += std::to_string(number);
+            numbers.push_back(std::to_string(number));
         }
+        const std::string known = detail::join(numbers, ", ");
         throw DockerError("Compose service '" + service + "' in project '" + project_ +
                           "' has no instance " + std::to_string(instance) +
                           " (running instances: " + known + ")");

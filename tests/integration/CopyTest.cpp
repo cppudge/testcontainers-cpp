@@ -48,14 +48,7 @@
 using namespace testcontainers;
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class Copy : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Copy : public tcit::LinuxEngineTest {};
 
 TEST_F(Copy, CopyAtStartData) {
     // /tmp already exists in the image, so the relative entry "tmp/copied.txt"

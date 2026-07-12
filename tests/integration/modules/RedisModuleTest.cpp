@@ -19,14 +19,7 @@ using modules::RedisContainer;
 using modules::StartedRedis;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class RedisModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class RedisModule : public tcit::LinuxEngineTest {};
 
 TEST_F(RedisModule, StartsServesAndBuildsDsn) {
     const StartedRedis redis = RedisContainer().start();

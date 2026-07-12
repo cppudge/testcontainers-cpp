@@ -1,62 +1,17 @@
 #include "MySqlFamily.hpp"
 
-#include <cctype>
 #include <chrono>
 #include <string_view>
 #include <utility>
 
+#include "ModuleDetail.hpp"
+#include "Strings.hpp"
 #include "testcontainers/ConnectionString.hpp"
 #include "testcontainers/Error.hpp"
 
 namespace testcontainers::modules::detail {
 
 namespace {
-
-/// The extensions both images' entrypoints execute; anything else they SKIP
-/// silently — a green start with an empty schema — so registration refuses
-/// unknown ones up front.
-constexpr std::string_view kInitExtensions[] = {".sql", ".sql.gz", ".sql.xz", ".sql.zst", ".sh"};
-
-bool has_known_init_extension(std::string_view name) {
-    for (const std::string_view ext : kInitExtensions) {
-        if (name.size() > ext.size() && name.ends_with(ext)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/// "0000-name" — both entrypoints run initdb.d files in C-collation name
-/// order, so a zero-padded registration index makes registration order the
-/// execution order (the guards below throw before the index outgrows it).
-std::string indexed_name(std::size_t index, const std::string& name) {
-    std::string digits = std::to_string(index);
-    if (digits.size() < 4) {
-        digits.insert(0, 4 - digits.size(), '0');
-    }
-    return digits + "-" + name;
-}
-
-void stage_init_copy(MySqlFamilyOptions& opts, const std::string& name, CopyToContainer copy) {
-    if (name.ends_with(".sh")) {
-        // Executable, so the entrypoint runs it as a standalone script; a
-        // non-executable .sh is SOURCED into the entrypoint's shell instead
-        // (where a stray `exit` kills the boot).
-        copy.with_mode(0755);
-    }
-    opts.init_scripts.push_back(std::move(copy));
-}
-
-void check_init_name(const MySqlFamilyOptions& opts, const std::string& name) {
-    if (!has_known_init_extension(name)) {
-        throw Error("init script \"" + name +
-                    "\" has an extension the image's entrypoint would silently ignore; "
-                    "use .sql, .sql.gz, .sql.xz, .sql.zst, or .sh");
-    }
-    if (opts.init_scripts.size() >= 10000) {
-        throw Error("too many init scripts (the 0000- ordering prefix is four digits)");
-    }
-}
 
 std::vector<std::string> mysql_ready_probe(const MySqlFamilyOptions& opts) {
     // -h127.0.0.1 forces TCP, which the temporary bootstrap instance
@@ -109,35 +64,19 @@ const MySqlFamilyFlavor& mariadb_flavor() {
 }
 
 bool is_root_username(const std::string& username) {
-    if (username.size() != 4) {
-        return false;
-    }
-    const std::string_view root = "root";
-    for (std::size_t i = 0; i < 4; ++i) {
-        if (std::tolower(static_cast<unsigned char>(username[i])) != root[i]) {
-            return false;
-        }
-    }
-    return true;
+    return testcontainers::detail::to_lower(username) == "root";
 }
 
 void add_init_script(MySqlFamilyOptions& opts, std::filesystem::path host_path) {
-    const std::string name = host_path.filename().string();
-    check_init_name(opts, name);
-    const std::string target =
-        "/docker-entrypoint-initdb.d/" + indexed_name(opts.init_scripts.size(), name);
-    stage_init_copy(opts, name, CopyToContainer::host_file(std::move(host_path), target));
+    // The shared staging pipeline (ModuleDetail) — one copy of the
+    // load-bearing guards for the postgres and mysql/mariadb entrypoints.
+    opts.init_scripts.push_back(stage_init_script(std::move(host_path), opts.init_scripts.size(),
+                                                  "the image's entrypoint"));
 }
 
 void add_init_script(MySqlFamilyOptions& opts, const std::string& name, std::string content) {
-    if (name.empty() || name.find('/') != std::string::npos ||
-        name.find('\\') != std::string::npos) {
-        throw Error("init script name \"" + name + "\" must be a bare file name");
-    }
-    check_init_name(opts, name);
-    const std::string target =
-        "/docker-entrypoint-initdb.d/" + indexed_name(opts.init_scripts.size(), name);
-    stage_init_copy(opts, name, CopyToContainer::content(std::move(content), target));
+    opts.init_scripts.push_back(stage_init_script(
+        name, std::move(content), opts.init_scripts.size(), "the image's entrypoint"));
 }
 
 void add_config_file(MySqlFamilyOptions& opts, std::filesystem::path host_cnf) {

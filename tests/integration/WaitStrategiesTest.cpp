@@ -36,14 +36,7 @@ using namespace testcontainers;
 using namespace std::chrono_literals;
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class WaitStrategies : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class WaitStrategies : public tcit::LinuxEngineTest {};
 
 TEST_F(WaitStrategies, ExitCodeWaitSucceeds) {
     Container c = GenericImage("alpine", "3.20")

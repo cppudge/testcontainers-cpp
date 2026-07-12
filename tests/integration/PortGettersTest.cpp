@@ -23,14 +23,7 @@ using namespace testcontainers;
 
 // alpine won't actually listen on the exposed port, but Docker still PUBLISHES
 // it (publish_all_ports), so the host-port getters resolve a real mapped port.
-class PortGetters : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class PortGetters : public tcit::LinuxEngineTest {};
 
 TEST_F(PortGetters, Ipv4AndDefaultAgree) {
     Container c = GenericImage::from_reference("alpine:3.20")

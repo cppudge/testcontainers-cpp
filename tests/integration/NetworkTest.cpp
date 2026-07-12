@@ -41,14 +41,7 @@
 using namespace testcontainers;
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class Networks : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Networks : public tcit::LinuxEngineTest {};
 
 namespace {
 

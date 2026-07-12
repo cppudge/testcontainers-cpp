@@ -29,14 +29,7 @@ std::string unique_marker() { return "reuse-it-" + detail::random_hex(16); }
 } // namespace
 
 // Requires a reachable Linux Docker daemon; skipped otherwise.
-class Reuse : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Reuse : public tcit::LinuxEngineTest {};
 
 TEST_F(Reuse, ReuseAdoptsRunningContainer) {
     // Enable reuse for this test only; restore the env var afterwards.

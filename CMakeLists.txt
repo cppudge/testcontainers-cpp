@@ -121,6 +121,25 @@ function(tc_apply_warnings target)
     endif()
 endfunction()
 
+# Shared registration tail for a test executable: warnings-as-errors, the
+# Windows socket libs test TUs may open raw sockets with, the portable-CRT
+# define, and the ctest entry whose name doubles as its label. Per-suite
+# sources/links/includes (and their rationale comments) stay at the call
+# sites.
+function(tc_register_test_suite target label)
+    tc_apply_warnings(${target})
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE ws2_32 mswsock)
+    endif()
+    if(MSVC)
+        # Tests call portable getenv/fopen on purpose (the _s variants are
+        # Windows-only); silence the CRT's C4996 deprecation for them.
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    add_test(NAME ${label} COMMAND ${target})
+    set_tests_properties(${label} PROPERTIES LABELS "${label}")
+endfunction()
+
 # ===== Dependencies (provided by Conan / CMakeDeps) =====
 find_package(Boost REQUIRED)            # header-only Beast + Asio
 find_package(nlohmann_json REQUIRED)
@@ -239,6 +258,7 @@ if(TC_BUILD_MODULES)
     add_library(testcontainers_modules
         src/modules/KafkaDetail.cpp
         src/modules/KafkaContainer.cpp
+        src/modules/ModuleDetail.cpp
         src/modules/MongoDBContainer.cpp
         src/modules/MySqlFamily.cpp
         src/modules/MySQLContainer.cpp
@@ -340,15 +360,7 @@ if(BUILD_TESTING)
     )
     # version_test's dependency-report expectations follow the feature set.
     target_compile_definitions(tc_unit_tests PRIVATE ${TC_FEATURE_DEFINES})
-    tc_apply_warnings(tc_unit_tests)
-    add_test(NAME unit COMMAND tc_unit_tests)
-    set_tests_properties(unit PROPERTIES LABELS "unit")
-
-    if(MSVC)
-        # Tests call portable getenv/fopen on purpose (the _s variants are
-        # Windows-only); silence the CRT's C4996 deprecation for them.
-        target_compile_definitions(tc_unit_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-    endif()
+    tc_register_test_suite(tc_unit_tests unit)
 
     if(TC_BUILD_MODULES)
         # Module rendering-rule tests are pure (no daemon) and run with the
@@ -413,15 +425,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
         )
-        tc_apply_warnings(tc_integration_tests)
-        if(WIN32)
-            target_link_libraries(tc_integration_tests PRIVATE ws2_32 mswsock)
-        endif()
-        if(MSVC)
-            target_compile_definitions(tc_integration_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-        endif()
-        add_test(NAME integration COMMAND tc_integration_tests)
-        set_tests_properties(integration PROPERTIES LABELS "integration")
+        tc_register_test_suite(tc_integration_tests integration)
 
         # Ecosystem-module integration tests — their own executable and ctest
         # label from day one: the module suites accumulate heavy image pulls
@@ -454,15 +458,7 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/support
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration
             )
-            tc_apply_warnings(tc_module_tests)
-            if(WIN32)
-                target_link_libraries(tc_module_tests PRIVATE ws2_32 mswsock)
-            endif()
-            if(MSVC)
-                target_compile_definitions(tc_module_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-            endif()
-            add_test(NAME modules COMMAND tc_module_tests)
-            set_tests_properties(modules PROPERTIES LABELS "modules")
+            tc_register_test_suite(tc_module_tests modules)
         endif()
     endif()
 endif()

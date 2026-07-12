@@ -40,14 +40,7 @@
 using namespace testcontainers;
 
 // Requires a reachable Linux Docker daemon; skipped if none is available.
-class BuildImage : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class BuildImage : public tcit::LinuxEngineTest {};
 
 TEST_F(BuildImage, BuildsAndRunsInlineDockerfile) {
     // Build an image that bakes a known string into a file, then runs `cat` on it.

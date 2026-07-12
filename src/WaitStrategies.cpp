@@ -18,6 +18,7 @@
 
 #include "Deadline.hpp"
 #include "HostAddress.hpp"
+#include "Strings.hpp"
 #include "docker/Ports.hpp"
 #include "testcontainers/ContainerPort.hpp"
 #include "testcontainers/Error.hpp"
@@ -425,10 +426,7 @@ void wait_for_command(DockerClient& client, const std::string& id, const wait_fo
         throw DockerError("wait_for::Command requires a non-empty command", std::nullopt, id);
     }
 
-    std::string display = cond.cmd.front();
-    for (std::size_t i = 1; i < cond.cmd.size(); ++i) {
-        display += " " + cond.cmd[i];
-    }
+    const std::string display = detail::join(cond.cmd, " ");
 
     const std::chrono::milliseconds interval =
         cond.poll_interval.count() > 0 ? cond.poll_interval : std::chrono::milliseconds(200);

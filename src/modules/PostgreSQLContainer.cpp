@@ -1,42 +1,16 @@
 #include "testcontainers/modules/PostgreSQLContainer.hpp"
 
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "ModuleDetail.hpp"
 #include "testcontainers/ConnectionString.hpp"
 #include "testcontainers/Error.hpp"
 
 namespace testcontainers::modules {
 
 namespace {
-
-/// The extensions the official entrypoint executes; anything else it SKIPS
-/// silently — the worst failure mode (a green start, an empty schema) — so
-/// the module refuses unknown ones up front.
-constexpr std::string_view kInitExtensions[] = {".sql", ".sql.gz", ".sql.xz", ".sql.zst", ".sh"};
-
-bool has_known_init_extension(std::string_view name) {
-    for (const std::string_view ext : kInitExtensions) {
-        if (name.size() > ext.size() && name.ends_with(ext)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/// "0000-name" — the entrypoint runs initdb.d files in C-collation name
-/// order, so a zero-padded registration index makes registration order the
-/// execution order. Four digits bound the scheme at 10000 scripts (the
-/// registration guards throw before the index could outgrow them).
-std::string indexed_name(std::size_t index, const std::string& name) {
-    std::string digits = std::to_string(index);
-    if (digits.size() < 4) {
-        digits.insert(0, 4 - digits.size(), '0');
-    }
-    return digits + "-" + name;
-}
 
 /// libpq keyword/value quoting: values with whitespace (libpq's parser stops
 /// an unquoted value at ANY isspace character), quotes, backslashes — or
@@ -100,49 +74,17 @@ PostgreSQLContainer& PostgreSQLContainer::with_database(std::string database) {
 }
 
 PostgreSQLContainer& PostgreSQLContainer::with_init_script(std::filesystem::path host_path) {
-    const std::string name = host_path.filename().string();
-    if (!has_known_init_extension(name)) {
-        throw Error("init script \"" + name +
-                    "\" has an extension the postgres entrypoint would silently ignore; "
-                    "use .sql, .sql.gz, .sql.xz, .sql.zst, or .sh");
-    }
-    if (init_scripts_.size() >= 10000) {
-        throw Error("too many init scripts (the 0000- ordering prefix is four digits)");
-    }
-    const std::string target =
-        "/docker-entrypoint-initdb.d/" + indexed_name(init_scripts_.size(), name);
-    CopyToContainer copy = CopyToContainer::host_file(std::move(host_path), target);
-    if (name.ends_with(".sh")) {
-        // Executable, so the entrypoint runs it as a standalone script; a
-        // non-executable .sh is SOURCED into the entrypoint's shell instead
-        // (where a stray `exit` kills the boot).
-        copy.with_mode(0755);
-    }
-    init_scripts_.push_back(std::move(copy));
+    // The shared staging pipeline (ModuleDetail) — one copy of the
+    // load-bearing guards for the postgres and mysql/mariadb entrypoints.
+    init_scripts_.push_back(detail::stage_init_script(std::move(host_path), init_scripts_.size(),
+                                                      "the postgres entrypoint"));
     return *this;
 }
 
 PostgreSQLContainer& PostgreSQLContainer::with_init_script(const std::string& name,
                                                            std::string content) {
-    if (name.empty() || name.find('/') != std::string::npos ||
-        name.find('\\') != std::string::npos) {
-        throw Error("init script name \"" + name + "\" must be a bare file name");
-    }
-    if (!has_known_init_extension(name)) {
-        throw Error("init script \"" + name +
-                    "\" has an extension the postgres entrypoint would silently ignore; "
-                    "use .sql, .sql.gz, .sql.xz, .sql.zst, or .sh");
-    }
-    if (init_scripts_.size() >= 10000) {
-        throw Error("too many init scripts (the 0000- ordering prefix is four digits)");
-    }
-    const std::string target =
-        "/docker-entrypoint-initdb.d/" + indexed_name(init_scripts_.size(), name);
-    CopyToContainer copy = CopyToContainer::content(std::move(content), target);
-    if (name.ends_with(".sh")) {
-        copy.with_mode(0755); // see the host-file overload
-    }
-    init_scripts_.push_back(std::move(copy));
+    init_scripts_.push_back(detail::stage_init_script(
+        name, std::move(content), init_scripts_.size(), "the postgres entrypoint"));
     return *this;
 }
 

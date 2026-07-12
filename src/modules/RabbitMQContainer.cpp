@@ -8,9 +8,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include "ModuleDetail.hpp"
+#include "Strings.hpp"
 #include "testcontainers/ConnectionString.hpp"
 #include "testcontainers/Error.hpp"
-#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/WaitFor.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -56,11 +57,8 @@ RabbitMQContainer& RabbitMQContainer::with_image(const std::string& reference) {
 }
 
 std::string RabbitMQContainer::next_definitions_target() const {
-    std::string digits = std::to_string(500 + definitions_.size());
-    if (digits.size() < 4) {
-        digits.insert(0, 4 - digits.size(), '0');
-    }
-    return std::string(kDefinitionsDir) + "/" + digits + "-definitions.json";
+    return std::string(kDefinitionsDir) + "/" + detail::zero_pad4(500 + definitions_.size()) +
+           "-definitions.json";
 }
 
 RabbitMQContainer& RabbitMQContainer::with_definitions(std::filesystem::path host_json) {
@@ -155,14 +153,8 @@ GenericImage RabbitMQContainer::to_generic() const {
         // instead of silently adopting one without the new plugins.
         std::vector<std::string> sorted_plugins = plugins_;
         std::sort(sorted_plugins.begin(), sorted_plugins.end());
-        std::string label;
-        for (const std::string& plugin : sorted_plugins) {
-            if (!label.empty()) {
-                label += ',';
-            }
-            label += plugin;
-        }
-        generic.with_label("org.testcontainers.rabbitmq.plugins", label);
+        generic.with_label("org.testcontainers.rabbitmq.plugins",
+                           testcontainers::detail::join(sorted_plugins, ","));
 
         const std::vector<std::string> plugins = plugins_;
         generic.with_started_hook([plugins](DockerClient& client, const std::string& id) {
@@ -170,13 +162,7 @@ GenericImage RabbitMQContainer::to_generic() const {
             // silently drop the image's own management/prometheus plugins.
             std::vector<std::string> cmd{"rabbitmq-plugins", "enable", "--quiet"};
             cmd.insert(cmd.end(), plugins.begin(), plugins.end());
-            const ExecResult res = client.exec(id, cmd);
-            if (res.exit_code != 0) {
-                throw DockerError(
-                    "rabbitmq-plugins enable failed (exit " + std::to_string(res.exit_code) +
-                        "): " + (res.stderr_data.empty() ? res.stdout_data : res.stderr_data),
-                    std::nullopt, id);
-            }
+            detail::exec_or_throw(client, id, cmd, "rabbitmq-plugins enable");
         });
     }
 

@@ -19,14 +19,7 @@ using modules::MySQLContainer;
 using modules::StartedMySQL;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class MySQLModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class MySQLModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MySQLModule, DefaultsBootAndConnect) {
     const StartedMySQL db = MySQLContainer().start();

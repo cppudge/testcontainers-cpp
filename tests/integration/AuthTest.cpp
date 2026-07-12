@@ -30,15 +30,9 @@ constexpr const char* kPublicImage = "alpine";
 constexpr const char* kPublicTag = "3.20";
 
 // Skip the whole fixture unless a daemon answers.
-class DockerAuth : public ::testing::Test {
+class DockerAuth : public tcit::LinuxEngineTest {
 protected:
     DockerClient client = DockerClient::from_environment();
-
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
 };
 
 } // namespace

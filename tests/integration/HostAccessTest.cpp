@@ -30,14 +30,7 @@ using namespace testcontainers;
 #include "EngineGuard.hpp"
 
 // Skipped without a Linux-containers daemon (the sshd sidecar image is Linux).
-class HostAccess : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class HostAccess : public tcit::LinuxEngineTest {};
 
 namespace {
 

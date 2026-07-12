@@ -20,14 +20,7 @@ using modules::RabbitMQContainer;
 using modules::StartedRabbitMQ;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class RabbitMQModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class RabbitMQModule : public tcit::LinuxEngineTest {};
 
 TEST_F(RabbitMQModule, DefaultsStartAndUrls) {
     const StartedRabbitMQ rmq = RabbitMQContainer().start();

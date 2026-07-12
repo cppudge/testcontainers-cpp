@@ -42,15 +42,9 @@ struct RemoveGuard {
 } // namespace
 
 // Requires a reachable Docker daemon; each test is skipped if none is available.
-class DockerLogs : public ::testing::Test {
+class DockerLogs : public tcit::LinuxEngineTest {
 protected:
     DockerClient client = DockerClient::from_environment();
-
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
 
     // Poll inspect until the container is no longer running (or we give up).
     void wait_until_exited(const std::string& id) {

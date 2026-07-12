@@ -52,14 +52,7 @@ nlohmann::json container_labels(DockerClient& client, const std::string& id) {
 } // namespace
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class Reaper : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Reaper : public tcit::LinuxEngineTest {};
 
 TEST_F(Reaper, AppliesLabelsAndStartsRyuk) {
     // Starting any container brings the global reaper up and tags the container.

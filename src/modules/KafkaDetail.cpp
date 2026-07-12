@@ -1,5 +1,7 @@
 #include "KafkaDetail.hpp"
 
+#include "Strings.hpp"
+
 namespace testcontainers::modules::detail {
 
 bool valid_kafka_cluster_id(std::string_view id) {
@@ -67,16 +69,13 @@ std::string kafka_starter_script(const std::string& advertised_host, std::uint16
 }
 
 std::string kafka_topics_label(const std::vector<std::pair<std::string, int>>& topics) {
-    std::string label;
+    std::vector<std::string> entries;
+    entries.reserve(topics.size());
     for (const auto& [name, partitions] : topics) {
-        if (!label.empty()) {
-            label += ',';
-        }
-        label += name;
-        label += ':';
-        label += std::to_string(partitions);
+        entries.push_back(name + ":" + std::to_string(partitions));
     }
-    return label;
+    // Fully qualified: modules::detail (this namespace) shadows the core one.
+    return testcontainers::detail::join(entries, ",");
 }
 
 } // namespace testcontainers::modules::detail

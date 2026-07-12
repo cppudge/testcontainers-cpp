@@ -37,15 +37,9 @@ struct RemoveGuard {
 } // namespace
 
 // Requires a reachable Docker daemon; each test is skipped if none is available.
-class DockerLifecycle : public ::testing::Test {
+class DockerLifecycle : public tcit::LinuxEngineTest {
 protected:
     DockerClient client = DockerClient::from_environment();
-
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
 };
 
 TEST_F(DockerLifecycle, CreateStartInspectRemove) {

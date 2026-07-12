@@ -71,6 +71,13 @@ std::string filters_query(char sep,
     return sep + ("filters=" + url_encode(encoded.dump()));
 }
 
+/// The one header set every JSON-body POST shares.
+const std::vector<std::pair<std::string, std::string>>& json_headers() {
+    static const std::vector<std::pair<std::string, std::string>> headers = {
+        {"Content-Type", "application/json"}};
+    return headers;
+}
+
 /// A request carrying the headers every Docker call shares (Host, User-Agent)
 /// with keep-alive off by default — connection-per-request; the Session GET
 /// path re-enables it per request.
@@ -625,8 +632,7 @@ std::string DockerClient::create_container(const CreateContainerSpec& spec,
     const std::string body = docker::build_create_body(spec).dump();
     const std::string target =
         versioned("/containers/create" + docker::build_create_query(spec, url_encode));
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
+    const auto& headers = json_headers();
 
     Response res = request("POST", target, body, headers);
     if (res.status_code == 404 &&
@@ -821,9 +827,7 @@ namespace {
 /// the JSON from build_exec_create_body.
 std::string exec_create(DockerClient& client, const std::string& id, const std::string& target,
                         const std::string& create_body) {
-    const std::vector<std::pair<std::string, std::string>> json_headers = {
-        {"Content-Type", "application/json"}};
-    const Response res = client.request("POST", target, create_body, json_headers);
+    const Response res = client.request("POST", target, create_body, json_headers());
     if (res.status_code != 201) {
         throw_status_error("exec create on container " + id, res, id);
     }
@@ -856,10 +860,8 @@ std::string build_exec_start_body(const ExecOptions& opts) {
 /// with no stream and the command keeps running in the background.
 void exec_start_detached(DockerClient& client, const std::string& exec_id,
                          const std::string& start_target, const ExecOptions& opts) {
-    const std::vector<std::pair<std::string, std::string>> json_headers = {
-        {"Content-Type", "application/json"}};
     const Response res =
-        client.request("POST", start_target, build_exec_start_body(opts), json_headers);
+        client.request("POST", start_target, build_exec_start_body(opts), json_headers());
     if (res.status_code != 200) {
         throw_status_error("exec start " + exec_id, res, exec_id);
     }
@@ -1337,8 +1339,7 @@ DockerClient::create_network(const std::string& name,
 
 std::string DockerClient::create_network(const NetworkCreateSpec& spec) {
     const std::string body = docker::build_network_create_body(spec).dump();
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
+    const auto& headers = json_headers();
 
     const Response res = request("POST", versioned("/networks/create"), body, headers);
     if (res.status_code != 201) {
@@ -1372,8 +1373,7 @@ NetworkInspect DockerClient::inspect_network(const std::string& id) {
 void DockerClient::connect_network(const std::string& network_id, const std::string& container_id,
                                    const std::vector<std::string>& aliases) {
     const std::string body = docker::build_connect_network_body(container_id, aliases).dump();
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
+    const auto& headers = json_headers();
 
     const Response res =
         request("POST", versioned("/networks/" + network_id + "/connect"), body, headers);
@@ -1389,8 +1389,7 @@ void DockerClient::disconnect_network(const std::string& network_id,
     nlohmann::json body;
     body["Container"] = container_id;
     body["Force"] = force;
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
+    const auto& headers = json_headers();
 
     const Response res =
         request("POST", versioned("/networks/" + network_id + "/disconnect"), body.dump(), headers);
@@ -1410,8 +1409,7 @@ void DockerClient::remove_network(const std::string& id) {
 
 std::string DockerClient::create_volume(const VolumeCreateSpec& spec) {
     const std::string body = docker::build_volume_create_body(spec).dump();
-    const std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/json"}};
+    const auto& headers = json_headers();
 
     const Response res = request("POST", versioned("/volumes/create"), body, headers);
     if (res.status_code != 201) {

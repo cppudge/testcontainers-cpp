@@ -22,14 +22,7 @@
 using namespace testcontainers;
 
 // Requires a reachable Docker daemon; skipped if none is available.
-class Tty : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class Tty : public tcit::LinuxEngineTest {};
 
 TEST_F(Tty, LogsAreRawNotFramed) {
     // A TTY container emits a raw, unframed log stream (no 8-byte multiplex

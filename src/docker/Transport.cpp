@@ -81,6 +81,39 @@ std::size_t bounded_io(asio::io_context& ioc,
     return bytes;
 }
 
+/// One bounded async_read_some round-trip on `stream` — the shared body of
+/// every transport's read_some override (the per-transport quirks stay in
+/// the overrides themselves: the named pipe's zero-byte-read EOF mapping,
+/// each class's own cancel).
+template <class Stream, class Cancel>
+std::size_t bounded_read_some(asio::io_context& ioc,
+                              const std::optional<std::chrono::milliseconds>& timeout,
+                              Stream& stream, void* data, std::size_t size,
+                              boost::system::error_code& ec, Cancel cancel) {
+    return bounded_io(
+        ioc, timeout, ec,
+        [&](auto&& handler) {
+            stream.async_read_some(asio::buffer(data, size),
+                                   std::forward<decltype(handler)>(handler));
+        },
+        cancel);
+}
+
+/// The write twin of bounded_read_some.
+template <class Stream, class Cancel>
+std::size_t bounded_write_some(asio::io_context& ioc,
+                               const std::optional<std::chrono::milliseconds>& timeout,
+                               Stream& stream, const void* data, std::size_t size,
+                               boost::system::error_code& ec, Cancel cancel) {
+    return bounded_io(
+        ioc, timeout, ec,
+        [&](auto&& handler) {
+            stream.async_write_some(asio::buffer(data, size),
+                                    std::forward<decltype(handler)>(handler));
+        },
+        cancel);
+}
+
 using detail::duplex_exchange;
 
 /// Resolve host:port within the remaining connect budget. An IP literal skips
@@ -169,23 +202,13 @@ public:
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                socket_.async_read_some(asio::buffer(data, size),
-                                        std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_read_some(ioc_, io_timeout_, socket_, data, size, ec,
+                                 [&] { cancel_pending(); });
     }
     std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                socket_.async_write_some(asio::buffer(data, size),
-                                         std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_write_some(ioc_, io_timeout_, socket_, data, size, ec,
+                                  [&] { cancel_pending(); });
     }
     void shutdown_send() override {
         boost::system::error_code ec;
@@ -287,23 +310,13 @@ public:
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                stream_.async_read_some(asio::buffer(data, size),
-                                        std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_read_some(ioc_, io_timeout_, stream_, data, size, ec,
+                                 [&] { cancel_pending(); });
     }
     std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                stream_.async_write_some(asio::buffer(data, size),
-                                         std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_write_some(ioc_, io_timeout_, stream_, data, size, ec,
+                                  [&] { cancel_pending(); });
     }
     void shutdown_send() override {
         // SSL has no clean half-close: shutting down the underlying TCP send side
@@ -399,23 +412,13 @@ public:
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                socket_.async_read_some(asio::buffer(data, size),
-                                        std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_read_some(ioc_, io_timeout_, socket_, data, size, ec,
+                                 [&] { cancel_pending(); });
     }
     std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                socket_.async_write_some(asio::buffer(data, size),
-                                         std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_write_some(ioc_, io_timeout_, socket_, data, size, ec,
+                                  [&] { cancel_pending(); });
     }
     void shutdown_send() override {
         boost::system::error_code ec;
@@ -500,13 +503,8 @@ public:
     }
 
     std::size_t read_some(void* data, std::size_t size, boost::system::error_code& ec) override {
-        const std::size_t n = bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                handle_.async_read_some(asio::buffer(data, size),
-                                        std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        const std::size_t n = bounded_read_some(ioc_, io_timeout_, handle_, data, size, ec,
+                                                [&] { cancel_pending(); });
         // A successful ZERO-byte read is the peer's half-close arriving: the
         // mirror image of shutdown_send() below — go-winio's CloseWrite is a
         // zero-length message, and dockerd ends a hijacked stream (exec) that
@@ -523,13 +521,8 @@ public:
     }
     std::size_t write_some(const void* data, std::size_t size,
                            boost::system::error_code& ec) override {
-        return bounded_io(
-            ioc_, io_timeout_, ec,
-            [&](auto&& handler) {
-                handle_.async_write_some(asio::buffer(data, size),
-                                         std::forward<decltype(handler)>(handler));
-            },
-            [&] { cancel_pending(); });
+        return bounded_write_some(ioc_, io_timeout_, handle_, data, size, ec,
+                                  [&] { cancel_pending(); });
     }
     void shutdown_send() override {
         // A named pipe has no shutdown() primitive, but on a MESSAGE-type pipe

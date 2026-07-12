@@ -1,0 +1,47 @@
+name: setup-build
+description: >-
+  Shared Linux build setup: ninja + conan via pipx, plus the project-local
+  Conan package cache. Inputs cover the two per-job deviations — the tidy
+  job's extra pinned pipx tool and the minimal-features job's own primary
+  cache key.
+
+inputs:
+  extra-pipx:
+    description: Extra pipx package to install (e.g. clang-tidy==18.1.8)
+    required: false
+    default: ''
+  cache-key-prefix:
+    description: >-
+      Primary Conan cache key prefix. The minimal-features job uses its own
+      ("conan-minimal") — its graph lacks openssl/libssh2, and a key shared
+      with the full job would let whichever saves first strip those packages
+      from the other's cache. restore-keys always also seed from the full
+      job's prefix.
+    required: false
+    default: conan
+
+runs:
+  using: composite
+  steps:
+    - name: Install ninja + conan
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ninja-build
+        pipx install conan
+        if [ -n "${{ inputs.extra-pipx }}" ]; then
+          pipx install "${{ inputs.extra-pipx }}"
+        fi
+
+    # The ninja preset keeps the Conan home project-local (./.conan2), so one
+    # cache entry carries all dependency packages. Keyed on the recipe: a
+    # dependency bump invalidates it, restore-keys still seed the rebuild.
+    # (With the default prefix the two restore keys coincide — harmless.)
+    - name: Cache Conan packages
+      uses: actions/cache@v4
+      with:
+        path: .conan2
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+        restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+          conan-${{ runner.os }}-

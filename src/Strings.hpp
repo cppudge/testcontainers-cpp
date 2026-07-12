@@ -3,6 +3,8 @@
 #include <cctype>
 #include <cstddef>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace testcontainers::detail {
 
@@ -25,6 +27,22 @@ inline std::string to_lower(std::string s) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return s;
+}
+
+/// Join `parts` with `sep`; "" for an empty range. A separator lands between
+/// EVERY pair of elements — empty elements included (join({"", "a"}, ",") is
+/// ",a"), so the element count always survives the round trip.
+inline std::string join(const std::vector<std::string>& parts, std::string_view sep) {
+    std::string out;
+    bool first = true;
+    for (const std::string& part : parts) {
+        if (!first) {
+            out += sep;
+        }
+        first = false;
+        out += part;
+    }
+    return out;
 }
 
 } // namespace testcontainers::detail

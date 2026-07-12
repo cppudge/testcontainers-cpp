@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Deadline.hpp"
+#include "ModuleDetail.hpp"
 #include "testcontainers/ConnectionString.hpp"
 #include "testcontainers/Error.hpp"
 #include "testcontainers/WaitFor.hpp"
@@ -49,13 +50,7 @@ void run_mongo_rs_init(DockerClient& client, const std::string& id, const std::s
         "try { rs.initiate({_id: '" + rs_name +
         "', members: [{_id: 0, host: '127.0.0.1:27017'}]}); } "
         "catch (e) { if (e.codeName !== 'AlreadyInitialized') throw e; }";
-    const ExecResult initiate = client.exec(id, {"mongosh", "--quiet", "--eval", initiate_js});
-    if (initiate.exit_code != 0) {
-        throw DockerError(
-            "rs.initiate failed (exit " + std::to_string(initiate.exit_code) + "): " +
-                (initiate.stderr_data.empty() ? initiate.stdout_data : initiate.stderr_data),
-            std::nullopt, id);
-    }
+    detail::exec_or_throw(client, id, {"mongosh", "--quiet", "--eval", initiate_js}, "rs.initiate");
 
     // The single-node election normally completes well under 2s; the budget
     // (the configured startup timeout — a fresh allowance for this phase,

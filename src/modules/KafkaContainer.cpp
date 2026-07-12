@@ -8,10 +8,10 @@
 
 #include "Deadline.hpp"
 #include "KafkaDetail.hpp"
+#include "ModuleDetail.hpp"
 #include "WaitStrategies.hpp"
 #include "testcontainers/CopyToContainer.hpp"
 #include "testcontainers/Error.hpp"
-#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/WaitFor.hpp"
 #include "testcontainers/docker/DockerClient.hpp"
 
@@ -92,16 +92,12 @@ void run_kafka_boot(DockerClient& client, const std::string& id,
         // The INTERNAL listener on purpose: metadata answered on :9092
         // advertises the host-side address, unreachable from inside the
         // container. No stdin, no TTY — works on every transport.
-        const ExecResult res = client.exec(
-            id, {"/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", internal_bootstrap,
-                 "--create", "--if-not-exists", "--topic", name, "--partitions",
-                 std::to_string(partitions), "--replication-factor", "1"});
-        if (res.exit_code != 0) {
-            throw DockerError("failed to create kafka topic \"" + name + "\" (exit " +
-                                  std::to_string(res.exit_code) + "): " +
-                                  (res.stderr_data.empty() ? res.stdout_data : res.stderr_data),
-                              std::nullopt, id);
-        }
+        detail::exec_or_throw(client, id,
+                              {"/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server",
+                               internal_bootstrap, "--create", "--if-not-exists", "--topic", name,
+                               "--partitions", std::to_string(partitions), "--replication-factor",
+                               "1"},
+                              "creating kafka topic '" + name + "'");
     }
 }
 

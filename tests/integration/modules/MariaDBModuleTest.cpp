@@ -17,14 +17,7 @@ using modules::MariaDBContainer;
 using modules::StartedMariaDB;
 
 // Requires a Linux-containers daemon; skipped otherwise.
-class MariaDBModule : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class MariaDBModule : public tcit::LinuxEngineTest {};
 
 TEST_F(MariaDBModule, DefaultsBootAndConnect) {
     const StartedMariaDB db = MariaDBContainer().start();

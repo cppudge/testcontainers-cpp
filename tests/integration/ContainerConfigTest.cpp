@@ -41,14 +41,7 @@ using namespace testcontainers;
 // short-lived containers below use wait_for::exit(), so start() returns only
 // after the process finishes; logs() then reads its captured output. The
 // Container still auto-removes on scope exit.
-class ContainerConfig : public ::testing::Test {
-protected:
-    void SetUp() override {
-        if (tcit::linux_engine_unavailable()) {
-            GTEST_SKIP(); // no daemon / wrong engine mode; reason not streamed (CI noise)
-        }
-    }
-};
+class ContainerConfig : public tcit::LinuxEngineTest {};
 
 TEST_F(ContainerConfig, WorkingDirAndUser) {
     Container c = GenericImage("alpine", "3.20")
