@@ -1,0 +1,4 @@
+# Docs-site toolchain, installed by .github/workflows/docs.yml. For a local
+# preview: python -m venv .venv && .venv/Scripts/pip install -r docs/requirements.txt
+# && mkdocs serve (run doxygen docs/doxygen/Doxyfile first for the /api/ part).
+mkdocs-material==9.7.6

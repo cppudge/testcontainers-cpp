@@ -2,6 +2,10 @@
 /build/
 /install/
 /out/
+
+# Docs-site build outputs (mkdocs.yml / docs/doxygen/Doxyfile)
+/site/
+/docs/site/api/
 /test_package/build/
 /packaging/conan-center/recipes/testcontainers-cpp/all/test_package/build/
 compile_commands.json

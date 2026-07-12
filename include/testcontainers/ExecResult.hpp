@@ -12,7 +12,7 @@ namespace testcontainers {
 ///
 /// `stdout_data` / `stderr_data` are the demultiplexed output streams; the
 /// fields are named with a `_data` suffix because `stdout` / `stderr` are
-/// reserved macros from <cstdio> on some platforms (notably MSVC).
+/// reserved macros from `<cstdio>` on some platforms (notably MSVC).
 struct ExecResult {
     std::string stdout_data;
     std::string stderr_data;

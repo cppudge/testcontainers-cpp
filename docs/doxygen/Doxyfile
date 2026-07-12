@@ -1,0 +1,58 @@
+# Doxygen configuration for the API reference, deployed at /api/ on the docs
+# site (see mkdocs.yml and .github/workflows/docs.yml). Only overrides of the
+# doxygen defaults are listed. Run FROM THE REPOSITORY ROOT (all paths below
+# are relative to it) with the pinned doxygen version (1.16.x — the newest
+# line the vendored doxygen-awesome v2.4.2 theme supports):
+#
+#   TC_DOCS_VERSION=$(sed -n 's/^set(TC_VERSION_FULL "\(.*\)").*/\1/p' CMakeLists.txt) \
+#     doxygen docs/doxygen/Doxyfile
+#
+# Output lands in docs/site/api/ (gitignored), which `mkdocs build` then copies
+# into the built site as static files.
+
+PROJECT_NAME           = testcontainers-cpp
+PROJECT_NUMBER         = $(TC_DOCS_VERSION)
+PROJECT_BRIEF          = "Native C++20 Testcontainers over the Docker Engine API"
+
+OUTPUT_DIRECTORY       = docs/site
+HTML_OUTPUT            = api
+GENERATE_LATEX         = NO
+
+INPUT                  = include/testcontainers docs/doxygen/mainpage.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = docs/doxygen/mainpage.md
+# Implementation-detail headers and namespaces are not part of the public API.
+EXCLUDE                = include/testcontainers/modules/detail
+EXCLUDE_SYMBOLS        = detail \
+                         *::detail \
+                         *::detail::*
+
+# The headers carry prose /// comments (no @brief tags): the first sentence
+# becomes the brief description.
+JAVADOC_AUTOBRIEF      = YES
+# Public headers are curated — keep their declaration order, don't re-sort.
+SORT_MEMBER_DOCS       = NO
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+BUILTIN_STL_SUPPORT    = YES
+# Identical output file names on Windows and Linux (local preview == CI).
+CASE_SENSE_NAMES       = NO
+# The reference documents the API, not the sources: no embedded header copies.
+VERBATIM_HEADERS       = NO
+SHOW_USED_FILES        = NO
+STRIP_FROM_PATH        = .
+STRIP_FROM_INC_PATH    = include
+# Reproducible output (no generation timestamps in the footer).
+TIMESTAMP              = NO
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# --- doxygen-awesome theme (vendored, v2.4.2, MIT — see the css headers) ---
+# Sidebar-only layout: the required companion settings per the theme's docs.
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_COLORSTYLE        = LIGHT
+HTML_EXTRA_STYLESHEET  = docs/doxygen/doxygen-awesome.css \
+                         docs/doxygen/doxygen-awesome-sidebar-only.css

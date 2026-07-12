@@ -1,0 +1,77 @@
+# Documentation site (MkDocs Material): hand-written guides under docs/site/,
+# plus the Doxygen API reference generated into docs/site/api/ (gitignored) by
+# `doxygen docs/doxygen/Doxyfile` — run BEFORE `mkdocs build` so the reference
+# rides into the built site as static files. Deployed by .github/workflows/docs.yml.
+site_name: testcontainers-cpp
+site_description: >-
+  Native C++20 port of Testcontainers — real Docker containers from your
+  integration tests, over the Docker Engine HTTP API.
+site_url: https://cppudge.github.io/testcontainers-cpp/
+repo_url: https://github.com/cppudge/testcontainers-cpp
+repo_name: cppudge/testcontainers-cpp
+edit_uri: edit/main/docs/site/
+docs_dir: docs/site
+
+theme:
+  name: material
+  icon:
+    logo: material/package-variant-closed
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Core concepts: core-concepts.md
+  - Configuration: configuration.md
+  - Modules:
+      - Overview: modules/index.md
+      - Redis: modules/redis.md
+      - PostgreSQL: modules/postgresql.md
+      - MySQL: modules/mysql.md
+      - MariaDB: modules/mariadb.md
+      - Kafka: modules/kafka.md
+      - RabbitMQ: modules/rabbitmq.md
+      - MongoDB: modules/mongodb.md
+  - API reference: https://cppudge.github.io/testcontainers-cpp/api/
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cppudge/testcontainers-cpp

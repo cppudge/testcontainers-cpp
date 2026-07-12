@@ -208,8 +208,8 @@ public:
     /// reject options without it).
     std::string connection_string(const std::string& database) const;
 
-    /// The replica-set name the server runs under (for `rs.*` assertions or
-    /// hand-built in-network URIs).
+    /// The replica-set name the server runs under (for `rs.status()`-style
+    /// assertions or hand-built in-network URIs).
     const std::string& replica_set_name() const noexcept { return replica_set_name_; }
 
     /// The configured default database name.

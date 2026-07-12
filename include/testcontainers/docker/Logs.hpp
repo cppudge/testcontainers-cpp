@@ -9,8 +9,9 @@ namespace testcontainers {
 /// Options for `GET /containers/{id}/logs`.
 ///
 /// Note: the include-flags are named `include_stdout` / `include_stderr` rather
-/// than `stdout` / `stderr` because the latter are reserved macros from <cstdio>
-/// on some platforms (notably MSVC, where `stdout` expands to a function call).
+/// than `stdout` / `stderr` because the latter are reserved macros from
+/// `<cstdio>` on some platforms (notably MSVC, where `stdout` expands to a
+/// function call).
 /// There is deliberately no `follow` flag here: the snapshot/stream split is
 /// encoded in the method names — `logs()` is always a snapshot, `follow_logs()`
 /// always streams.

@@ -1,0 +1,94 @@
+# Documentation site: MkDocs Material guides (docs/site) + the Doxygen API
+# reference (generated into docs/site/api by docs/doxygen/Doxyfile), deployed
+# to GitHub Pages. Build runs for every push/PR touching the docs inputs;
+# deploy runs for main pushes and manual dispatches only, and requires Pages
+# to be enabled with the "GitHub Actions" source in the repository settings.
+#
+# Doxygen is pinned (1.16.1 + sha256) — the runner's apt version drifts, and
+# the vendored doxygen-awesome theme (docs/doxygen/*.css) supports the 1.16
+# line as its newest; mkdocs-material is pinned in docs/requirements.txt.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'include/**'
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'CMakeLists.txt'   # TC_VERSION_FULL feeds the reference's version stamp
+      - '.github/workflows/docs.yml'
+  # Fork PRs get a build-only check (same guard rationale as ci.yml: same-repo
+  # pushes already build, so the pull_request run is skipped for them). Keep
+  # this list identical to the push list above (YAML anchors are not reliable
+  # in workflow files).
+  pull_request:
+    paths:
+      - 'include/**'
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'CMakeLists.txt'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request'
+        || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install the docs toolchain (pinned)
+        run: |
+          pip install -r docs/requirements.txt
+          curl -fsSL -o /tmp/doxygen.tar.gz \
+            https://github.com/doxygen/doxygen/releases/download/Release_1_16_1/doxygen-1.16.1.linux.bin.tar.gz
+          echo "a56f885d37e3aae08a99f638d17bbb381224c03a878d9e2dda4f9fa4baf1d8bd  /tmp/doxygen.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/doxygen.tar.gz -C /tmp
+          echo "/tmp/doxygen-1.16.1/bin" >> "$GITHUB_PATH"
+
+      - name: Doxygen API reference (docs/site/api)
+        run: |
+          TC_DOCS_VERSION="$(sed -n 's/^set(TC_VERSION_FULL "\(.*\)").*/\1/p' CMakeLists.txt)"
+          test -n "$TC_DOCS_VERSION"
+          export TC_DOCS_VERSION
+          doxygen docs/doxygen/Doxyfile
+
+      - name: MkDocs build (strict)
+        run: mkdocs build --strict
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Never cancel an in-flight Pages deployment; queue instead.
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

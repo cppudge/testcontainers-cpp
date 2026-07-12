@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cppudge/testcontainers-cpp/actions/workflows/ci.yml)
 
+**[Documentation](https://cppudge.github.io/testcontainers-cpp/)** · guides, module
+walkthroughs, and the [API reference](https://cppudge.github.io/testcontainers-cpp/api/)
+generated from the headers.
+
 Native C++20 port of [Testcontainers](https://testcontainers.com/) — spin up real Docker
 containers from your integration tests and tear them down automatically. **No `docker` CLI
 required**: a single C++ library speaking the Docker Engine HTTP API directly, with full
