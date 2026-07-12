@@ -169,7 +169,7 @@ GenericImage NATSImage::to_generic() const {
         cmd.insert(cmd.end(), {"--user", username_, "--pass", password_});
     }
     if (jetstream_) {
-        cmd.push_back("-js");
+        cmd.emplace_back("-js");
     }
     cmd.insert(cmd.end(), args_.begin(), args_.end());
     generic.with_cmd(std::move(cmd));
