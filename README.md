@@ -83,7 +83,7 @@ Then require it from your project's `conanfile.txt` (the package reference is `t
 
 ```ini
 [requires]
-testcontainers-cpp/0.1.0
+testcontainers-cpp/0.2.0
 
 [generators]
 CMakeDeps
@@ -139,7 +139,7 @@ modes:
 
 ## Status
 
-**v0.1.0 — first release; feature-complete core, pre-1.0.** The public API is settled enough to use
+**v0.2.0 — feature-complete core + the first seven ecosystem modules, pre-1.0.** The public API is settled enough to use
 but may still evolve before 1.0. The library is exception-based by design (the `DockerError`
 hierarchy). Implemented and covered by **~560 unit + ~210 integration** tests against a real daemon,
 green on Windows (named pipe) and Linux (unix socket):
@@ -151,7 +151,7 @@ green on Windows (named pipe) and Linux (unix socket):
 - host-port exposure (`with_exposed_host_port` — sshd sidecar + SSH tunnel), and the TLS transport
   (mutual TLS verified end to end in CI)
 - the `testcontainers::modules` layer — Redis, PostgreSQL, MySQL, MariaDB, Kafka, RabbitMQ,
-  MongoDB (on `main`; ships with 0.2.0)
+  MongoDB (typed connection getters; new in 0.2.0)
 
 Known gaps: shared builds are **static-only on Windows** (the sources carry no symbol-export
 macros yet). Per-feature limits are tracked in
