@@ -160,7 +160,8 @@ on Windows only the inline-Dockerfile + build-error round-trip is exercised.
 | `read_file(path)` | ✅ | ✅ [b] | ✅ Copy.ReadFileRoundTrip, Copy.LargeFileRoundTrip, Copy.ReadFileRejectsDirectory | ✅ WindowsCopy.ReadFileRoundTrip, WindowsCopy.LargeFileRoundTrip, WindowsCopy.ReadFileRejectsDirectory |
 | `copy_file_from(path, host)` | ✅ | ✅ [b] | ✅ Copy.CopyFileFromWritesHost | ✅ WindowsCopy.CopyFileFromWritesHost |
 | `resize_tty(size)` | ✅ | ✅ | ✅ Tty.ResizeTtyChangesWindowSize | ❌ (ConPTY resize untested; Linux path covers the client-side wire) |
-| `stop()` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop | ❌ |
+| `stop(timeout_secs)` | ✅ | ✅ | ✅ Lifecycle.StoppingHookFiresOnStop, Lifecycle.StopStartRoundTrip (explicit zero grace) | ❌ |
+| `start()` (restart a stopped handle) | ✅ | ✅ | ✅ Lifecycle.StopStartRoundTrip (incl. the already-running 304 path) | ❌ |
 | `is_running()` | ✅ | ✅ | ✅ RedisMvp, WaitStrategies.* | ✅ WindowsContainer.ExecRunsInRunningContainer |
 | `keep(bool)` | ✅ | ✅ | ✅ Lifecycle.KeepLeavesContainerRunning (+ unit Runner.KeepSkipsRemovalOnDrop, Runner.KeepFalseRearmsRemovalOnDrop) | ❌ (client-side flag; engine-independent) |
 | `inspect(id)` (static) | ✅ | ✅ | ✅ Lifecycle.StaticInspectById (found + NotFoundError) | ❌ (same code path as `inspect_container`) |

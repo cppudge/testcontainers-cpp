@@ -135,7 +135,14 @@ composition over `GenericImage`.
 `with_startup_attempts(n)` (the whole create→start→wait retried, each failed partial removed;
 the reuse-adopt path is not retried; no inter-attempt backoff). A throwing created/starting/
 started hook aborts start() and cleans up; stopping fires once on teardown — never for a
-persistent (reuse) handle — and its exceptions are swallowed.
+persistent (reuse) handle — and its exceptions are swallowed. `Container::stop(timeout_secs)`
+(2026-07-12) forwards the daemon grace period (unset = the container's create-time
+StopTimeout, default 10s; 0 = kill now; negative = wait indefinitely), and
+`Container::start()` restarts a stopped handle through the OWNED client (so a
+custom-daemon container restarts against its own daemon) — a plain daemon start: waits and
+hooks do not re-run, the once-fired stopping hooks stay fired, and ephemeral published
+ports are re-bound (re-resolve via `get_host_port()`; a module's Started* getters keep
+their start()-time values).
 
 **Reaper (Ryuk)** — containers, networks, named volumes, and built images carry the session
 label; compose stacks are covered by an extra per-project filter registered over the same

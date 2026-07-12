@@ -161,11 +161,17 @@ void Container::copy_file_from(const std::string& container_path,
     }
 }
 
-void Container::stop() {
+void Container::stop(std::optional<int> timeout_secs) {
     // Explicit stop is a teardown point: fire the stopping hooks (once) before
     // the container is stopped.
     fire_stopping();
-    client_.stop_container(id_);
+    client_.stop_container(id_, timeout_secs);
+}
+
+void Container::start() {
+    // Through the OWNED client on purpose: a container run against a custom
+    // daemon (run(client, request)) restarts against that same daemon.
+    client_.start_container(id_);
 }
 
 bool Container::is_running() const { return client_.inspect_container(id_).running; }

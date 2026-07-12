@@ -7,6 +7,7 @@
 
 #include "testcontainers/Container.hpp"
 #include "testcontainers/Error.hpp"
+#include "testcontainers/ExecResult.hpp"
 #include "testcontainers/GenericImage.hpp"
 #include "testcontainers/Lifecycle.hpp"
 #include "testcontainers/WaitFor.hpp"
@@ -20,6 +21,7 @@
 //   Lifecycle.HooksFireInOrder - created/starting/started hooks fire once, in that order, each seeing the live container id.
 //   Lifecycle.StoppingHookFiresOnStop - a stopping hook fires when the container is explicitly stopped.
 //   Lifecycle.StartupRetriesOnFailure - with_startup_attempts(2) retries the whole create→start→wait on failure, creating a fresh container each attempt.
+//   Lifecycle.StopStartRoundTrip - stop(0) (explicit zero grace) stops the container, start() brings the same container back (a plain daemon start; exec works again), and a second start() is accepted as already-running.
 //   Lifecycle.KeepLeavesContainerRunning - keep() releases removal ownership: after the handle drops, the container is still running (verified and cleaned up via an adopted RemoveOnDrop handle).
 //   Lifecycle.StaticInspectById - the static Container::inspect(id) reads a running container's state without a handle and throws NotFoundError for an id that does not exist.
 //   WindowsLifecycle.HooksFireInOrder - the same hook ordering against a Windows daemon (the hooks are client-side, but each leg drives real Windows-engine create/start calls).
@@ -102,6 +104,27 @@ TEST_F(Lifecycle, StartupRetriesOnFailure) {
     // Exactly two attempts, each creating a fresh container (the created hook
     // runs once per create).
     EXPECT_EQ(created_count, 2);
+}
+
+TEST_F(Lifecycle, StopStartRoundTrip) {
+    Container c = GenericImage::from_reference(kImage).with_cmd({"sleep", "60"}).start();
+
+    // Explicit zero grace: the container's sleep (PID 1, no SIGTERM handler)
+    // would burn the full grace period before the daemon's SIGKILL — zero
+    // grace just skips that wait.
+    c.stop(0);
+    EXPECT_FALSE(c.is_running());
+
+    // A plain daemon start on the SAME container: no waits or hooks re-run.
+    c.start();
+    EXPECT_TRUE(c.is_running());
+    // exec proves the restarted container is live, not merely flagged running.
+    const ExecResult res = c.exec({"echo", "back"});
+    EXPECT_EQ(res.exit_code, 0);
+    EXPECT_EQ(res.stdout_data, "back\n");
+
+    c.start(); // already running: the daemon's 304 is accepted, not an error
+    EXPECT_TRUE(c.is_running());
 }
 
 TEST_F(Lifecycle, KeepLeavesContainerRunning) {

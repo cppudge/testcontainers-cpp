@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -211,8 +212,21 @@ public:
 
     /// Stop the container (an auto-removing handle still removes it on
     /// destruction; a persistent handle — `with_reuse` / after `keep()` —
-    /// does not).
-    void stop();
+    /// does not). `timeout_secs` is the grace period before the daemon kills
+    /// the process: unset uses the container's create-time StopTimeout
+    /// (default 10s), 0 kills immediately, negative waits indefinitely.
+    /// Stopping hooks fire once, before the stop.
+    void stop(std::optional<int> timeout_secs = std::nullopt);
+
+    /// Start the container again after a `stop()` (`POST
+    /// /containers/{id}/start`; already-running is accepted). A plain
+    /// daemon-side start: the request's wait strategies and lifecycle hooks
+    /// do NOT re-run, and the stopping hooks — fired once by the earlier
+    /// `stop()` — stay fired. The daemon re-binds ephemeral published ports
+    /// on start: re-resolve them through `get_host_port()` (a module's
+    /// Started* getters keep their original values). Throws DockerError on
+    /// failure.
+    void start();
 
     /// Whether the container is currently running (per a fresh inspect).
     bool is_running() const;
